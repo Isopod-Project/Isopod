@@ -62,6 +62,14 @@ export default function App() {
   const scrollRef = useRef<HTMLPreElement>(null);
   const [isRestarting, setIsRestarting] = useState<Record<string, boolean>>({});
   
+  // Version Change Handling
+  const [isVersionModalOpen, setIsVersionModalOpen] = useState(false);
+  const [pendingVersion, setPendingVersion] = useState("");
+  const [updateLoader, setUpdateLoader] = useState(true);
+  const [updateMods, setUpdateMods] = useState(true);
+  const [isCheckingCompatibility, setIsCheckingCompatibility] = useState(false);
+  const [compatibility, setCompatibility] = useState<{compatible: any[], incompatible: any[]}>({compatible: [], incompatible: []});
+  
   // File Browser States
   const [fileList, setFileList] = useState<any[]>([]);
   const [currentFilePath, setCurrentFilePath] = useState(".");
@@ -300,6 +308,60 @@ export default function App() {
     } finally {
       setIsFilesLoading(false);
     }
+  };
+
+  const handleVersionClick = async (vId: string) => {
+    if (vId === config.environment["VERSION"]) return;
+    
+    setPendingVersion(vId);
+    setIsVersionModalOpen(true);
+    setIsCheckingCompatibility(true);
+    setCompatibility({compatible: [], incompatible: []});
+
+    try {
+      const loader = config.environment["TYPE"] || "VANILLA";
+      const modrinthIds = (config.environment["MODRINTH_PROJECTS"] || "").split(',').filter(Boolean);
+      const cfIds = (config.environment["CF_PROJECTS"] || "").split(',').filter(Boolean);
+
+      const res = await fetch("/api/mods/check-compatibility", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mc_version: vId,
+          loader: loader,
+          modrinth_ids: modrinthIds,
+          cf_ids: cfIds
+        })
+      });
+      const data = await res.json();
+      setCompatibility(data);
+    } catch (e) {
+      console.error("Compatibility check failed", e);
+    } finally {
+      setIsCheckingCompatibility(false);
+    }
+  };
+
+  const applyVersionChange = () => {
+    const newEnv = { ...config.environment };
+    newEnv["VERSION"] = pendingVersion;
+    
+    if (updateMods) {
+        // Keep only compatible ones
+        const compModrinth = compatibility.compatible.filter((m: any) => m.provider === 'modrinth').map((m: any) => m.id);
+        const compCf = compatibility.compatible.filter((m: any) => m.provider === 'curseforge').map((m: any) => m.id);
+        
+        newEnv["MODRINTH_PROJECTS"] = compModrinth.join(',');
+        newEnv["CF_PROJECTS"] = compCf.join(',');
+    }
+    
+    if (updateLoader) {
+        // Clear loader version to pull latest for new MC version
+        newEnv["LOADER_VERSION"] = "";
+    }
+
+    setConfig(prev => ({ ...prev, environment: newEnv }));
+    setIsVersionModalOpen(false);
   };
 
   const handleOpenFile = async (id: string, path: string, name: string) => {
@@ -907,10 +969,7 @@ export default function App() {
                                    mcVersions.slice(0, 50).map((v: any) => (
                                       <div 
                                          key={v.id}
-                                         onClick={() => setConfig(prev => ({
-                                            ...prev,
-                                            environment: { ...prev.environment, VERSION: v.id }
-                                         }))}
+                                         onClick={() => handleVersionClick(v.id)}
                                          className={`px-4 py-2.5 flex items-center justify-between cursor-pointer border-b border-[#2D2D2D] transition-colors ${config.environment["VERSION"] === v.id ? 'bg-[#3E8ED0]/20 text-[#3E8ED0]' : 'hover:bg-[#2D2D2D]'}`}
                                       >
                                          <span className="font-mono text-sm">{v.id}</span>
@@ -1395,6 +1454,117 @@ export default function App() {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {isVersionModalOpen && (
+        <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-md p-6">
+          <div className="bg-[#1E1E1E] border border-[#3A3A3A] rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-6 border-b border-[#3A3A3A] flex justify-between items-center bg-[#242424]">
+               <div className="flex items-center gap-3">
+                  <Database className="w-6 h-6 text-[#3E8ED0]" />
+                  <h3 className="text-xl font-bold text-white">Change Minecraft Version</h3>
+               </div>
+               <button onClick={() => setIsVersionModalOpen(false)} className="text-neutral-500 hover:text-white transition">
+                  <X className="w-6 h-6" />
+               </button>
+            </div>
+
+            <div className="p-8 space-y-8">
+               <div className="flex items-center justify-center gap-8 py-4">
+                  <div className="flex flex-col items-center gap-2">
+                     <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Current</span>
+                     <div className="px-4 py-2 bg-[#2D2D2D] rounded border border-[#3A3A3A] font-mono text-[#3E8ED0] font-bold shadow-inner">
+                        {config.environment["VERSION"] || "latest"}
+                     </div>
+                  </div>
+                  <ChevronRight className="w-6 h-6 text-neutral-600 mt-6" />
+                  <div className="flex flex-col items-center gap-2">
+                     <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Target</span>
+                     <div className="px-4 py-2 bg-emerald-500/10 rounded border border-emerald-500/30 font-mono text-emerald-400 font-bold shadow-lg animate-pulse">
+                        {pendingVersion}
+                     </div>
+                  </div>
+               </div>
+
+               <div className="space-y-4">
+                  <div className="flex items-center gap-3 p-4 rounded-lg bg-[#242424] border border-[#333] hover:border-[#3E8ED0]/40 transition-colors cursor-pointer group" onClick={() => setUpdateLoader(!updateLoader)}>
+                     <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${updateLoader ? 'bg-[#3E8ED0] border-[#3E8ED0]' : 'border-[#444] group-hover:border-[#555]'}`}>
+                        {updateLoader && <Check className="w-3.5 h-3.5 text-white" />}
+                     </div>
+                     <div className="flex-1">
+                        <p className="text-sm font-bold text-neutral-200">Automatically update Mod Loader</p>
+                        <p className="text-xs text-neutral-500">Pick the latest recommended loader for {pendingVersion}</p>
+                     </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 p-4 rounded-lg bg-[#242424] border border-[#333] hover:border-[#3E8ED0]/40 transition-colors cursor-pointer group" onClick={() => setUpdateMods(!updateMods)}>
+                     <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${updateMods ? 'bg-[#3E8ED0] border-[#3E8ED0]' : 'border-[#444] group-hover:border-[#555]'}`}>
+                        {updateMods && <Check className="w-3.5 h-3.5 text-white" />}
+                     </div>
+                     <div className="flex-1">
+                        <p className="text-sm font-bold text-neutral-200">Verify & Disable incompatible Mods</p>
+                        <p className="text-xs text-neutral-500">Check compatibility and keep only working mods.</p>
+                     </div>
+                  </div>
+               </div>
+
+               {isCheckingCompatibility ? (
+                  <div className="flex flex-col items-center justify-center p-8 bg-[#242424] border border-dashed border-[#333] rounded-lg gap-3">
+                     <RefreshCw className="w-8 h-8 text-[#3E8ED0] animate-spin" />
+                     <p className="text-sm text-neutral-400 font-medium">Checking mod compatibility with {pendingVersion}...</p>
+                  </div>
+               ) : (
+                  <div className="space-y-4 animate-in slide-in-from-top-2 duration-300">
+                     {compatibility.incompatible.length > 0 && (
+                        <div className="p-5 bg-red-500/10 border border-red-500/30 rounded-lg space-y-3 shadow-[0_0_20px_rgba(239,68,68,0.1)]">
+                           <div className="flex items-center gap-2 text-red-400 font-bold">
+                              <AlertCircle className="w-5 h-5" />
+                              <span>{compatibility.incompatible.length} Mods are INCOMPATIBLE!</span>
+                           </div>
+                           <p className="text-xs text-neutral-400 leading-relaxed">
+                              The following mods don't seem to have a version for <span className="font-bold text-white">{pendingVersion}</span> yet. 
+                              If you proceed, they will be <span className="text-red-400 font-bold uppercase underline">automatically disabled</span> to prevent server crashes.
+                           </p>
+                           <div className="flex flex-wrap gap-2 pt-2">
+                              {compatibility.incompatible.map((m: any) => (
+                                 <span key={m.id} className="text-[10px] px-2 py-1 bg-red-500/20 text-red-300 rounded-md border border-red-500/20 font-bold">
+                                    {m.id}
+                                 </span>
+                              ))}
+                           </div>
+                        </div>
+                     )}
+                     
+                     {compatibility.compatible.length > 0 && (
+                        <div className="flex items-center gap-2 text-emerald-500 text-xs font-bold px-1">
+                           <Check className="w-4 h-4" />
+                           <span>{compatibility.compatible.length} Mods verified compatible.</span>
+                        </div>
+                     )}
+                     
+                     {compatibility.incompatible.length === 0 && compatibility.compatible.length === 0 && updateMods && (
+                        <p className="text-xs text-neutral-500 italic text-center py-4">No mods detected to check compatibility for.</p>
+                     )}
+                  </div>
+               )}
+            </div>
+
+            <div className="p-6 bg-[#242424] border-t border-[#3A3A3A] flex gap-3">
+               <button 
+                  onClick={() => setIsVersionModalOpen(false)}
+                  className="flex-1 px-4 py-3 bg-[#323232] hover:bg-[#404040] text-neutral-300 font-bold rounded-lg transition-all"
+               >
+                  Cancel
+               </button>
+               <button 
+                  onClick={applyVersionChange}
+                  disabled={isCheckingCompatibility}
+                  className={`flex-[1.5] px-4 py-3 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white font-bold rounded-lg shadow-xl shadow-[#3E8ED0]/10 transition-all ${isCheckingCompatibility ? 'opacity-50 cursor-not-allowed' : ''}`}
+               >
+                  Change to {pendingVersion}
+               </button>
             </div>
           </div>
         </div>

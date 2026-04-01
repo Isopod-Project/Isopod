@@ -505,6 +505,69 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
 
     return results
 
+@app.post("/api/mods/check-compatibility")
+async def check_mod_compatibility(req: Dict[str, Any]):
+    """
+    Check if a list of mods is compatible with a target MC version and loader.
+    """
+    target_mc = req.get("mc_version")
+    target_loader = (req.get("loader") or "VANILLA").upper()
+    m_ids = req.get("modrinth_ids", [])
+    c_ids = req.get("cf_ids", [])
+    
+    results = {
+        "compatible": [],
+        "incompatible": [],
+    }
+    
+    async with httpx.AsyncClient() as client:
+        # Modrinth Compatibility Check
+        for mid in m_ids:
+            try:
+                loaders_param = json.dumps([target_loader.lower()])
+                versions_param = json.dumps([target_mc])
+                url = f"https://api.modrinth.com/v2/project/{mid}/version"
+                res = await client.get(url, params={"loaders": loaders_param, "game_versions": versions_param})
+                
+                if res.status_code == 200 and len(res.json()) > 0:
+                    results["compatible"].append({"id": mid, "provider": "modrinth"})
+                else:
+                    results["incompatible"].append({"id": mid, "provider": "modrinth"})
+            except:
+                results["incompatible"].append({"id": mid, "provider": "modrinth"})
+
+        # CurseForge Compatibility Check
+        mod_loader_type = 0
+        if "FORGE" in target_loader: mod_loader_type = 1
+        elif "FABRIC" in target_loader: mod_loader_type = 4
+        elif "QUILT" in target_loader: mod_loader_type = 5
+        elif "NEOFORGE" in target_loader: mod_loader_type = 6
+
+        for cid in c_ids:
+            try:
+                # Use project lookup to see latest files
+                res = await client.get(f"https://api.curse.tools/v1/cf/mods/{cid}")
+                if res.status_code == 200:
+                    data = res.json()["data"]
+                    found = False
+                    for file in data.get("latestFiles", []):
+                        game_versions = file.get("gameVersions", [])
+                        if target_mc in game_versions:
+                            # if modLoaderType filter is applied, must match
+                            if mod_loader_type == 0 or mod_loader_type in file.get("modLoaderTypes", []):
+                                found = True
+                                break
+                    if found:
+                        results["compatible"].append({"id": cid, "provider": "curseforge"})
+                    else:
+                        results["incompatible"].append({"id": cid, "provider": "curseforge"})
+                else:
+                    results["incompatible"].append({"id": cid, "provider": "curseforge"})
+            except:
+                results["incompatible"].append({"id": cid, "provider": "curseforge"})
+
+    return results
+
 @app.get("/api/mods/dependencies")
 async def get_mod_dependencies(provider: str, project_id: str):
     """Fetch dependencies for a mod version. Defaults to latest."""
