@@ -420,6 +420,10 @@ export default function App() {
     <div className="flex h-screen bg-[#242424] text-[#E0E0E0] font-sans selection:bg-[#3E8ED0]/40 overflow-hidden">
       <div className="flex-1 flex flex-col">
         <header className="h-[52px] min-h-[52px] bg-[#3B3B3B] border-b border-[#1E1E1E] flex items-center px-4 gap-4 flex-shrink-0 shadow-sm z-10">
+          <div className="flex items-center gap-2 mr-4 border-r border-[#4A4A4A] pr-4 py-1">
+             <img src="/logo.png" className="w-8 h-8 rounded" alt="Isopod Logo" />
+             <span className="text-xl font-bold tracking-tight text-white">Isopod</span>
+          </div>
           <button 
             onClick={() => setIsAddModalOpen(true)}
             className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium"
