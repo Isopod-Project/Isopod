@@ -64,6 +64,7 @@ export default function App() {
   
   // Versions
   const [mcVersions, setMcVersions] = useState<any[]>([]);
+  const [isVersionsLoading, setIsVersionsLoading] = useState(false);
   
   // Mod Search States
   const [modSearchQuery, setModSearchQuery] = useState("");
@@ -266,12 +267,16 @@ export default function App() {
   };
 
   const fetchMcVersions = async () => {
+    setIsVersionsLoading(true);
     try {
       const res = await fetch("/api/meta/versions");
+      if (!res.ok) throw new Error("Failed to fetch versions");
       const data = await res.json();
       setMcVersions(data.versions || []);
     } catch (e) {
       console.error("Failed to fetch MC versions", e);
+    } finally {
+      setIsVersionsLoading(false);
     }
   };
 
@@ -551,6 +556,7 @@ export default function App() {
 
   useEffect(() => {
     fetchInstances();
+    fetchMcVersions();
     
     const interval = setInterval(() => {
         setInstances((prevInstances: Instance[]) => {
@@ -901,30 +907,51 @@ export default function App() {
                                  <div className="text-right">Released</div>
                                  <div className="text-right">Type</div>
                               </div>
-                               <div className="flex-1 overflow-auto">
-                                 {mcVersions
-                                    .filter(v => {
+                                <div className="flex-1 overflow-auto relative">
+                                 {isVersionsLoading ? (
+                                    <div className="absolute inset-0 flex items-center justify-center bg-[#0F0F0F]/50">
+                                       <div className="flex flex-col items-center gap-3">
+                                          <RefreshCw className="w-8 h-8 text-[#3E8ED0] animate-spin" />
+                                          <span className="text-xs font-medium text-neutral-500">Fetching versions...</span>
+                                       </div>
+                                    </div>
+                                 ) : mcVersions.filter(v => {
                                        if (versionSearch && !v.id.includes(versionSearch)) return false;
                                        if (v.type === 'release' && versionFilters.Releases) return true;
                                        if (v.type === 'snapshot' && versionFilters.Snapshots) return true;
                                        if (v.type === 'old_beta' && versionFilters.Betas) return true;
                                        if (v.type === 'old_alpha' && versionFilters.Alphas) return true;
                                        return false;
-                                    })
-                                    .map((v: any) => (
-                                       <div 
-                                          key={v.id}
-                                          onClick={() => setSelectedAddVersion(v.id)}
-                                          className={`grid grid-cols-3 px-4 py-2 text-sm font-mono cursor-pointer border-b border-[#1A1A1A] transition-colors ${selectedAddVersion === v.id ? 'bg-[#3E8ED0]/20 text-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
-                                       >
-                                          <div className="flex items-center gap-2">
-                                             {v.type === 'release' && <Check className="w-3 h-3 text-emerald-500" />}
-                                             <span>{v.id}</span>
-                                          </div>
-                                          <div className="text-right opacity-50">{new Date(v.releaseTime).toLocaleDateString()}</div>
-                                          <div className="text-right capitalize text-[10px] font-bold opacity-60">{v.type}</div>
+                                    }).length === 0 ? (
+                                       <div className="flex flex-col items-center justify-center h-full gap-2 text-neutral-600 opacity-50">
+                                          <Search className="w-6 h-6" />
+                                          <p className="text-xs">No versions match your filters</p>
                                        </div>
-                                    ))}
+                                    ) : (
+                                       mcVersions
+                                          .filter(v => {
+                                             if (versionSearch && !v.id.includes(versionSearch)) return false;
+                                             if (v.type === 'release' && versionFilters.Releases) return true;
+                                             if (v.type === 'snapshot' && versionFilters.Snapshots) return true;
+                                             if (v.type === 'old_beta' && versionFilters.Betas) return true;
+                                             if (v.type === 'old_alpha' && versionFilters.Alphas) return true;
+                                             return false;
+                                          })
+                                          .map((v: any) => (
+                                             <div 
+                                                key={v.id}
+                                                onClick={() => setSelectedAddVersion(v.id)}
+                                                className={`grid grid-cols-3 px-4 py-2 text-sm font-mono cursor-pointer border-b border-[#1A1A1A] transition-colors ${selectedAddVersion === v.id ? 'bg-[#3E8ED0]/20 text-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
+                                             >
+                                                <div className="flex items-center gap-2">
+                                                   {v.type === 'release' && <Check className="w-3 h-3 text-emerald-500" />}
+                                                   <span>{v.id}</span>
+                                                </div>
+                                                <div className="text-right opacity-50">{new Date(v.releaseTime).toLocaleDateString()}</div>
+                                                <div className="text-right capitalize text-[10px] font-bold opacity-60">{v.type}</div>
+                                             </div>
+                                          ))
+                                    )}
                               </div>
                            </div>
                            <div className="mt-4 flex gap-4">
