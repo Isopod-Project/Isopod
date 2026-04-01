@@ -120,18 +120,19 @@ def get_instance_status(instance_id: str):
 @app.post("/api/instances/{instance_id}/start")
 def start_instance(instance_id: str):
     path = get_instance_path(instance_id)
+    # Start all services defined in the instance's compose file
     result = subprocess.run(["docker", "compose", "up", "-d"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
-        raise HTTPException(status_code=500, detail=result.stderr)
-    return {"message": "Started instance"}
+        raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
+    return {"message": "Started"}
 
 @app.post("/api/instances/{instance_id}/stop")
 def stop_instance(instance_id: str):
     path = get_instance_path(instance_id)
-    result = subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True, text=True)
+    result = subprocess.run(["docker", "compose", "stop"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
-        raise HTTPException(status_code=500, detail=result.stderr)
-    return {"message": "Stopped instance"}
+        raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
+    return {"message": "Stopped"}
 
 @app.get("/api/instances/{instance_id}/config")
 def get_config(instance_id: str):

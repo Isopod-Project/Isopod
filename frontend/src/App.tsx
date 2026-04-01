@@ -71,31 +71,43 @@ export default function App() {
     }
   };
 
-  const handleStart = async (id: string) => {
+  const handleStart = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
     try {
-      setStatuses(prev => ({ 
+      setStatuses(prev => ({
         ...prev, 
         [id]: { ...prev[id], is_running: true } // Optimistic update
       }));
-      await fetch(`/api/instances/${id}/start`, { method: "POST" });
+      const res = await fetch(`/api/instances/${id}/start`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || "Failed to start container");
+      }
       setTimeout(() => fetchStatus(id), 2000);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert("Error starting container");
+      alert("Launch Error: " + e.message);
+      fetchStatus(id);
     }
   };
 
-  const handleStop = async (id: string) => {
+  const handleStop = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
     try {
-      setStatuses(prev => ({ 
+      setStatuses(prev => ({
         ...prev, 
         [id]: { ...prev[id], is_running: false } // Optimistic update
       }));
-      await fetch(`/api/instances/${id}/stop`, { method: "POST" });
+      const res = await fetch(`/api/instances/${id}/stop`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || "Failed to stop container");
+      }
       setTimeout(() => fetchStatus(id), 2000);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert("Error stopping container");
+      alert("Stop Error: " + e.message);
+      fetchStatus(id);
     }
   };
 
