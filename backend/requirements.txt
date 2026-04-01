@@ -1,6 +1,8 @@
 fastapi
 uvicorn
+python-dotenv
 docker
 pyyaml
 python-dotenv
 httpx
+aiofiles

@@ -6,3 +6,27 @@ body {
     margin: 0;
     padding: 0;
 }
+
+@keyframes slideInFromTop {
+  from {
+    transform: translateY(-8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-in {
+  animation: slideInFromTop 0.3s ease-out forwards;
+}
+
+.fade-in {
+    opacity: 0;
+    animation: fadeIn 0.3s ease-out forwards;
+}
+
+@keyframes fadeIn {
+    to { opacity: 1; }
+}

@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Package, Save } from "lucide-react";
 
 interface Instance {
   id: string;
@@ -12,7 +12,42 @@ interface Instance {
 interface InstanceStatus {
   instance_id: string;
   is_running: boolean;
-  containers: any[];
+  containers: unknown[];
+}
+
+interface InstanceConfig {
+  image: string;
+  environment: Record<string, string>;
+}
+
+interface MinecraftVersion {
+  id: string;
+  type: string;
+  url: string;
+  time: string;
+  releaseTime: string;
+}
+
+interface LoaderVersion {
+  version: string;
+  stable: boolean;
+}
+
+interface ModrinthSearchResult {
+  project_id: string;
+  project_type: string;
+  slug: string;
+  title: string;
+  description: string;
+  client_side: string;
+  server_side: string;
+  game_versions: string[];
+  loaders: string[];
+  icon_url: string | null;
+  author: string;
+  date_created: string;
+  date_modified: string;
+  downloads: number;
 }
 
 export default function App() {
@@ -35,11 +70,14 @@ export default function App() {
   const [editTab, setEditTab] = useState("logs");
   const [logs, setLogs] = useState("");
   const [isLogsLoading, setIsLogsLoading] = useState(false);
-  
   // Instance Config States
   const [config, setConfig] = useState<{image: string, environment: Record<string, string>}>({image: "", environment: {}});
   const [isSaving, setIsSaving] = useState(false);
+  
+  // Versions
   const [mcVersions, setMcVersions] = useState<any[]>([]);
+  const [fabricLoaderVersions, setFabricLoaderVersions] = useState<LoaderVersion[]>([]);
+  const [quiltLoaderVersions, setQuiltLoaderVersions] = useState<LoaderVersion[]>([]);
   
   // Mod Search States
   const [modSearchQuery, setModSearchQuery] = useState("");
@@ -54,7 +92,7 @@ export default function App() {
       const res = await fetch("/api/instances");
       if (!res.ok) throw new Error("Backend error");
       const data = await res.json();
-      setInstances(data);
+      setInstances(data as Instance[]);
       
       // Auto select the first instance if none is selected
       if (data.length > 0 && !selectedId) {
@@ -78,7 +116,7 @@ export default function App() {
     try {
       const res = await fetch(`/api/instances/${id}/status`);
       const data = await res.json();
-      setStatuses(prev => ({ ...prev, [id]: data }));
+      setStatuses((prev: Record<string, InstanceStatus>) => ({ ...prev, [id]: data }));
     } catch (e) {
       console.error(e);
     }
@@ -87,7 +125,7 @@ export default function App() {
   const handleStart = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      setStatuses(prev => ({
+      setStatuses((prev: Record<string, InstanceStatus>) => ({
         ...prev, 
         [id]: { ...prev[id], is_running: true } // Optimistic update
       }));
@@ -97,9 +135,9 @@ export default function App() {
         throw new Error(data.detail || "Failed to start container");
       }
       setTimeout(() => fetchStatus(id), 2000);
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
-      alert("Launch Error: " + e.message);
+      alert(`Launch Error: ${e instanceof Error ? e.message : String(e)}`);
       fetchStatus(id);
     }
   };
@@ -107,7 +145,7 @@ export default function App() {
   const handleStop = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      setStatuses(prev => ({
+      setStatuses((prev: Record<string, InstanceStatus>) => ({
         ...prev, 
         [id]: { ...prev[id], is_running: false } // Optimistic update
       }));
@@ -117,32 +155,30 @@ export default function App() {
         throw new Error(data.detail || "Failed to stop container");
       }
       setTimeout(() => fetchStatus(id), 2000);
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
-      alert("Stop Error: " + e.message);
+      alert(`Stop Error: ${e instanceof Error ? e.message : String(e)}`);
       fetchStatus(id);
     }
   };
 
   const handleAddInstance = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newName) return;
     setIsCreating(true);
     try {
       const res = await fetch("/api/instances", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newName, template: newType, port: parseInt(newPort, 10) || 25565 })
+        body: JSON.stringify({ name: newName, template: newType, port: parseInt(newPort) })
       });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || "Failed to create instance");
-      }
+      if (!res.ok) throw new Error("Failed to create instance");
+      const data = await res.json();
+      setInstances((prev: Instance[]) => [...prev, data]);
       setIsAddModalOpen(false);
       setNewName("");
-      setTimeout(fetchInstances, 500); // refresh list and select
-    } catch (err: any) {
-      alert(err.message);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to create instance");
     } finally {
       setIsCreating(false);
     }
@@ -155,6 +191,7 @@ export default function App() {
       setSelectedId(null);
       fetchInstances();
     } catch (err) {
+      console.error(err);
       alert("Error deleting instance");
     }
   };
@@ -166,6 +203,7 @@ export default function App() {
       const data = await res.json();
       setLogs(data.logs);
     } catch (e) {
+      console.error(e);
       setLogs("Failed to load logs.");
     } finally {
       setIsLogsLoading(false);
@@ -192,8 +230,28 @@ export default function App() {
     }
   };
 
+  const fetchFabricVersions = async () => {
+    try {
+      const res = await fetch("https://meta.fabricmc.net/v2/versions/loader");
+      const data = await res.json();
+      setFabricLoaderVersions(data as LoaderVersion[]);
+    } catch (e) {
+      console.error("Failed to fetch Fabric loader versions", e);
+    }
+  };
+
+  const fetchQuiltVersions = async () => {
+    try {
+      const res = await fetch("https://meta.quiltmc.org/v3/versions/loader");
+      const data = await res.json();
+      setQuiltLoaderVersions(data as LoaderVersion[]);
+    } catch (e) {
+      console.error("Failed to fetch Quilt loader versions", e);
+    }
+  };
+
   const handleSaveConfig = async () => {
-    if (!selectedId) return;
+    if (!selectedId || !config) return;
     setIsSaving(true);
     try {
       const res = await fetch(`/api/instances/${selectedId}/config`, {
@@ -215,10 +273,14 @@ export default function App() {
     setIsModSearching(true);
     try {
       // Default to what's in the search inputs, or fallback to instance configuration
-      const mc_version = modSearchVersion || config.environment["VERSION"] || "";
-      const loader = modSearchLoader || config.environment["TYPE"] || "";
+      let mc_version = modSearchVersion || (config?.environment ? (config.environment["VERSION"] || "") : "");
+      let raw_loader = modSearchLoader || (config?.environment ? (config.environment["TYPE"] || "") : "");
       
-      const res = await fetch(`/api/mods/search/${provider}?q=${encodeURIComponent(query)}&mc_version=${mc_version}&loader=${loader}`);
+      // Fix potential "undefined" literals
+      if (mc_version === "undefined") mc_version = "";
+      if (raw_loader === "undefined") raw_loader = "";
+
+      const res = await fetch(`/api/mods/search/${provider}?q=${encodeURIComponent(query)}&mc_version=${mc_version}&loader=${raw_loader}`);
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
       const data = await res.json();
       setModSearchResults(data);
@@ -241,11 +303,13 @@ export default function App() {
 
   useEffect(() => {
     fetchInstances();
+    fetchMCVersions();
+    fetchFabricVersions();
+    fetchQuiltVersions();
     
-    // Poll for status every 5 seconds
     const interval = setInterval(() => {
-        setInstances(prevInstances => {
-            prevInstances.forEach(inst => fetchStatus(inst.id));
+        setInstances((prevInstances: Instance[]) => {
+            prevInstances.forEach((inst: Instance) => fetchStatus(inst.id));
             return prevInstances;
         });
     }, 5000);
@@ -266,10 +330,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-[#242424] text-[#E0E0E0] font-sans selection:bg-[#3E8ED0]/40 overflow-hidden">
-      
-      {/* Main Content Area */}
       <div className="flex-1 flex flex-col">
-        {/* Top Navbar */}
         <header className="h-[52px] min-h-[52px] bg-[#3B3B3B] border-b border-[#1E1E1E] flex items-center px-4 gap-4 flex-shrink-0 shadow-sm z-10">
           <button 
             onClick={() => setIsAddModalOpen(true)}
@@ -295,7 +356,6 @@ export default function App() {
           </button>
         </header>
         
-        {/* Instances Grid */}
         <main className="flex-1 overflow-auto p-6 bg-[#2B2B2B]">
           {loading ? (
              <div className="text-neutral-400 flex items-center gap-2">
@@ -313,7 +373,6 @@ export default function App() {
                  <span className="font-semibold text-neutral-300">Ungrouped</span>
               </div>
               
-              {/* Prism Launcher style Grid */}
               <div className="flex flex-wrap gap-4">
                 {instances.map((inst) => {
                   const isSelected = selectedId === inst.id;
@@ -323,7 +382,7 @@ export default function App() {
                     <div 
                       key={inst.id}
                       onClick={() => setSelectedId(inst.id)}
-                      className={`flex flex-col flex-wrap items-center justify-center p-3 rounded cursor-pointer transition-all w-[110px] select-none ${
+                      className={`flex flex-col items-center justify-center p-3 rounded cursor-pointer transition-all w-[110px] select-none ${
                         isSelected 
                           ? 'bg-[#3E8ED0]/20 outline outline-2 outline-[#3E8ED0] shadow-sm' 
                           : 'hover:bg-[#404040] border border-transparent'
@@ -331,7 +390,6 @@ export default function App() {
                     >
                       <div className="relative mb-3 flex items-center justify-center w-[72px] h-[72px] bg-[#3B3B3B] rounded shadow-inner">
                         <Gamepad2 className={`w-10 h-10 ${isRunning ? 'text-emerald-400' : 'text-[#878787]'}`} />
-                        {/* Status Dot */}
                         <div className={`absolute bottom-1 right-1 w-3 h-3 rounded-full border-2 border-[#3B3B3B] ${isRunning ? 'bg-emerald-500' : 'bg-neutral-500'}`}></div>
                       </div>
                       <span className="text-xs text-center font-medium line-clamp-2 leading-tight">
@@ -346,11 +404,9 @@ export default function App() {
         </main>
       </div>
 
-      {/* Right Sidebar */}
       <aside className="w-[280px] min-w-[280px] flex-shrink-0 bg-[#242424] border-l border-[#1E1E1E] flex flex-col shadow-[rgba(0,0,0,0.1)_-4px_0px_15px_-3px] z-20">
         {selectedInstance ? (
           <>
-            {/* Sidebar Header: Large Icon and Title */}
             <div className="p-6 flex flex-col items-center border-b border-[#323232]">
               <div className="w-24 h-24 bg-[#3B3B3B] rounded-lg shadow-inner flex flex-col items-center justify-center mb-4 relative">
                  <Gamepad2 className="w-12 h-12 text-[#878787]" />
@@ -360,6 +416,7 @@ export default function App() {
                      <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
                    </span>
                  )}
+
               </div>
               <h2 className="text-lg font-bold text-center leading-tight mb-1">{selectedInstance.name}</h2>
               <p className="text-xs text-neutral-400">
@@ -367,12 +424,10 @@ export default function App() {
               </p>
             </div>
 
-            {/* Sidebar Actions */}
             <div className="p-4 flex flex-col gap-1.5 flex-1 overflow-auto">
-              
               {selectedStatus?.is_running ? (
                 <button 
-                  onClick={(e) => handleStop(selectedInstance.id, e)}
+                  onClick={(e: React.MouseEvent) => handleStop(selectedInstance.id, e)}
                   className="flex items-center gap-3 px-3 py-2.5 rounded bg-[#402020] hover:bg-[#5A2525] border border-[#502020] text-red-400 transition-colors"
                 >
                   <Square className="w-4 h-4 fill-current" />
@@ -380,7 +435,7 @@ export default function App() {
                 </button>
               ) : (
                 <button 
-                  onClick={(e) => handleStart(selectedInstance.id, e)}
+                  onClick={(e: React.MouseEvent) => handleStart(selectedInstance.id, e)}
                   className="flex items-center gap-3 px-3 py-2.5 rounded bg-[#1A3A22] hover:bg-[#204A2A] border border-[#2A5030] text-emerald-400 transition-colors"
                 >
                   <Play className="w-4 h-4 fill-current" />
@@ -409,7 +464,6 @@ export default function App() {
               >
                 <Trash2 className="w-4 h-4" /> Delete
               </button>
-
             </div>
           </>
         ) : (
@@ -420,7 +474,6 @@ export default function App() {
         )}
       </aside>
 
-      {/* Add Instance Modal */}
       {isAddModalOpen && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-[#242424] border border-[#3A3A3A] p-6 rounded-lg shadow-xl w-full max-w-md">
@@ -433,7 +486,7 @@ export default function App() {
                   required
                   type="text" 
                   value={newName} 
-                  onChange={e => setNewName(e.target.value)} 
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewName(e.target.value)} 
                   className="w-full bg-[#1A1A1A] border border-[#3A3A3A] p-2 rounded focus:outline-none focus:border-[#3E8ED0]"
                   placeholder="e.g. My Vanilla Server"
                 />
@@ -443,7 +496,7 @@ export default function App() {
                   <label className="block text-sm font-medium mb-1 text-neutral-300">Type</label>
                   <select 
                     value={newType} 
-                    onChange={e => setNewType(e.target.value)}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setNewType(e.target.value)}
                     className="w-full bg-[#1A1A1A] border border-[#3A3A3A] p-2 rounded focus:outline-none focus:border-[#3E8ED0]"
                   >
                     <option value="vanilla">Vanilla</option>
@@ -458,7 +511,7 @@ export default function App() {
                     required
                     type="number" 
                     value={newPort} 
-                    onChange={e => setNewPort(e.target.value)} 
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewPort(e.target.value)} 
                     className="w-full bg-[#1A1A1A] border border-[#3A3A3A] p-2 rounded focus:outline-none focus:border-[#3E8ED0]"
                     placeholder="25565"
                   />
@@ -487,7 +540,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Edit Instance Modal */}
       {isEditModalOpen && selectedInstance && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-6">
           <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg shadow-2xl w-full max-w-6xl h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
@@ -504,7 +556,6 @@ export default function App() {
               </button>
             </div>
             
-            {/* Split Content */}
             <div className="flex flex-1 overflow-hidden">
               {/* Left Sidebar Tabs */}
               <div className="w-56 bg-[#1E1E1E] border-r border-[#3A3A3A] p-4 flex flex-col justify-between">
@@ -546,14 +597,16 @@ export default function App() {
                   </button>
                 </div>
 
-                <button 
-                  onClick={handleSaveConfig}
-                  disabled={isSaving}
-                  className={`mt-4 flex items-center justify-center gap-2 px-4 py-2.5 rounded font-bold transition-all shadow-md ${isSaving ? 'bg-neutral-600 cursor-not-allowed' : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white'}`}
-                >
-                  {isSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Settings className="w-4 h-4" />}
-                  {isSaving ? "Saving..." : "Save Changes"}
-                </button>
+                <div className="mt-auto pt-4 flex flex-col gap-2">
+                  <button 
+                    onClick={handleSaveConfig}
+                    disabled={isSaving}
+                    className="w-full flex items-center justify-center gap-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] disabled:bg-[#3E8ED0]/40 text-white font-bold py-2 rounded shadow-lg transition"
+                  >
+                    {isSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    Save Changes
+                  </button>
+                </div>
               </div>
               
               {/* Main Area */}
@@ -926,7 +979,6 @@ export default function App() {
           </div>
         </div>
       )}
-
     </div>
   );
 }
