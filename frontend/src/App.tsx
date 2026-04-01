@@ -540,10 +540,16 @@ export default function App() {
         </main>
       </div>
 
-      <aside className="w-[280px] min-w-[280px] flex-shrink-0 bg-[#242424] border-l border-[#1E1E1E] flex flex-col shadow-[rgba(0,0,0,0.1)_-4px_0px_15px_-3px] z-20">
+      <aside className="w-[280px] min-w-[280px] flex-shrink-0 bg-[#242424] border-l border-[#1E1E1E] flex flex-col shadow-[rgba(0,0,0,0.1)_-4px_0px_15px_-3px] z-20 relative animate-in slide-in-from-right duration-300">
         {selectedInstance ? (
           <>
-            <div className="p-6 flex flex-col items-center border-b border-[#323232]">
+            <div className="p-6 flex flex-col items-center border-b border-[#323232] relative group">
+              <button 
+                onClick={() => setSelectedId(null)}
+                className="absolute top-4 right-4 p-1 rounded-full bg-[#1E1E1E] border border-[#333] text-neutral-500 hover:text-white hover:bg-[#333] transition opacity-0 group-hover:opacity-100 shadow-lg"
+              >
+                 <X className="w-3.5 h-3.5" />
+              </button>
               <div className="w-24 h-24 bg-[#3B3B3B] rounded-lg shadow-inner flex flex-col items-center justify-center mb-4 relative">
                  <Gamepad2 className="w-12 h-12 text-[#878787]" />
                  {selectedStatus?.is_running && (
@@ -587,9 +593,16 @@ export default function App() {
               >
                 <Edit className="w-4 h-4" /> Edit
               </button>
-              <button className="flex items-center gap-3 px-3 py-1.5 rounded hover:bg-[#323232] text-neutral-300 transition-colors">
-                <Folder className="w-4 h-4" /> Folder
-              </button>
+               <button 
+                 onClick={() => {
+                   setIsEditModalOpen(true);
+                   setEditTab("files");
+                   fetchFileList(selectedInstance.id);
+                 }}
+                 className="flex items-center gap-3 px-3 py-1.5 rounded hover:bg-[#323232] text-neutral-300 transition-colors"
+               >
+                 <Folder className="w-4 h-4" /> Folder
+               </button>
               <button className="flex items-center gap-3 px-3 py-1.5 rounded hover:bg-[#323232] text-neutral-300 transition-colors">
                 <Settings className="w-4 h-4" /> Settings
               </button>
