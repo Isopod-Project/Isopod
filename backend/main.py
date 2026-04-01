@@ -231,6 +231,20 @@ def delete_instance(instance_id: str):
     shutil.rmtree(path, ignore_errors=True)
     return {"message": "Instance deleted"}
 
+@app.get("/api/instances/{instance_id}/logs")
+def get_instance_logs(instance_id: str, tail: int = 200):
+    path = get_instance_path(instance_id)
+    try:
+        result = subprocess.run(
+            ["docker", "compose", "logs", f"--tail={tail}"],
+            cwd=path,
+            capture_output=True,
+            text=True
+        )
+        return {"logs": result.stdout + result.stderr}
+    except Exception as e:
+        return {"logs": f"Error fetching logs: {str(e)}"}
+
 # Mount the compiled frontend to be served statically
 
 # Ensure '/app/frontend/dist' exists or gracefully ignore if not fully built locally

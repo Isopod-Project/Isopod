@@ -29,6 +29,12 @@ export default function App() {
   const [newType, setNewType] = useState("vanilla");
   const [newPort, setNewPort] = useState("25565");
   const [isCreating, setIsCreating] = useState(false);
+  
+  // Edit Modal states
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editTab, setEditTab] = useState("logs");
+  const [logs, setLogs] = useState("");
+  const [isLogsLoading, setIsLogsLoading] = useState(false);
 
   const fetchInstances = async () => {
     try {
@@ -126,6 +132,26 @@ export default function App() {
     } catch (err) {
       alert("Error deleting instance");
     }
+  };
+
+  const fetchLogs = async (id: string) => {
+    setIsLogsLoading(true);
+    try {
+      const res = await fetch(`/api/instances/${id}/logs`);
+      const data = await res.json();
+      setLogs(data.logs);
+    } catch (e) {
+      setLogs("Failed to load logs.");
+    } finally {
+      setIsLogsLoading(false);
+    }
+  };
+
+  const openEditModal = () => {
+    if (!selectedId) return;
+    setIsEditModalOpen(true);
+    setEditTab("logs");
+    fetchLogs(selectedId);
   };
 
   useEffect(() => {
@@ -271,7 +297,10 @@ export default function App() {
 
               <div className="h-px bg-[#323232] my-2"></div>
               
-              <button className="flex items-center gap-3 px-3 py-1.5 rounded hover:bg-[#323232] text-neutral-300 transition-colors">
+              <button 
+                onClick={openEditModal}
+                className="flex items-center gap-3 px-3 py-1.5 rounded hover:bg-[#323232] text-neutral-300 transition-colors"
+              >
                 <Edit className="w-4 h-4" /> Edit
               </button>
               <button className="flex items-center gap-3 px-3 py-1.5 rounded hover:bg-[#323232] text-neutral-300 transition-colors">
@@ -361,6 +390,73 @@ export default function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Instance Modal */}
+      {isEditModalOpen && selectedInstance && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-8">
+          <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg shadow-2xl w-full max-w-5xl h-[80vh] flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-[#3A3A3A] flex justify-between items-center bg-[#2A2A2A]">
+              <h2 className="text-xl font-bold text-[#E0E0E0]">Editing: {selectedInstance.name}</h2>
+              <button onClick={() => setIsEditModalOpen(false)} className="text-neutral-400 hover:text-white transition">
+                ✕
+              </button>
+            </div>
+            
+            {/* Split Content */}
+            <div className="flex flex-1 overflow-hidden">
+              {/* Left Sidebar Tabs */}
+              <div className="w-48 bg-[#1E1E1E] border-r border-[#3A3A3A] p-3 flex flex-col gap-1">
+                <button 
+                  onClick={() => setEditTab("logs")}
+                  className={`px-3 py-2 rounded text-left font-medium transition-colors ${editTab === "logs" ? 'bg-[#3E8ED0]/20 text-[#3E8ED0]' : 'text-neutral-300 hover:bg-[#323232]'}`}
+                >
+                  Minecraft Log
+                </button>
+                <button 
+                  onClick={() => setEditTab("config")}
+                  className={`px-3 py-2 rounded text-left font-medium transition-colors ${editTab === "config" ? 'bg-[#3E8ED0]/20 text-[#3E8ED0]' : 'text-neutral-300 hover:bg-[#323232]'}`}
+                >
+                  Configuration
+                </button>
+              </div>
+              
+              {/* Main Area */}
+              <div className="flex-1 bg-[#1A1A1A] p-4 flex flex-col min-w-0">
+                {editTab === "logs" && (
+                  <div className="flex flex-col h-full">
+                    <div className="flex justify-between items-center mb-3">
+                      <span className="text-sm font-semibold text-neutral-400">Console Output</span>
+                      <button 
+                        onClick={() => fetchLogs(selectedInstance.id)}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-[#323232] hover:bg-[#404040] rounded text-sm transition"
+                      >
+                        <RefreshCw className={`w-4 h-4 ${isLogsLoading ? 'animate-spin' : ''}`} />
+                        Refresh
+                      </button>
+                    </div>
+                    <pre className="flex-1 bg-black rounded border border-[#333] p-4 overflow-auto text-xs font-mono text-green-400 whitespace-pre-wrap">
+                      {logs || "No logs available."}
+                    </pre>
+                  </div>
+                )}
+                {editTab === "config" && (
+                  <div className="flex flex-col h-full text-neutral-400">
+                    <p className="mb-4">Internal Docker Compose Configuration</p>
+                    <div className="p-4 bg-black rounded border border-[#333] font-mono text-sm leading-relaxed whitespace-pre-wrap select-all">
+                      # View restricted. This feature will allow editing the environment variables in a future update.
+                      <br/>
+                      Instance ID: {selectedInstance.id}
+                      <br/>
+                      Path: {selectedInstance.path}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
