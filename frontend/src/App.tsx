@@ -265,7 +265,7 @@ export default function App() {
   };
 
   const handleRestart = async (id: string) => {
-    setIsRestarting(prev => ({ ...prev, [id]: true }));
+    setIsRestarting((prev: Record<string, boolean>) => ({ ...prev, [id]: true }));
     try {
         setStatuses((prev: Record<string, InstanceStatus>) => ({
             ...prev, 
@@ -279,11 +279,11 @@ export default function App() {
         
         setTimeout(() => {
           fetchStatus(id);
-          setIsRestarting(prev => ({ ...prev, [id]: false }));
+          setIsRestarting((prev: Record<string, boolean>) => ({ ...prev, [id]: false }));
         }, 2000);
     } catch (e) {
         console.error("Restart failed", e);
-        setIsRestarting(prev => ({ ...prev, [id]: false }));
+        setIsRestarting((prev: Record<string, boolean>) => ({ ...prev, [id]: false }));
         fetchStatus(id);
     }
   };
