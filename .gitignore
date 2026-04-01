@@ -1,0 +1,15 @@
+# Environment variables
+.env
+
+# Python
+backend/__pycache__/
+backend/venv/
+*.pyc
+
+# Local Data / Docker Instances
+servers/
+
+# Frontend (The frontend folder has its own .gitignore but we can add global ignores)
+node_modules/
+dist/
+.DS_Store
