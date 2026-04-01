@@ -30,9 +30,17 @@ export default function App() {
   // Modal states
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newName, setNewName] = useState("");
-  const [newType, setNewType] = useState("vanilla");
   const [newPort, setNewPort] = useState("25565");
   const [isCreating, setIsCreating] = useState(false);
+  
+  // Prism-like Add Modal States
+  const [addTab, setAddTab] = useState<"custom" | "import" | "modrinth" | "curseforge">("custom");
+  const [selectedAddVersion, setSelectedAddVersion] = useState("latest");
+  const [selectedAddLoader, setSelectedAddLoader] = useState("VANILLA");
+  const [searchModpacks, setSearchModpacks] = useState("");
+  const [modpackResults, setModpackResults] = useState<any[]>([]);
+  const [isModpackLoading, setIsModpackLoading] = useState(false);
+  const [selectedModpack, setSelectedModpack] = useState<any>(null);
   
   // Edit Modal states
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -154,16 +162,42 @@ export default function App() {
     e.preventDefault();
     setIsCreating(true);
     try {
+      const body: any = { 
+        name: newName, 
+        template: selectedAddLoader.toLowerCase(), 
+        port: parseInt(newPort),
+        version: selectedAddVersion,
+        modrinth_id: addTab === 'modrinth' && selectedModpack ? selectedModpack.id : null,
+        cf_id: addTab === 'curseforge' && selectedModpack ? selectedModpack.id : null
+      };
+      
+      // If a modpack is selected, we'll need to pass that to the backend
+      // The current backend create_instance only takes name, template, port.
+      // I should probably update the backend to take more initial env vars or just use the config update after.
+      // But for simplicity, I'll update the backend create_instance as well.
+      
       const res = await fetch("/api/instances", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newName, template: newType, port: parseInt(newPort) })
+        body: JSON.stringify(body)
       });
       if (!res.ok) throw new Error("Failed to create instance");
       const data = await res.json();
+      
+      // After creation, if we have a version or modpack, we might want to update the config immediately
+      // But let's assume the backend handles the basic template.
+      // I'll update the backend to support version and potentially modpacks in creation.
+      
       setInstances((prev: Instance[]) => [...prev, data]);
       setIsAddModalOpen(false);
+      
+      // Reset states
       setNewName("");
+      setSelectedModpack(null);
+      setSelectedAddVersion("latest");
+      setSelectedAddLoader("VANILLA");
+      
+      fetchInstances();
     } catch (e) {
       console.error(e);
       alert("Failed to create instance");
@@ -216,6 +250,20 @@ export default function App() {
       setMcVersions(data.versions || []);
     } catch (e) {
       console.error("Failed to fetch MC versions", e);
+    }
+  };
+
+  const handleModpackSearch = async (query: string, provider: string) => {
+    setIsModpackLoading(true);
+    try {
+      const res = await fetch(`/api/mods/search/${provider}?q=${encodeURIComponent(query)}&class_type=modpack`);
+      const data = await res.json();
+      setModpackResults(data);
+    } catch (e) {
+      console.error(e);
+      setModpackResults([]);
+    } finally {
+      setIsModpackLoading(false);
     }
   };
 
@@ -540,7 +588,14 @@ export default function App() {
              <span className="text-xl font-bold tracking-tight text-white">Isopod</span>
           </div>
           <button 
-            onClick={() => setIsAddModalOpen(true)}
+            onClick={() => {
+               setIsAddModalOpen(true);
+               setAddTab("custom");
+               setNewName("");
+               setSelectedAddVersion("latest");
+               setSelectedAddLoader("VANILLA");
+               setSelectedModpack(null);
+            }}
             className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium"
           >
             <Plus className="w-4 h-4 text-emerald-400" />
@@ -730,67 +785,236 @@ export default function App() {
       </aside>
 
       {isAddModalOpen && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-[#242424] border border-[#3A3A3A] p-6 rounded-lg shadow-xl w-full max-w-md">
-            <h2 className="text-xl font-bold mb-4 text-[#E0E0E0]">Add New Instance</h2>
-            <form onSubmit={handleAddInstance} className="flex flex-col gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1 text-neutral-300">Server Name</label>
-                <input 
-                  autoFocus
-                  required
-                  type="text" 
-                  value={newName} 
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewName(e.target.value)} 
-                  className="w-full bg-[#1A1A1A] border border-[#3A3A3A] p-2 rounded focus:outline-none focus:border-[#3E8ED0]"
-                  placeholder="e.g. My Vanilla Server"
-                />
+        <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md p-6">
+          <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg shadow-2xl w-full max-w-5xl h-[80vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+            
+            {/* Top Bar: Name, Icon, Group, Port */}
+            <div className="px-6 py-5 border-b border-[#323232] bg-[#2B2B2B] flex items-center gap-6">
+              <div className="w-16 h-16 bg-[#3B3B3B] rounded flex items-center justify-center shadow-inner relative group border border-[#444]">
+                 {selectedModpack?.icon_url ? <img src={selectedModpack.icon_url} className="w-full h-full object-cover rounded" /> : <Gamepad2 className="w-8 h-8 text-neutral-600" />}
+                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity cursor-pointer rounded">
+                    <Edit className="w-4 h-4 text-white" />
+                 </div>
               </div>
-              <div className="flex gap-4">
-                <div className="flex-1">
-                  <label className="block text-sm font-medium mb-1 text-neutral-300">Type</label>
-                  <select 
-                    value={newType} 
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setNewType(e.target.value)}
-                    className="w-full bg-[#1A1A1A] border border-[#3A3A3A] p-2 rounded focus:outline-none focus:border-[#3E8ED0]"
+              <div className="flex-1 space-y-3">
+                 <div className="flex items-center gap-4">
+                    <div className="flex-1">
+                       <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-1">Instance Name</label>
+                       <input 
+                         autoFocus
+                         required
+                         type="text" 
+                         value={newName} 
+                         onChange={(e) => setNewName(e.target.value)} 
+                         className="w-full bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-1.5 rounded text-lg font-bold text-white focus:outline-none focus:border-[#3E8ED0]"
+                         placeholder="e.g. My Modded World"
+                       />
+                    </div>
+                    <div className="w-32">
+                       <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-1">Server Port</label>
+                       <input 
+                         required
+                         type="number" 
+                         value={newPort} 
+                         onChange={(e) => setNewPort(e.target.value)} 
+                         className="w-full bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-1.5 rounded text-lg font-mono text-emerald-400 focus:outline-none focus:border-[#3E8ED0]"
+                         placeholder="25565"
+                       />
+                    </div>
+                 </div>
+                 <div>
+                    <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-1">Group</label>
+                    <select className="w-full bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-1 text-xs text-neutral-400 rounded focus:outline-none focus:border-[#3E8ED0]">
+                       <option>No group</option>
+                    </select>
+                 </div>
+              </div>
+            </div>
+
+            <div className="flex-1 flex overflow-hidden">
+               {/* Sidebar */}
+               <div className="w-48 bg-[#1E1E1E] border-r border-[#323232] p-2 flex flex-col gap-1">
+                  {[
+                     { id: "custom", name: "Custom", icon: Gamepad2 },
+                     { id: "import", name: "Import", icon: Database },
+                     { id: "atlauncher", name: "ATLauncher", icon: Box },
+                     { id: "curseforge", name: "CurseForge", icon: Settings },
+                     { id: "modrinth", name: "Modrinth", icon: RefreshCw },
+                     { id: "technic", name: "Technic", icon: Layers }
+                  ].map((tab) => (
+                     <button 
+                        key={tab.id}
+                        onClick={() => {
+                           setAddTab(tab.id as any);
+                           if (tab.id === 'modrinth' || tab.id === 'curseforge') {
+                              handleModpackSearch("", tab.id);
+                           }
+                        }}
+                        className={`flex items-center gap-3 px-3 py-2 rounded text-sm font-medium transition-all ${addTab === tab.id ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                     >
+                        <tab.icon className="w-4 h-4" />
+                        {tab.name}
+                     </button>
+                  ))}
+               </div>
+
+               {/* Content Area */}
+               <div className="flex-1 bg-[#1A1A1A] flex flex-col overflow-hidden">
+                  {addTab === "custom" && (
+                     <div className="flex h-full overflow-hidden">
+                        <div className="flex-1 flex flex-col p-4 overflow-hidden">
+                           <h4 className="text-sm font-bold text-neutral-300 mb-3 ml-1">Minecraft Version</h4>
+                           <div className="flex-1 border border-[#333] bg-[#0F0F0F] rounded overflow-hidden flex flex-col">
+                              <div className="grid grid-cols-3 px-4 py-2 border-b border-[#333] bg-[#242424] text-[10px] font-bold text-neutral-500 uppercase tracking-widest">
+                                 <div>Version</div>
+                                 <div className="text-right">Released</div>
+                                 <div className="text-right">Type</div>
+                              </div>
+                              <div className="flex-1 overflow-auto">
+                                 {mcVersions.map((v: any) => (
+                                    <div 
+                                       key={v.id}
+                                       onClick={() => setSelectedAddVersion(v.id)}
+                                       className={`grid grid-cols-3 px-4 py-2 text-sm font-mono cursor-pointer border-b border-[#1A1A1A] transition-colors ${selectedAddVersion === v.id ? 'bg-[#3E8ED0]/20 text-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
+                                    >
+                                       <div className="flex items-center gap-2">
+                                          {v.type === 'release' && <Check className="w-3 h-3 text-emerald-500" />}
+                                          <span>{v.id}</span>
+                                       </div>
+                                       <div className="text-right opacity-50">{new Date(v.releaseTime).toLocaleDateString()}</div>
+                                       <div className="text-right capitalize text-[10px] font-bold opacity-60">{v.type}</div>
+                                    </div>
+                                 ))}
+                              </div>
+                           </div>
+                           <div className="mt-4 flex gap-4">
+                              <div className="flex-1 relative">
+                                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-neutral-600" />
+                                 <input type="text" placeholder="Search versions..." className="w-full bg-[#141414] border border-[#333] pl-9 pr-4 py-1.5 rounded text-xs focus:outline-none focus:border-[#3E8ED0]" />
+                              </div>
+                              <button onClick={fetchMcVersions} className="px-4 py-1.5 bg-[#323232] hover:bg-[#404040] rounded text-xs font-bold text-neutral-400 transition-colors">Refresh</button>
+                           </div>
+                        </div>
+                        
+                        {/* Filters & Loaders Panel */}
+                        <div className="w-48 border-l border-[#323232] flex flex-col p-4 bg-[#1E1E1E]">
+                           <div className="flex-1">
+                              <h5 className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-3">Filters</h5>
+                              <div className="space-y-2">
+                                 {['Releases', 'Snapshots', 'Betas', 'Alphas'].map(f => (
+                                    <label key={f} className="flex items-center gap-2 text-xs text-neutral-400 hover:text-white cursor-pointer">
+                                       <input type="checkbox" defaultChecked={f === 'Releases'} className="rounded bg-[#141414] border-[#333] accent-[#3E8ED0]" />
+                                       {f}
+                                    </label>
+                                 ))}
+                              </div>
+                           </div>
+                           
+                           <div className="pt-4 border-t border-[#323232]">
+                              <h5 className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-3">Mod Loader</h5>
+                              <div className="space-y-2">
+                                 {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT'].map(l => (
+                                    <label key={l} className="flex items-center gap-2 text-xs text-neutral-400 hover:text-white cursor-pointer" onClick={() => setSelectedAddLoader(l)}>
+                                       <div className={`w-3 h-3 rounded-full border border-[#444] flex items-center justify-center ${selectedAddLoader === l ? 'bg-[#3E8ED0] border-[#3E8ED0]' : ''}`}>
+                                          {selectedAddLoader === l && <div className="w-1 h-1 bg-white rounded-full" />}
+                                       </div>
+                                       <span className={selectedAddLoader === l ? 'text-white font-bold' : ''}>{l}</span>
+                                    </label>
+                                 ))}
+                              </div>
+                           </div>
+                        </div>
+                     </div>
+                  )}
+
+                  {(addTab === "modrinth" || addTab === "curseforge") && (
+                     <div className="flex flex-col h-full bg-[#1E1E1E]/50">
+                        <div className="p-4 bg-[#242424] border-b border-[#323232] flex gap-3">
+                           <div className="flex-1 relative">
+                              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
+                              <input 
+                                 type="text" 
+                                 placeholder={`Search ${addTab === 'modrinth' ? 'Modrinth' : 'CurseForge'} modpacks...`}
+                                 value={searchModpacks}
+                                 onChange={(e) => setSearchModpacks(e.target.value)}
+                                 onKeyDown={(e) => e.key === 'Enter' && handleModpackSearch(searchModpacks, addTab)}
+                                 className="w-full bg-[#141414] border border-[#3A3A3A] pl-10 pr-4 py-2 rounded focus:outline-none focus:border-[#3E8ED0] text-sm"
+                              />
+                           </div>
+                           <button 
+                              onClick={() => handleModpackSearch(searchModpacks, addTab)}
+                              className="px-6 py-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white font-bold rounded text-sm transition-all shadow-lg shadow-[#3E8ED0]/15"
+                           >
+                              Search
+                           </button>
+                        </div>
+                        <div className="flex-1 overflow-auto p-4 grid grid-cols-1 gap-2">
+                           {isModpackLoading ? (
+                              <div className="flex flex-col items-center justify-center h-64 text-neutral-600 gap-3">
+                                 <RefreshCw className="w-8 h-8 animate-spin" />
+                                 <span className="text-sm font-medium">Fetching modpacks...</span>
+                              </div>
+                           ) : modpackResults.length === 0 ? (
+                              <div className="flex flex-col items-center justify-center h-64 text-neutral-600 opacity-40">
+                                 <Box className="w-12 h-12 mb-3" />
+                                 <p className="text-sm">Enter keywords to find modpacks</p>
+                              </div>
+                           ) : (
+                              modpackResults.map((pack) => (
+                                 <div 
+                                    key={pack.id} 
+                                    onClick={() => {
+                                       setSelectedModpack(pack);
+                                       if (!newName) setNewName(pack.name);
+                                    }}
+                                    className={`flex items-center gap-4 p-3 rounded-lg border cursor-pointer transition-all ${selectedModpack?.id === pack.id ? 'bg-[#3E8ED0]/20 border-[#3E8ED0] shadow-lg shadow-[#3E8ED0]/5' : 'bg-[#222] border-[#333] hover:bg-[#282828] hover:border-[#444]'}`}
+                                 >
+                                    <div className="w-12 h-12 bg-[#333] rounded overflow-hidden flex-shrink-0 shadow-inner">
+                                       {pack.icon_url ? <img src={pack.icon_url} className="w-full h-full object-cover" /> : <Box className="w-full h-full p-2 text-neutral-600" />}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                       <div className="flex items-center justify-between mb-0.5">
+                                          <h5 className="font-bold text-[#E0E0E0] truncate text-sm">{pack.name}</h5>
+                                          <span className="text-[10px] font-mono text-neutral-500 bg-[#111] px-1.5 py-0.5 rounded italic">By {pack.author}</span>
+                                       </div>
+                                       <p className="text-[11px] text-neutral-400 line-clamp-1 leading-relaxed">{pack.summary}</p>
+                                       <div className="flex items-center gap-4 mt-1">
+                                          <span className="text-[9px] font-bold text-neutral-500 uppercase flex items-center gap-1"><RefreshCw className="w-2.5 h-2.5" /> {pack.downloads.toLocaleString()} DL</span>
+                                       </div>
+                                    </div>
+                                 </div>
+                              ))
+                           )}
+                        </div>
+                     </div>
+                  )}
+               </div>
+            </div>
+
+            {/* Bottom Actions */}
+            <div className="p-4 bg-[#2D2D2D] border-t border-[#3A3A3A] flex justify-between items-center px-6">
+               <button className="flex items-center gap-2 text-neutral-500 hover:text-white transition-colors text-xs font-medium">
+                  <AlertCircle className="w-4 h-4" /> Help
+               </button>
+               <div className="flex gap-2">
+                  <button 
+                    onClick={() => setIsAddModalOpen(false)}
+                    className="px-6 py-2 rounded bg-transparent hover:bg-[#3A3A3A] text-neutral-400 hover:text-white font-bold transition-all text-sm border border-transparent hover:border-[#444]"
                   >
-                    <option value="vanilla">Vanilla</option>
-                    <option value="fabric">Fabric</option>
-                    <option value="forge">Forge</option>
-                    <option value="paper">Paper</option>
-                  </select>
-                </div>
-                <div className="flex-[0.5]">
-                  <label className="block text-sm font-medium mb-1 text-neutral-300">Port</label>
-                  <input 
-                    required
-                    type="number" 
-                    value={newPort} 
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewPort(e.target.value)} 
-                    className="w-full bg-[#1A1A1A] border border-[#3A3A3A] p-2 rounded focus:outline-none focus:border-[#3E8ED0]"
-                    placeholder="25565"
-                  />
-                </div>
-              </div>
-              <div className="flex justify-end gap-3 mt-4">
-                <button 
-                  type="button" 
-                  onClick={() => setIsAddModalOpen(false)}
-                  className="px-4 py-2 rounded text-neutral-400 hover:text-white transition-colors"
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit" 
-                  disabled={isCreating}
-                  className={`px-4 py-2 rounded font-medium shadow-sm transition-colors ${
-                    isCreating ? 'bg-[#3E8ED0]/50 text-white/50 cursor-not-allowed' : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white'
-                  }`}
-                >
-                  {isCreating ? "Creating..." : "Create"}
-                </button>
-              </div>
-            </form>
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={handleAddInstance}
+                    disabled={isCreating || !newName}
+                    className={`px-8 py-2 rounded font-bold text-sm shadow-xl transition-all ${
+                      isCreating || !newName ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed border border-[#333]' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-500/10'
+                    }`}
+                  >
+                    {isCreating ? "Creating..." : "OK"}
+                  </button>
+               </div>
+            </div>
+
           </div>
         </div>
       )}

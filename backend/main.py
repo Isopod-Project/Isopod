@@ -57,6 +57,9 @@ class CreateInstanceRequest(BaseModel):
     name: str
     template: str
     port: int
+    version: Optional[str] = "latest"
+    modrinth_id: Optional[str] = None
+    cf_id: Optional[str] = None
 
 class CommandRequest(BaseModel):
     command: str
@@ -260,7 +263,7 @@ async def get_mc_versions():
         return data
 
 @app.get("/api/mods/search/modrinth")
-async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None):
+async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None, class_type: str = "mod"):
     # Handle "undefined" literals from frontend
     q = None if q == "undefined" or not q else q
     mc_version = None if mc_version == "undefined" or not mc_version else mc_version
@@ -270,7 +273,7 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
     query_str = q if q else ""
         
     facets = [
-        ["project_type:mod"],
+        [f"project_type:{class_type}"],
         ["server_side:required", "server_side:optional"] # Skip "unsupported" (client-only)
     ]
     if mc_version:
@@ -304,11 +307,14 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
     return results
 
 @app.get("/api/mods/search/curseforge")
-async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None):
+async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None, class_type: str = "mod"):
     # Handle "undefined" literals from frontend
     q = None if q == "undefined" or not q else q
     mc_version = None if mc_version == "undefined" or not mc_version else mc_version
     loader = None if loader == "undefined" or not loader else loader
+    
+    # Using '6' for mods, '4471' for modpacks
+    class_id = 4471 if class_type == "modpack" else 6
     
     # If query is empty, we browse via parameters
     query_str = q if q else ""
@@ -329,8 +335,8 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
     params = {
         "gameId": 432, # Minecraft
         "searchFilter": q,
-        "classId": 6, # Mods
-        "excludeCategoryIds": "4764", # Client Side
+        "classId": class_id, 
+        "excludeCategoryIds": "4764" if class_id == 6 else None, # Client Side only for mods
         "pageSize": 20
     }
     if mc_version:
@@ -383,6 +389,7 @@ def create_instance(req: CreateInstanceRequest):
                 "environment": [
                     "EULA=TRUE",
                     f"TYPE={req.template.upper()}",
+                    f"VERSION={req.version or 'latest'}",
                     f"MOTD={req.name} Hosted by Isopod",
                     "ENABLE_RCON=true",
                     "RCON_PASSWORD=isopod"
@@ -392,6 +399,13 @@ def create_instance(req: CreateInstanceRequest):
             }
         }
     }
+    
+    # Add modpack if present
+    env = compose_content["services"]["mc"]["environment"]
+    if req.modrinth_id:
+        env.append(f"MODRINTH_PROJECTS={req.modrinth_id}")
+    if req.cf_id:
+        env.append(f"CF_PROJECTS={req.cf_id}")
     
     with open(os.path.join(path, "docker-compose.yml"), "w") as f:
         yaml.dump(compose_content, f, default_flow_style=False)
