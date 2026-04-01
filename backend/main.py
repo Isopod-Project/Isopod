@@ -58,6 +58,9 @@ class CreateInstanceRequest(BaseModel):
     template: str
     port: int
 
+class CommandRequest(BaseModel):
+    command: str
+
 class Instance(BaseModel):
     id: str
     name: str
@@ -340,7 +343,9 @@ def create_instance(req: CreateInstanceRequest):
                 "environment": [
                     "EULA=TRUE",
                     f"TYPE={req.template.upper()}",
-                    f"MOTD={req.name} Hosted by Isopod"
+                    f"MOTD={req.name} Hosted by Isopod",
+                    "ENABLE_RCON=true",
+                    "RCON_PASSWORD=isopod"
                 ],
                 "volumes": ["./data:/data"],
                 "restart": "unless-stopped"
@@ -374,6 +379,23 @@ def get_instance_logs(instance_id: str, tail: int = 200):
         return {"logs": result.stdout + result.stderr}
     except Exception as e:
         return {"logs": f"Error fetching logs: {str(e)}"}
+
+@app.post("/api/instances/{instance_id}/command")
+def execute_command(instance_id: str, req: CommandRequest):
+    """Execute a command on the 'mc' service of the instance using docker compose exec."""
+    path = get_instance_path(instance_id)
+    # Using 'docker compose exec mc rcon-cli [command]'
+    # rcon-cli is the built-in helper in itzg/minecraft-server
+    cmd = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", req.command]
+    try:
+        # Check if running
+        result = subprocess.run(cmd, cwd=path, capture_output=True, text=True, timeout=10)
+        return {
+            "output": result.stdout + result.stderr,
+            "success": result.returncode == 0
+        }
+    except Exception as e:
+        return {"output": f"Execution error: {str(e)}", "success": False}
 
 @app.get("/api/mods/metadata")
 async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):

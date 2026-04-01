@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save } from "lucide-react";
 
 interface Instance {
@@ -53,6 +53,9 @@ export default function App() {
   const [modListView, setModListView] = useState<"list" | "search">("list");
   const [installedModsMeta, setInstalledModsMeta] = useState<any[]>([]);
   const [isMetaLoading, setIsMetaLoading] = useState(false);
+  const [consoleCommand, setConsoleCommand] = useState("");
+  const [isExecuting, setIsExecuting] = useState(false);
+  const scrollRef = useRef<HTMLPreElement>(null);
 
   const fetchInstances = async () => {
     try {
@@ -259,6 +262,31 @@ export default function App() {
       setIsMetaLoading(false);
     }
   };
+
+  const handleSendCommand = async (id: string, cmd: string) => {
+    if (!cmd.trim()) return;
+    setIsExecuting(true);
+    try {
+      const res = await fetch(`/api/instances/${id}/command`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command: cmd })
+      });
+      const data = await res.json();
+      setLogs(prev => prev + `\n> ${cmd}\n${data.output}`);
+      setConsoleCommand("");
+    } catch (e) {
+      console.error("Failed to send command", e);
+    } finally {
+      setIsExecuting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [logs, editTab]);
 
   const openEditModal = () => {
     if (!selectedId) return;
@@ -606,9 +634,31 @@ export default function App() {
                         Refresh
                       </button>
                     </div>
-                    <pre className="flex-1 bg-[#0D0D0D] rounded-lg border border-[#333] p-5 overflow-auto text-xs font-mono text-emerald-400/90 whitespace-pre-wrap selection:bg-[#3E8ED0]/40 shadow-inner">
-                      {logs || "Waiting for output..."}
+                    <pre 
+                       ref={scrollRef}
+                       className="flex-1 bg-[#0D0D0D] rounded-t-lg border border-[#333] p-5 overflow-auto text-xs font-mono text-emerald-400/90 whitespace-pre-wrap selection:bg-[#3E8ED0]/40 shadow-inner"
+                    >
+                       {logs || "Waiting for output..."}
                     </pre>
+                    <div className="flex bg-[#1A1A1A] border-x border-b border-[#333] rounded-b-lg p-3 gap-3">
+                       <input 
+                          type="text"
+                          placeholder="Type a command (whitelist, op, kick...)"
+                          className="flex-1 bg-[#050505] border border-[#333] px-3 py-2 rounded text-emerald-500 font-mono text-sm focus:outline-none focus:border-[#3E8ED0]"
+                          value={consoleCommand}
+                          onChange={(e) => setConsoleCommand(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleSendCommand(selectedInstance?.id || "", consoleCommand)}
+                          disabled={isExecuting}
+                       />
+                       <button 
+                          onClick={() => handleSendCommand(selectedInstance?.id || "", consoleCommand)}
+                          disabled={isExecuting}
+                          className="px-4 py-2 bg-[#323232] hover:bg-[#404040] rounded text-xs font-bold text-neutral-400 transition-colors flex items-center gap-2"
+                       >
+                          {isExecuting ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Terminal className="w-3 h-3" />}
+                          Send
+                       </button>
+                    </div>
                   </div>
                 )}
 
