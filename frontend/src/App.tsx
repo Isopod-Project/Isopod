@@ -291,7 +291,7 @@ export default function App() {
               
               {selectedStatus?.is_running ? (
                 <button 
-                  onClick={() => handleStop(selectedInstance.id)}
+                  onClick={(e) => handleStop(selectedInstance.id, e)}
                   className="flex items-center gap-3 px-3 py-2.5 rounded bg-[#402020] hover:bg-[#5A2525] border border-[#502020] text-red-400 transition-colors"
                 >
                   <Square className="w-4 h-4 fill-current" />
@@ -299,7 +299,7 @@ export default function App() {
                 </button>
               ) : (
                 <button 
-                  onClick={() => handleStart(selectedInstance.id)}
+                  onClick={(e) => handleStart(selectedInstance.id, e)}
                   className="flex items-center gap-3 px-3 py-2.5 rounded bg-[#1A3A22] hover:bg-[#204A2A] border border-[#2A5030] text-emerald-400 transition-colors"
                 >
                   <Play className="w-4 h-4 fill-current" />
