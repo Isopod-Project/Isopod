@@ -25,7 +25,7 @@ export default function App() {
 
   const fetchInstances = async () => {
     try {
-      const res = await fetch("http://localhost:8000/api/instances");
+      const res = await fetch("/api/instances");
       if (!res.ok) throw new Error("Backend error");
       const data = await res.json();
       setInstances(data);
@@ -50,7 +50,7 @@ export default function App() {
 
   const fetchStatus = async (id: string) => {
     try {
-      const res = await fetch(`http://localhost:8000/api/instances/${id}/status`);
+      const res = await fetch(`/api/instances/${id}/status`);
       const data = await res.json();
       setStatuses(prev => ({ ...prev, [id]: data }));
     } catch (e) {
@@ -64,7 +64,7 @@ export default function App() {
         ...prev, 
         [id]: { ...prev[id], is_running: true } // Optimistic update
       }));
-      await fetch(`http://localhost:8000/api/instances/${id}/start`, { method: "POST" });
+      await fetch(`/api/instances/${id}/start`, { method: "POST" });
       setTimeout(() => fetchStatus(id), 2000);
     } catch (e) {
       console.error(e);
@@ -78,7 +78,7 @@ export default function App() {
         ...prev, 
         [id]: { ...prev[id], is_running: false } // Optimistic update
       }));
-      await fetch(`http://localhost:8000/api/instances/${id}/stop`, { method: "POST" });
+      await fetch(`/api/instances/${id}/stop`, { method: "POST" });
       setTimeout(() => fetchStatus(id), 2000);
     } catch (e) {
       console.error(e);
