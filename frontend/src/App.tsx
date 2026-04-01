@@ -180,6 +180,17 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Poll logs when modal is open
+  useEffect(() => {
+    let interval: any;
+    if (isEditModalOpen && editTab === "logs" && selectedId) {
+       interval = setInterval(() => {
+         fetchLogs(selectedId);
+       }, 2000);
+    }
+    return () => clearInterval(interval);
+  }, [isEditModalOpen, editTab, selectedId]);
+
   const selectedInstance = instances.find(i => i.id === selectedId);
   const selectedStatus = selectedId ? statuses[selectedId] : null;
 
