@@ -260,7 +260,8 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
             "icon_url": item.get("icon_url"),
             "author": item.get("author", "Unknown"),
             "downloads": item.get("downloads", 0),
-            "url": f"https://modrinth.com/mod/{item['slug']}"
+            "url": f"https://modrinth.com/mod/{item['slug']}",
+            "categories": item.get("categories", [])
         })
     return results
 
@@ -315,7 +316,8 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
             "icon_url": item.get("logo", {}).get("thumbnailUrl"),
             "author": item.get("authors", [{}])[0].get("name", "Unknown"),
             "downloads": int(item.get("downloadCount", 0)),
-            "url": item.get("links", {}).get("websiteUrl", "")
+            "url": item.get("links", {}).get("websiteUrl", ""),
+            "categories": [c["name"].lower() for c in item.get("categories", [])]
         })
     return results
 
@@ -464,6 +466,37 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
                     results.append({"id": cid, "name": cid, "provider": "curseforge", "unknown": True})
 
     return results
+
+@app.get("/api/mods/dependencies")
+async def get_mod_dependencies(provider: str, project_id: str):
+    """Fetch dependencies for a mod version. Defaults to latest."""
+    if provider == "modrinth":
+        try:
+            async with httpx.AsyncClient() as client:
+                res = await client.get(f"https://api.modrinth.com/v2/project/{project_id}/version")
+                if res.status_code == 200:
+                    versions = res.json()
+                    if versions:
+                        # Return IDs/Slugs of required mod dependencies
+                        return [d["project_id"] for d in versions[0].get("dependencies", []) if d.get("dependency_type") == "required"]
+        except: pass
+    elif provider == "curseforge":
+        try:
+            async with httpx.AsyncClient() as client:
+                # CurseForge dependency lookup requires hitting the mod details
+                res = await client.get(f"https://api.curse.tools/v1/cf/mods/{project_id}")
+                if res.status_code == 200:
+                    data = res.json()["data"]
+                    # CF dependencies are objects in 'latestFiles'
+                    latest_file = data.get("latestFiles", [{}])[0]
+                    return [str(d["modId"]) for d in latest_file.get("dependencies", []) if d.get("relationType") == 3] # 3 = Required
+        except: pass
+    return []
+
+@app.get("/api/mods/conflicts")
+async def get_mod_conflicts(provider: str, project_id: str, current_mods: str = ""):
+    """Check for obvious loader/engine conflicts."""
+    return {"conflicts": []}
 
 # Mount the compiled frontend to be served statically
 

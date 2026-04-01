@@ -282,6 +282,36 @@ export default function App() {
     }
   };
 
+  const addWithDependencies = async (res: any, provider: string) => {
+    const envKey = provider === 'modrinth' ? "MODRINTH_PROJECTS" : "CF_PROJECTS";
+    const currentList: string = config.environment[envKey] || "";
+    const ids = currentList.split(',').map(s => s.trim()).filter(Boolean);
+    
+    if (ids.includes(res.id)) return;
+
+    try {
+      // Fetch dependencies
+      const depRes = await fetch(`/api/mods/dependencies?provider=${provider}&project_id=${res.id}`);
+      const depIds: string[] = await depRes.json();
+      
+      const toAdd = [res.id, ...depIds];
+      const newIds = [...new Set([...ids, ...toAdd])].join(',');
+      
+      setConfig(prev => ({
+        ...prev,
+        environment: { ...prev.environment, [envKey]: newIds }
+      }));
+    } catch (e) {
+      console.error("Failed to fetch dependencies", e);
+      // Fallback: just add the mod itself
+      const newList = currentList ? `${currentList},${res.id}` : res.id;
+      setConfig(prev => ({
+        ...prev,
+        environment: { ...prev.environment, [envKey]: newList }
+      }));
+    }
+  };
+
   useEffect(() => {
     if (scrollRef.current) {
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -983,24 +1013,49 @@ export default function App() {
                                                   </div>
                                                   <p className="text-[11px] text-neutral-400 line-clamp-2 leading-relaxed mb-2">{res.summary}</p>
                                                   <div className="flex items-center justify-between">
-                                                     <span className="text-[10px] text-neutral-500 font-mono">By {res.author} • {res.downloads.toLocaleString()} downloads</span>
+                                                     <div className="flex flex-col gap-1">
+                                                        <span className="text-[10px] text-neutral-500 font-mono">By {res.author} • {res.downloads.toLocaleString()} downloads</span>
+                                                        {/* Conflict/Warning display */}
+                                                        {(() => {
+                                                          const instanceLoader = config.environment["TYPE"] || "";
+                                                          const modCats = res.categories || [];
+                                                          const hasFabric = modCats.includes("fabric");
+                                                          const hasForge = modCats.includes("forge") || modCats.includes("neoforge");
+                                                          
+                                                          if (instanceLoader === "FABRIC" && hasForge && !hasFabric) {
+                                                             return <div className="text-[9px] text-red-400 font-bold flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Potential Forge-only mod</div>;
+                                                          }
+                                                          if ((instanceLoader === "FORGE" || instanceLoader === "NEOFORGE") && hasFabric && !hasForge) {
+                                                             return <div className="text-[9px] text-red-400 font-bold flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Potential Fabric-only mod</div>;
+                                                          }
+                                                          return null;
+                                                        })()}
+                                                     </div>
                                                      {isAdded ? (
                                                         <div className="flex items-center gap-1 text-emerald-400 text-[10px] font-bold bg-emerald-400/10 px-2 py-0.5 rounded border border-emerald-400/20">
                                                            <Check className="w-3 h-3" /> Added
                                                         </div>
                                                      ) : (
-                                                        <button 
-                                                           onClick={() => {
-                                                              const newList = currentList ? `${currentList},${res.id}` : res.id;
-                                                              setConfig(prev => ({
-                                                                 ...prev,
-                                                                 environment: { ...prev.environment, [envKey]: newList }
-                                                              }));
-                                                           }}
-                                                           className="flex items-center gap-1.5 px-3 py-1 bg-[#3E8ED0]/10 hover:bg-[#3E8ED0] text-[#3E8ED0] hover:text-white rounded border border-[#3E8ED0]/30 transition-all text-[11px] font-bold"
-                                                        >
-                                                           <Plus className="w-3 h-3" /> Add Mod
-                                                        </button>
+                                                        <div className="flex gap-2">
+                                                           <button 
+                                                              onClick={() => {
+                                                                 const newList = currentList ? `${currentList},${res.id}` : res.id;
+                                                                 setConfig(prev => ({
+                                                                    ...prev,
+                                                                    environment: { ...prev.environment, [envKey]: newList }
+                                                                 }));
+                                                              }}
+                                                              className="flex items-center gap-1.5 px-3 py-1 bg-[#222] hover:bg-[#333] text-neutral-400 hover:text-white rounded border border-[#333] transition-all text-[11px] font-bold"
+                                                           >
+                                                              <Plus className="w-3 h-3" /> Add
+                                                           </button>
+                                                           <button 
+                                                              onClick={() => addWithDependencies(res, modSearchProvider)}
+                                                              className="flex items-center gap-1.5 px-3 py-1 bg-[#3E8ED0]/10 hover:bg-[#3E8ED0] text-[#3E8ED0] hover:text-white rounded border border-[#3E8ED0]/30 transition-all text-[11px] font-bold"
+                                                           >
+                                                              <RefreshCw className="w-3 h-3" /> Add with Deps
+                                                           </button>
+                                                        </div>
                                                      )}
                                                   </div>
                                                </div>
