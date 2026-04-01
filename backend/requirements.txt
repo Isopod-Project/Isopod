@@ -3,3 +3,4 @@ uvicorn
 docker
 pyyaml
 python-dotenv
+httpx

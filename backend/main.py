@@ -11,6 +11,9 @@ from dotenv import load_dotenv
 import docker
 import yaml
 from typing import List, Optional, Dict, Any
+import httpx
+import json
+import time
 
 load_dotenv()
 
@@ -35,6 +38,15 @@ except docker.errors.DockerException:
 class InstanceConfig(BaseModel):
     image: str
     environment: Dict[str, str]
+
+class ModResponse(BaseModel):
+    id: str
+    name: str
+    summary: str
+    icon_url: Optional[str]
+    author: str
+    downloads: int
+    url: str
 
 class InstanceStatus(BaseModel):
     instance_id: str
@@ -186,6 +198,121 @@ def update_config(instance_id: str, new_config: InstanceConfig):
         yaml.dump(config, f, default_flow_style=False)
         
     return {"message": "Config updated"}
+
+# Meta & Mod Proxy Endpoints
+VERSION_MANIFEST_URL = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
+cached_versions = {"time": 0, "data": None}
+
+@app.get("/api/meta/versions")
+async def get_mc_versions():
+    global cached_versions
+    now = time.time()
+    if cached_versions["data"] and (now - cached_versions["time"] < 3600):
+        return cached_versions["data"]
+        
+    async with httpx.AsyncClient() as client:
+        res = await client.get(VERSION_MANIFEST_URL)
+        data = res.json()
+        cached_versions = {"time": now, "data": data}
+        return data
+
+@app.get("/api/mods/search/modrinth")
+async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None):
+    # Handle "undefined" literals from frontend
+    q = None if q == "undefined" or not q else q
+    mc_version = None if mc_version == "undefined" or not mc_version else mc_version
+    loader = None if loader == "undefined" or not loader else loader
+    
+    print(f"Modrinth Search: q={q}, mc={mc_version}, loader={loader}")
+    
+    if not q:
+        return []
+        
+    facets = [["project_type:mod"]]
+    if mc_version:
+        facets.append([f"versions:{mc_version}"])
+    if loader:
+        facets.append([f"loaders:{loader.lower()}"])
+        
+    url = "https://api.modrinth.com/v2/search"
+    params = {
+        "query": q,
+        "facets": json.dumps(facets),
+        "limit": 20
+    }
+    
+    async with httpx.AsyncClient() as client:
+        res = await client.get(url, params=params)
+        data = res.json()
+        
+    results = []
+    for item in data.get("hits", []):
+        results.append({
+            "id": item["slug"], # Using slug as ID for itzg/minecraft-server
+            "name": item["title"],
+            "summary": item["description"],
+            "icon_url": item.get("icon_url"),
+            "author": item.get("author", "Unknown"),
+            "downloads": item.get("downloads", 0),
+            "url": f"https://modrinth.com/mod/{item['slug']}"
+        })
+    return results
+
+@app.get("/api/mods/search/curseforge")
+async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None):
+    # Handle "undefined" literals from frontend
+    q = None if q == "undefined" or not q else q
+    mc_version = None if mc_version == "undefined" or not mc_version else mc_version
+    loader = None if loader == "undefined" or not loader else loader
+    
+    print(f"CurseForge Search: q={q}, mc={mc_version}, loader={loader}")
+    
+    if not q:
+        return []
+        
+    # Using a known public proxy for CurseForge searches
+    # itzg/minecraft-server uses the CurseForge ID (int)
+    url = "https://api.curse.tools/v1/cf/mods/search"
+    
+    mod_loader_type = 0 # Any
+    if loader:
+        l = loader.lower()
+        if "forge" in l: mod_loader_type = 1
+        elif "cauldron" in l: mod_loader_type = 2
+        elif "liteLoader" in l: mod_loader_type = 3
+        elif "fabric" in l: mod_loader_type = 4
+        elif "quilt" in l: mod_loader_type = 5
+        
+    params = {
+        "gameId": 432, # Minecraft
+        "searchFilter": q,
+        "classId": 6, # Mods
+        "pageSize": 20
+    }
+    if mc_version:
+        params["gameVersion"] = mc_version
+    if mod_loader_type > 0:
+        params["modLoaderType"] = mod_loader_type
+
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url, params=params)
+            data = res.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"CurseForge proxy error: {str(e)}")
+        
+    results = []
+    for item in data.get("data", []):
+        results.append({
+            "id": str(item["id"]),
+            "name": item["name"],
+            "summary": item["summary"],
+            "icon_url": item.get("logo", {}).get("thumbnailUrl"),
+            "author": item.get("authors", [{}])[0].get("name", "Unknown"),
+            "downloads": int(item.get("downloadCount", 0)),
+            "url": item.get("links", {}).get("websiteUrl", "")
+        })
+    return results
 
 def generate_slug(text: str) -> str:
     slug = text.lower()
