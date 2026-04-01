@@ -60,6 +60,7 @@ export default function App() {
   const [consoleCommand, setConsoleCommand] = useState("");
   const [isExecuting, setIsExecuting] = useState(false);
   const scrollRef = useRef<HTMLPreElement>(null);
+  const [isRestarting, setIsRestarting] = useState<Record<string, boolean>>({});
   
   // File Browser States
   const [fileList, setFileList] = useState<any[]>([]);
@@ -218,7 +219,25 @@ export default function App() {
       alert("No changes to save.");
       return;
     }
-    if (!confirm("Are you sure you want to apply these changes to the instance configuration? This will recreate the container next time you start it.")) return;
+
+    const status = statuses[selectedId];
+    const isRunning = status && status.is_running;
+
+    let proceed = false;
+    let shouldRestartAfter = false;
+
+    if (isRunning) {
+      if (confirm("Apply changes and restart the server now?")) {
+        proceed = true;
+        shouldRestartAfter = true;
+      }
+    } else {
+      if (confirm("Save changes to instance configuration?")) {
+        proceed = true;
+      }
+    }
+
+    if (!proceed) return;
     
     setIsSaving(true);
     try {
@@ -230,36 +249,41 @@ export default function App() {
       if (!res.ok) throw new Error("Failed to save config");
       setOriginalConfig(JSON.stringify(config));
       
-      // If server is currently running, suggest a restart
-      const status = statuses[selectedId];
-      if (status && status.is_running) {
-        if (confirm("Changes saved! The server needs to restart to apply them. Restart now?")) {
-            handleRestart(selectedId);
-        }
+      if (shouldRestartAfter) {
+        setIsEditModalOpen(false); // Exit to main screen
+        handleRestart(selectedId);
       } else {
-        alert("Changes saved successfully!");
+        alert("Changes saved explicitly.");
       }
 
     } catch (e: any) {
       alert("Save Error: " + e.message);
     } finally {
-      setIsSaving(false);
+      setIsSaving(true); // Small delay to prevent double save
+      setTimeout(() => setIsSaving(false), 500);
     }
   };
 
   const handleRestart = async (id: string) => {
+    setIsRestarting(prev => ({ ...prev, [id]: true }));
     try {
         setStatuses((prev: Record<string, InstanceStatus>) => ({
             ...prev, 
-            [id]: { ...prev[id], is_running: false }
+            [id]: { ...prev[id], is_running: false, is_ready: false }
         }));
         // We use stop then start for a clean reload of compose
         await fetch(`/api/instances/${id}/stop`, { method: "POST" });
         await fetch(`/api/instances/${id}/start`, { method: "POST" });
-        setTimeout(() => fetchStatus(id), 2000);
+        
+        // Modal closure already handled by handleSaveConfig if coming from there
+        
+        setTimeout(() => {
+          fetchStatus(id);
+          setIsRestarting(prev => ({ ...prev, [id]: false }));
+        }, 2000);
     } catch (e) {
         console.error("Restart failed", e);
-        alert("Failed to restart server. Please try manual Launch.");
+        setIsRestarting(prev => ({ ...prev, [id]: false }));
         fetchStatus(id);
     }
   };
