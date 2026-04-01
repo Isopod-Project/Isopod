@@ -13,6 +13,8 @@ interface InstanceStatus {
   instance_id: string;
   is_running: boolean;
   is_ready: boolean;
+  version?: string;
+  last_online?: number;
   containers: unknown[];
 }
 
@@ -614,6 +616,28 @@ export default function App() {
                 <Trash2 className="w-4 h-4" /> Delete
               </button>
             </div>
+
+            <div className="mt-auto p-4 bg-[#2D2D2D] border-t border-[#3A3A3A] space-y-3">
+                <div className="flex items-center justify-between text-[11px]">
+                   <span className="text-neutral-500 uppercase font-bold tracking-wider">Version</span>
+                   <span className="text-[#3E8ED0] font-mono font-bold bg-[#3E8ED0]/10 px-2 py-0.5 rounded border border-[#3E8ED0]/20">
+                      {selectedStatus?.version || "Unknown"}
+                   </span>
+                </div>
+                <div className="flex items-center justify-between text-[11px]">
+                   <span className="text-neutral-500 uppercase font-bold tracking-wider">Last Activity</span>
+                   <span className="text-neutral-400">
+                      {selectedStatus?.last_online ? (
+                        new Date(selectedStatus.last_online * 1000).toLocaleString([], {
+                           month: 'short', 
+                           day: 'numeric', 
+                           hour: '2-digit', 
+                           minute: '2-digit'
+                        })
+                      ) : "None"}
+                   </span>
+                </div>
+             </div>
           </>
         ) : (
           <div className="flex flex-col items-center justify-center p-8 h-full text-center text-neutral-500">

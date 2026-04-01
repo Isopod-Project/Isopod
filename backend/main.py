@@ -132,6 +132,26 @@ def get_instance_status(instance_id: str):
                 is_ready = True
         except: pass
 
+    # Get metadata like version and last active
+    version = "Unknown"
+    last_online = 0
+    try:
+        path = get_instance_path(instance_id)
+        # Try to pull version from docker-compose.yml
+        compose_path = os.path.join(path, "docker-compose.yml")
+        if os.path.exists(compose_path):
+           with open(compose_path, 'r') as f:
+               cdata = yaml.safe_load(f)
+               services = cdata.get("services", {})
+               # Support both top-level services or nested keys
+               mc_config = services.get("mc") or list(services.values())[0]
+               env = mc_config.get("environment", {})
+               version = env.get("VERSION", "Unknown")
+        
+        # Last online from docker-compose.yml mod date
+        last_online = os.path.getmtime(compose_path)
+    except: pass
+
     container_info = []
     for c in containers:
         container_info.append({
@@ -145,6 +165,8 @@ def get_instance_status(instance_id: str):
         "instance_id": instance_id,
         "is_running": is_running,
         "is_ready": is_ready,
+        "version": version,
+        "last_online": last_online,
         "containers": container_info
     }
 
