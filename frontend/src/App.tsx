@@ -504,8 +504,8 @@ export default function App() {
                  <Gamepad2 className="w-12 h-12 text-[#878787]" />
                  {selectedStatus?.is_running && (
                    <span className="absolute top-2 right-2 flex h-3 w-3">
-                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                     <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                     <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${selectedStatus?.is_ready ? 'bg-emerald-400' : 'bg-amber-400'} opacity-75`}></span>
+                     <span className={`relative inline-flex rounded-full h-3 w-3 ${selectedStatus?.is_ready ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
                    </span>
                  )}
 
