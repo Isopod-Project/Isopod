@@ -170,15 +170,20 @@ export default function App() {
   };
 
   const fetchLoaderVersions = async (loader: string, mcVersion: string) => {
-    if (loader === "VANILLA") {
+    if (!loader || loader === "VANILLA") {
        setLoaderVersions([]);
        return;
     }
     setIsLoaderLoading(true);
+    console.log(`DEBUG: Fetching loader versions for ${loader} ${mcVersion}`);
     try {
-       const res = await fetch(`/api/meta/loaders/${loader}?mc_version=${mcVersion}`);
+       // Use a stable latest version if mcVersion is still "latest"
+       const finalMcVersion = mcVersion === "latest" ? "" : mcVersion;
+       const res = await fetch(`/api/meta/loaders/${loader}?mc_version=${finalMcVersion}`);
+       if (!res.ok) throw new Error("Loader fetch failed");
        const data = await res.json();
-       setLoaderVersions(data || []);
+       console.log(`DEBUG: Loader versions data:`, data);
+       setLoaderVersions(Array.isArray(data) ? data : []);
        setSelectedAddLoaderVersion("latest");
     } catch (e) {
        console.error("Failed to fetch loader versions", e);
@@ -272,7 +277,16 @@ export default function App() {
       const res = await fetch("/api/meta/versions");
       if (!res.ok) throw new Error("Failed to fetch versions");
       const data = await res.json();
-      setMcVersions(data.versions || []);
+      const versions = data.versions || [];
+      setMcVersions(versions);
+      
+      // Auto-resolve 'latest' if it's still selected
+      if (selectedAddVersion === "latest" && versions.length > 0) {
+         const latestStable = versions.find((v: any) => v.type === 'release');
+         if (latestStable) {
+            setSelectedAddVersion(latestStable.id);
+         }
+      }
     } catch (e) {
       console.error("Failed to fetch MC versions", e);
     } finally {
@@ -609,8 +623,10 @@ export default function App() {
 
   // Fetch loader versions when selection changes
   useEffect(() => {
-    if (isAddModalOpen && selectedAddLoader !== "VANILLA" && selectedAddVersion !== "latest") {
-       fetchLoaderVersions(selectedAddLoader, selectedAddVersion);
+    if (isAddModalOpen && selectedAddLoader !== "VANILLA") {
+       // Only fetch if we have an actual version ID or 'latest'
+       const versionToFetch = selectedAddVersion === "latest" ? "" : selectedAddVersion;
+       fetchLoaderVersions(selectedAddLoader, versionToFetch);
     } else {
        setLoaderVersions([]);
     }

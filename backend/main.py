@@ -267,49 +267,53 @@ async def get_mc_versions():
 async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
     """Fetch available versions for a specific mod loader, optionally filtered by MC version."""
     loader = loader.lower()
-    async with httpx.AsyncClient() as client:
-        if loader == "fabric":
-            url = f"https://meta.fabricmc.net/v2/versions/loader"
-            if mc_version:
-                url = f"https://meta.fabricmc.net/v2/versions/loader/{mc_version}"
-            res = await client.get(url)
-            data = res.json()
-            # Return a simplified list of versions
-            if mc_version:
-                return [{"id": v["loader"]["version"], "stable": v["loader"]["stable"]} for v in data]
-            else:
-                return [{"id": v["version"], "stable": v["stable"]} for v in data]
+    print(f"DEBUG: Fetching {loader} versions for MC={mc_version}")
+    try:
+        async with httpx.AsyncClient() as client:
+            if loader == "fabric":
+                url = f"https://meta.fabricmc.net/v2/versions/loader"
+                if mc_version and mc_version != "latest":
+                    url = f"https://meta.fabricmc.net/v2/versions/loader/{mc_version}"
+                print(f"DEBUG: Fetching Fabric from {url}")
+                res = await client.get(url)
+                data = res.json()
+                if mc_version and mc_version != "latest":
+                    return [{"id": v["loader"]["version"], "stable": v["loader"]["stable"]} for v in data]
+                else:
+                    return [{"id": v["version"], "stable": v["stable"]} for v in data]
 
-        elif loader == "quilt":
-            url = f"https://meta.quiltmc.org/v2/versions/loader"
-            if mc_version:
-                url = f"https://meta.quiltmc.org/v2/versions/loader/{mc_version}"
-            res = await client.get(url)
-            data = res.json()
-            if mc_version:
-                return [{"id": v["loader"]["version"], "stable": v["loader"]["version"].count('-') == 0} for v in data]
-            else:
-                return [{"id": v["version"], "stable": v["version"].count('-') == 0} for v in data]
+            elif loader == "quilt":
+                url = f"https://meta.quiltmc.org/v2/versions/loader"
+                if mc_version and mc_version != "latest":
+                    url = f"https://meta.quiltmc.org/v2/versions/loader/{mc_version}"
+                print(f"DEBUG: Fetching Quilt from {url}")
+                res = await client.get(url)
+                data = res.json()
+                if mc_version and mc_version != "latest":
+                    return [{"id": v["loader"]["version"], "stable": v["loader"]["version"].count('-') == 0} for v in data]
+                else:
+                    return [{"id": v["version"], "stable": v["version"].count('-') == 0} for v in data]
 
-        elif loader == "forge":
-            # Forge is tricky, using BMCLAPI mirror for ease of use
-            url = f"https://bmclapi2.bangbang93.com/forge/minecraft/{mc_version}" if mc_version else "https://bmclapi2.bangbang93.com/forge/promotions"
-            res = await client.get(url)
-            data = res.json()
-            if mc_version:
-                return [{"id": v["version"], "stable": v["type"] == "recommended"} for v in data]
-            else:
-                # promos
-                promos = data.get("promos", {})
-                return [{"id": v, "name": k} for k, v in promos.items()]
-        
-        elif loader == "neoforge":
-            # NeoForge also on BMCLAPI
-            url = f"https://bmclapi2.bangbang93.com/neoforge/list/{mc_version}" if mc_version else "https://bmclapi2.bangbang93.com/neoforge/list"
-            res = await client.get(url)
-            # data is a list of strings
-            data = res.json()
-            return [{"id": v, "stable": True} for v in data]
+            elif loader == "forge":
+                url = f"https://bmclapi2.bangbang93.com/forge/minecraft/{mc_version}" if mc_version and mc_version != "latest" else "https://bmclapi2.bangbang93.com/forge/promotions"
+                print(f"DEBUG: Fetching Forge from {url}")
+                res = await client.get(url)
+                data = res.json()
+                if mc_version and mc_version != "latest":
+                    return [{"id": v["version"], "stable": v["type"] == "recommended"} for v in data]
+                else:
+                    promos = data.get("promos", {})
+                    return [{"id": v, "name": k} for k, v in promos.items()]
+            
+            elif loader == "neoforge":
+                url = f"https://bmclapi2.bangbang93.com/neoforge/list/{mc_version}" if mc_version and mc_version != "latest" else "https://bmclapi2.bangbang93.com/neoforge/list"
+                print(f"DEBUG: Fetching NeoForge from {url}")
+                res = await client.get(url)
+                data = res.json()
+                return [{"id": v, "stable": True} for v in data]
+    except Exception as e:
+        print(f"DEBUG: Error fetching {loader} versions: {e}")
+        return []
 
     return []
 
