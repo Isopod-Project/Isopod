@@ -817,6 +817,7 @@ export default function App() {
                                 </button>
                                 <h3 className="text-xl font-bold flex items-center gap-2">
                                    {modSearchProvider === 'modrinth' ? 'Modrinth Mod Search' : 'CurseForge Mod Search'}
+                                   {isModSearching && <RefreshCw className="w-4 h-4 animate-spin text-[#3E8ED0]" />}
                                 </h3>
                                 <div className="flex bg-[#1A1A1A] border border-[#3A3A3A] p-1 rounded-lg ml-auto">
                                    <button 
