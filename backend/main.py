@@ -2,7 +2,11 @@ import os
 import subprocess
 import shutil
 import re
-from fastapi import FastAPI, HTTPException
+import httpx
+import json
+from pathlib import Path
+import aiofiles
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -138,15 +142,17 @@ def stop_instance(instance_id: str):
 def get_config(instance_id: str):
     path = get_instance_path(instance_id)
     compose_path = os.path.join(path, "docker-compose.yml")
+
     if not os.path.exists(compose_path):
-        raise HTTPException(status_code=404, detail="docker-compose.yml not found")
+        # Return a default empty config if docker-compose.yml is not found
+        return {"image": "itzg/minecraft-server", "environment": {"EULA": "TRUE", "TYPE": "VANILLA", "VERSION": "LATEST"}}
         
     with open(compose_path, "r") as f:
         config = yaml.safe_load(f)
         
     services = config.get("services", {})
     if not services:
-        return {"image": "", "environment": {}}
+        return {"image": "itzg/minecraft-server", "environment": {"EULA": "TRUE", "TYPE": "VANILLA", "VERSION": "LATEST"}}
         
     first_service_name = list(services.keys())[0]
     service = services[first_service_name]
@@ -162,7 +168,7 @@ def get_config(instance_id: str):
             env_vars = service["environment"]
             
     return {
-        "image": service.get("image", ""),
+        "image": service.get("image", "itzg/minecraft-server"),
         "environment": env_vars,
     }
 
@@ -170,17 +176,52 @@ def get_config(instance_id: str):
 def update_config(instance_id: str, new_config: InstanceConfig):
     path = get_instance_path(instance_id)
     compose_path = os.path.join(path, "docker-compose.yml")
-    if not os.path.exists(compose_path):
-        raise HTTPException(status_code=404, detail="docker-compose.yml not found")
-        
-    with open(compose_path, "r") as f:
-        config = yaml.safe_load(f)
-        
+
+    config = {}
+    if os.path.exists(compose_path):
+        with open(compose_path, "r") as f:
+            config = yaml.safe_load(f)
+    else:
+        # Create a default docker-compose.yml if it doesn't exist
+        config = {
+            "version": "3.8",
+            "services": {
+                "mc": {
+                    "image": "itzg/minecraft-server",
+                    "container_name": f"isopod_{instance_id}",
+                    "ports": ["25565:25565"], # Default port, will be updated by UI
+                    "environment": [
+                        "EULA=TRUE",
+                        "TYPE=VANILLA",
+                        "VERSION=LATEST"
+                    ],
+                    "volumes": ["./data:/data"],
+                    "restart": "unless-stopped"
+                }
+            }
+        }
+
     services = config.get("services", {})
-    if services:
-        first_service_name = list(services.keys())[0]
-        config['services'][first_service_name]['image'] = new_config.image
-        config['services'][first_service_name]['environment'] = new_config.environment
+    if not services:
+        # If for some reason services are empty in an existing config, initialize them
+        config["services"] = {
+            "mc": {
+                "image": "itzg/minecraft-server",
+                "container_name": f"isopod_{instance_id}",
+                "ports": ["25565:25565"],
+                "environment": [
+                    "EULA=TRUE",
+                    "TYPE=VANILLA",
+                    "VERSION=LATEST"
+                ],
+                "volumes": ["./data:/data"],
+                "restart": "unless-stopped"
+            }
+        }
+    
+    first_service_name = list(services.keys())[0]
+    config['services'][first_service_name]['image'] = new_config.image
+    config['services'][first_service_name]['environment'] = new_config.environment
         
     with open(compose_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False)
@@ -231,6 +272,117 @@ def delete_instance(instance_id: str):
     subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True)
     shutil.rmtree(path, ignore_errors=True)
     return {"message": "Instance deleted"}
+
+
+MODRINTH_API_BASE_URL = "https://api.modrinth.com/v2"
+
+@app.get("/api/mods/modrinth/search")
+async def search_modrinth_mods(
+    query: str = Query(..., min_length=1),
+    game_version: Optional[str] = Query(None),
+    mod_loader: Optional[str] = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100)
+):
+    facets = [["project_type:mod"]]
+
+    if game_version:
+        facets.append([f"versions:{game_version}"])
+    
+    if mod_loader:
+        # Modrinth lumps loaders in with categories
+        facets.append([f"categories:{mod_loader.lower()}"])
+    
+    # Always prefer server-side mods, or optional, then client-side if no other option
+    facets.append(["server_side:required", "server_side:optional"])
+
+    params = {
+        "query": query,
+        "facets": json.dumps(facets),
+        "offset": offset,
+        "limit": limit
+    }
+
+    headers = {
+        "User-Agent": "Isopod/1.0 (isopod@example.com)" # Using a descriptive User-Agent
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{MODRINTH_API_BASE_URL}/search", params=params, headers=headers)
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Modrinth API error: {e.response.text}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=500, detail=f"Network error communicating with Modrinth API: {e}")
+
+@app.post("/api/instances/{instance_id}/mods/modrinth/install")
+async def install_modrinth_mod(
+    instance_id: str,
+    mod_id: str,
+    game_version: str = Query(..., min_length=1),
+    mod_loader: str = Query(..., min_length=1)
+):
+    instance_path = get_instance_path(instance_id)
+    mods_dir = Path(instance_path) / "data" / "mods"
+    mods_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Get mod details from Modrinth
+    try:
+        async with httpx.AsyncClient() as client:
+            # Get project details to find a suitable version
+            project_response = await client.get(f"{MODRINTH_API_BASE_URL}/project/{mod_id}")
+            project_response.raise_for_status()
+            project_data = project_response.json()
+
+            # Get versions for the project
+            versions_response = await client.get(f"{MODRINTH_API_BASE_URL}/project/{mod_id}/version")
+            versions_response.raise_for_status()
+            versions_data = versions_response.json()
+            
+            # Find the latest compatible version
+            compatible_version = None
+            for version in versions_data:
+                if game_version in version.get("game_versions", []) and mod_loader.lower() in version.get("loaders", []):
+                    compatible_version = version
+                    break
+            
+            if not compatible_version:
+                raise HTTPException(status_code=404, detail=f"No compatible version found for mod {mod_id} with game version {game_version} and loader {mod_loader}")
+
+            # Get the download URL for the primary file
+            if not compatible_version["files"]:
+                raise HTTPException(status_code=404, detail=f"No files found for compatible version of mod {mod_id}")
+            
+            # Prioritize server-side files if available
+            download_file = None
+            for file in compatible_version["files"]:
+                if file.get("primary", False):
+                    download_file = file
+                    break
+            
+            if not download_file: # If no primary, just take the first one
+                download_file = compatible_version["files"][0]
+
+            download_url = download_file["url"]
+            filename = download_file["filename"]
+
+            # 2. Download the mod file
+            mod_file_path = mods_dir / filename
+            async with client.stream("GET", download_url, follow_redirects=True) as response:
+                response.raise_for_status()
+                async with aiofiles.open(mod_file_path, "wb") as f:
+                    async for chunk in response.aiter_bytes():
+                        await f.write(chunk)
+            
+            return {"message": f"Mod {filename} installed successfully to instance {instance_id}", "file_path": str(mod_file_path)}
+
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Modrinth API error: {e.response.text}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=500, detail=f"Network error communicating with Modrinth API: {e}")
+
 
 @app.get("/api/instances/{instance_id}/logs")
 def get_instance_logs(instance_id: str, tail: int = 200):

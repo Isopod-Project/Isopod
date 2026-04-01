@@ -33,6 +33,23 @@ interface LoaderVersion {
   stable: boolean;
 }
 
+interface ModrinthSearchResult {
+  project_id: string;
+  project_type: string;
+  slug: string;
+  title: string;
+  description: string;
+  client_side: string;
+  server_side: string;
+  game_versions: string[];
+  loaders: string[];
+  icon_url: string | null;
+  author: string;
+  date_created: string;
+  date_modified: string;
+  downloads: number;
+}
+
 export default function App() {
   const [instances, setInstances] = useState<Instance[]>([]);
   const [statuses, setStatuses] = useState<Record<string, InstanceStatus>>({});
@@ -60,6 +77,14 @@ export default function App() {
   const [mcVersions, setMcVersions] = useState<MinecraftVersion[]>([]);
   const [fabricLoaderVersions, setFabricLoaderVersions] = useState<LoaderVersion[]>([]);
   const [quiltLoaderVersions, setQuiltLoaderVersions] = useState<LoaderVersion[]>([]);
+
+  // Modrinth Mod Search
+  const [modrinthSearchQuery, setModrinthSearchQuery] = useState("");
+  const [modrinthSearchResults, setModrinthSearchResults] = useState<ModrinthSearchResult[]>([]);
+  const [isModrinthSearching, setIsModrinthSearching] = useState(false);
+  const [modrinthSearchError, setModrinthSearchError] = useState<string | null>(null);
+  const [modrinthSelectedGameVersion, setModrinthSelectedGameVersion] = useState<string | null>(null);
+  const [modrinthSelectedModLoader, setModrinthSelectedModLoader] = useState<string | null>(null);
 
   const fetchInstances = async () => {
     try {
@@ -243,6 +268,35 @@ export default function App() {
     }
   };
 
+  const searchModrinthMods = async () => {
+    setIsModrinthSearching(true);
+    setModrinthSearchError(null);
+    try {
+      const params = new URLSearchParams({
+        query: modrinthSearchQuery,
+      });
+      if (modrinthSelectedGameVersion) {
+        params.append("game_version", modrinthSelectedGameVersion);
+      }
+      if (modrinthSelectedModLoader) {
+        params.append("mod_loader", modrinthSelectedModLoader);
+      }
+
+      const res = await fetch(`/api/mods/modrinth/search?${params.toString()}`);
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.detail || "Failed to search Modrinth");
+      }
+      const data = await res.json();
+      setModrinthSearchResults(data.hits);
+    } catch (e) {
+      console.error("Failed to search Modrinth:", e);
+      setModrinthSearchError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsModrinthSearching(false);
+    }
+  };
+
   const openEditModal = () => {
     if (!selectedId) return;
     setIsEditModalOpen(true);
@@ -368,6 +422,7 @@ export default function App() {
                      <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
                    </span>
                  )}
+
               </div>
               <h2 className="text-lg font-bold text-center leading-tight mb-1">{selectedInstance.name}</h2>
               <p className="text-xs text-neutral-400">
@@ -508,25 +563,29 @@ export default function App() {
                   <RefreshCw className="w-4 h-4" /> Minecraft Log
                 </button>
                 <div className="h-px bg-[#323232] my-2 mx-2"></div>
-                <button 
-                  onClick={() => setEditTab("version")}
-                  className={`flex items-center gap-2 px-3 py-2 rounded text-left font-medium transition-colors ${editTab === "version" ? 'bg-[#3E8ED0]/20 text-[#3E8ED0]' : 'text-neutral-300 hover:bg-[#323232]'}`}
-                >
-                  <Database className="w-4 h-4" /> Version
-                </button>
-                <button 
-                  onClick={() => setEditTab("loader")}
-                  className={`flex items-center gap-2 px-3 py-2 rounded text-left font-medium transition-colors ${editTab === "loader" ? 'bg-[#3E8ED0]/20 text-[#3E8ED0]' : 'text-neutral-300 hover:bg-[#323232]'}`}
-                >
-                  <Cpu className="w-4 h-4" /> Loader
-                </button>
-                <button 
-                  onClick={() => setEditTab("mods")}
-                  className={`flex items-center gap-2 px-3 py-2 rounded text-left font-medium transition-colors ${editTab === "mods" ? 'bg-[#3E8ED0]/20 text-[#3E8ED0]' : 'text-neutral-300 hover:bg-[#323232]'}`}
-                >
-                  <Package className="w-4 h-4" /> Mods
-                </button>
-                <div className="h-px bg-[#323232] my-2 mx-2"></div>
+                {config && (
+                  <>
+                    <div className="h-px bg-[#323232] my-1"></div>
+                    <button 
+                      onClick={() => setEditTab("versions")}
+                      className={`flex items-center gap-3 px-3 py-2 rounded transition-colors ${editTab === "versions" ? 'bg-[#3E8ED0]/20 text-[#3E8ED0]' : 'hover:bg-[#323232] text-neutral-300'}`}
+                    >
+                      <Package className="w-4 h-4" /> Versions
+                    </button>
+                    <button 
+                      onClick={() => setEditTab("loaders")}
+                      className={`flex items-center gap-3 px-3 py-2 rounded transition-colors ${editTab === "loaders" ? 'bg-[#3E8ED0]/20 text-[#3E8ED0]' : 'hover:bg-[#323232] text-neutral-300'}`}
+                    >
+                      <Package className="w-4 h-4" /> Loaders
+                    </button>
+                    <button 
+                      onClick={() => setEditTab("mods")}
+                      className={`flex items-center gap-3 px-3 py-2 rounded transition-colors ${editTab === "mods" ? 'bg-[#3E8ED0]/20 text-[#3E8ED0]' : 'hover:bg-[#323232] text-neutral-300'}`}
+                    >
+                      <Package className="w-4 h-4" /> Mods
+                    </button>
+                  </>
+                )}
                 <button 
                   onClick={() => setEditTab("config")}
                   className={`flex items-center gap-2 px-3 py-2 rounded text-left font-medium transition-colors ${editTab === "config" ? 'bg-[#3E8ED0]/20 text-[#3E8ED0]' : 'text-neutral-300 hover:bg-[#323232]'}`}
@@ -676,27 +735,72 @@ export default function App() {
                   </div>
                 )}
                 {editTab === "mods" && config && (
-                  <div className="flex flex-col h-full space-y-6">
-                    <div className="flex items-center gap-4 p-4 bg-[#2A2A2A] rounded-lg border border-[#3A3A3A]">
-                      <div className="p-3 bg-[#3E8ED0]/20 rounded-lg">
-                        <Package className="w-8 h-8 text-[#3E8ED0]" />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-bold text-white">Mods</h3>
-                        <p className="text-sm text-neutral-400">Add mods by providing direct download links (comma separated).</p>
-                      </div>
+                  <div className="flex flex-col h-full p-4">
+                    <h3 className="text-xl font-bold mb-4">Modrinth Mod Search</h3>
+                    
+                    <div className="flex gap-4 mb-4">
+                      <input
+                        type="text"
+                        placeholder="Search for mods..."
+                        value={modrinthSearchQuery}
+                        onChange={(e) => setModrinthSearchQuery(e.target.value)}
+                        className="flex-1 bg-[#1A1A1A] border border-[#3A3A3A] p-2 rounded focus:outline-none focus:border-[#3E8ED0]"
+                      />
+                      <select
+                        value={modrinthSelectedGameVersion || ""}
+                        onChange={(e) => setModrinthSelectedGameVersion(e.target.value)}
+                        className="bg-[#1A1A1A] border border-[#3A3A3A] p-2 rounded focus:outline-none focus:border-[#3E8ED0]"
+                      >
+                        <option value="">Any Version</option>
+                        {mcVersions.filter((v: MinecraftVersion) => v.type === 'release').slice(0, 50).map((v: MinecraftVersion) => (
+                          <option key={v.id} value={v.id}>{v.id}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={modrinthSelectedModLoader || ""}
+                        onChange={(e) => setModrinthSelectedModLoader(e.target.value)}
+                        className="bg-[#1A1A1A] border border-[#3A3A3A] p-2 rounded focus:outline-none focus:border-[#3E8ED0]"
+                      >
+                        <option value="">Any Loader</option>
+                        <option value="fabric">Fabric</option>
+                        <option value="forge">Forge</option>
+                        <option value="quilt">Quilt</option>
+                      </select>
+                      <button
+                        onClick={searchModrinthMods}
+                        disabled={isModrinthSearching}
+                        className="px-4 py-2 rounded bg-[#3E8ED0] hover:bg-[#2B6A9E] disabled:bg-[#3E8ED0]/40 text-white font-medium transition-colors"
+                      >
+                        {isModrinthSearching ? "Searching..." : "Search"}
+                      </button>
                     </div>
-                    <div className="flex-1 flex flex-col space-y-2">
-                        <label className="block text-sm font-semibold text-neutral-300 uppercase tracking-wider">Mod URLs</label>
-                        <textarea 
-                          value={config.environment.MODS || ""}
-                          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setConfig({
-                            ...config,
-                            environment: { ...config.environment, MODS: e.target.value }
-                          })}
-                          placeholder="https://example.com/mod1.jar, https://example.com/mod2.jar"
-                          className="flex-1 w-full bg-[#2A2A2A] border border-[#3A3A3A] p-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#3E8ED0]/50 text-white font-mono text-sm resize-none"
-                        />
+
+                    {modrinthSearchError && (
+                      <div className="text-red-400 mb-4">{modrinthSearchError}</div>
+                    )}
+
+                    <div className="flex-1 overflow-y-auto pr-2">
+                      {modrinthSearchResults.length === 0 && !isModrinthSearching && !modrinthSearchError && (
+                        <p className="text-neutral-400">No mods found. Try a different search.</p>
+                      )}
+                      {modrinthSearchResults.map((mod) => (
+                        <div key={mod.project_id} className="bg-[#2A2A2A] p-3 mb-3 rounded-lg flex items-center gap-4">
+                          {mod.icon_url && (
+                            <img src={mod.icon_url} alt={mod.title} className="w-12 h-12 rounded-md object-cover" />
+                          )}
+                          <div className="flex-1">
+                            <h4 className="font-bold text-lg">{mod.title}</h4>
+                            <p className="text-neutral-400 text-sm line-clamp-1">{mod.description}</p>
+                            <p className="text-neutral-500 text-xs">By {mod.author} | {mod.downloads} downloads</p>
+                          </div>
+                          <button
+                            // onClick={() => handleInstallModrinthMod(mod.project_id)} // Implement this later
+                            className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium transition-colors"
+                          >
+                            Install
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
