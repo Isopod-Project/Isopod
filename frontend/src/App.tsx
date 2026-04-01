@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Package, Save } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save } from "lucide-react";
 
 interface Instance {
   id: string;
@@ -15,40 +15,6 @@ interface InstanceStatus {
   containers: unknown[];
 }
 
-interface InstanceConfig {
-  image: string;
-  environment: Record<string, string>;
-}
-
-interface MinecraftVersion {
-  id: string;
-  type: string;
-  url: string;
-  time: string;
-  releaseTime: string;
-}
-
-interface LoaderVersion {
-  version: string;
-  stable: boolean;
-}
-
-interface ModrinthSearchResult {
-  project_id: string;
-  project_type: string;
-  slug: string;
-  title: string;
-  description: string;
-  client_side: string;
-  server_side: string;
-  game_versions: string[];
-  loaders: string[];
-  icon_url: string | null;
-  author: string;
-  date_created: string;
-  date_modified: string;
-  downloads: number;
-}
 
 export default function App() {
   const [instances, setInstances] = useState<Instance[]>([]);
@@ -76,8 +42,6 @@ export default function App() {
   
   // Versions
   const [mcVersions, setMcVersions] = useState<any[]>([]);
-  const [fabricLoaderVersions, setFabricLoaderVersions] = useState<LoaderVersion[]>([]);
-  const [quiltLoaderVersions, setQuiltLoaderVersions] = useState<LoaderVersion[]>([]);
   
   // Mod Search States
   const [modSearchQuery, setModSearchQuery] = useState("");
@@ -230,25 +194,6 @@ export default function App() {
     }
   };
 
-  const fetchFabricVersions = async () => {
-    try {
-      const res = await fetch("https://meta.fabricmc.net/v2/versions/loader");
-      const data = await res.json();
-      setFabricLoaderVersions(data as LoaderVersion[]);
-    } catch (e) {
-      console.error("Failed to fetch Fabric loader versions", e);
-    }
-  };
-
-  const fetchQuiltVersions = async () => {
-    try {
-      const res = await fetch("https://meta.quiltmc.org/v3/versions/loader");
-      const data = await res.json();
-      setQuiltLoaderVersions(data as LoaderVersion[]);
-    } catch (e) {
-      console.error("Failed to fetch Quilt loader versions", e);
-    }
-  };
 
   const handleSaveConfig = async () => {
     if (!selectedId || !config) return;
@@ -303,9 +248,6 @@ export default function App() {
 
   useEffect(() => {
     fetchInstances();
-    fetchMCVersions();
-    fetchFabricVersions();
-    fetchQuiltVersions();
     
     const interval = setInterval(() => {
         setInstances((prevInstances: Instance[]) => {
