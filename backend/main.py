@@ -228,7 +228,10 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
     # If query is empty, we browse via facets
     query_str = q if q else ""
         
-    facets = [["project_type:mod"]]
+    facets = [
+        ["project_type:mod"],
+        ["server_side:required", "server_side:optional"] # Skip "unsupported" (client-only)
+    ]
     if mc_version:
         facets.append([f"versions:{mc_version}"])
     if loader:
@@ -285,6 +288,7 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
         "gameId": 432, # Minecraft
         "searchFilter": q,
         "classId": 6, # Mods
+        "excludeCategoryIds": "4764", # Client Side
         "pageSize": 20
     }
     if mc_version:
