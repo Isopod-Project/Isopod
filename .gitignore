@@ -13,3 +13,9 @@ servers/
 node_modules/
 dist/
 .DS_Store
+
+# Temporary Tooling / Logs
+*.txt
+*.tar
+*.ours
+*.theirs
