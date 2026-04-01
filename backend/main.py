@@ -202,6 +202,8 @@ def update_config(instance_id: str, new_config: InstanceConfig):
 # Meta & Mod Proxy Endpoints
 VERSION_MANIFEST_URL = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
 cached_versions = {"time": 0, "data": None}
+# Cache for mod metadata to avoid hitting APIs too hard
+mod_metadata_cache = {} 
 
 @app.get("/api/meta/versions")
 async def get_mc_versions():
@@ -372,6 +374,74 @@ def get_instance_logs(instance_id: str, tail: int = 200):
         return {"logs": result.stdout + result.stderr}
     except Exception as e:
         return {"logs": f"Error fetching logs: {str(e)}"}
+
+@app.get("/api/mods/metadata")
+async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
+    """Fetch metadata for multiple mods from Modrinth and CurseForge."""
+    results = []
+    
+    m_ids = [i.strip() for i in modrinth_ids.split(",") if i.strip()]
+    c_ids = [i.strip() for i in cf_ids.split(",") if i.strip()]
+    
+    async with httpx.AsyncClient() as client:
+        # Modrinth bulk lookup
+        if m_ids:
+            # Check cache first
+            to_fetch = [mid for mid in m_ids if mid not in mod_metadata_cache]
+            if to_fetch:
+                try:
+                    # Modrinth supports bulk projects via /projects?ids=[...]
+                    # But they recommend slugs/ids in a list
+                    res = await client.get(f"https://api.modrinth.com/v2/projects", params={"ids": json.dumps(to_fetch)})
+                    if res.status_code == 200:
+                        for project in res.json():
+                            meta = {
+                                "id": project["slug"],
+                                "name": project["title"],
+                                "summary": project["description"],
+                                "icon_url": project.get("icon_url"),
+                                "author": "-", # Needs another call or deeper parsing
+                                "downloads": project.get("downloads", 0),
+                                "url": f"https://modrinth.com/mod/{project['slug']}",
+                                "provider": "modrinth"
+                            }
+                            mod_metadata_cache[project["slug"]] = meta
+                            mod_metadata_cache[project["id"]] = meta
+                except Exception as e:
+                    print(f"Modrinth bulk error: {e}")
+            
+            for mid in m_ids:
+                if mid in mod_metadata_cache:
+                    results.append(mod_metadata_cache[mid])
+                else:
+                    results.append({"id": mid, "name": mid, "provider": "modrinth", "unknown": True})
+
+        # CurseForge lookup (One by one since proxy doesn't support bulk well)
+        if c_ids:
+            for cid in c_ids:
+                if cid in mod_metadata_cache:
+                    results.append(mod_metadata_cache[cid])
+                    continue
+                try:
+                    res = await client.get(f"https://api.curse.tools/v1/cf/mods/{cid}")
+                    if res.status_code == 200:
+                        item = res.json()["data"]
+                        meta = {
+                            "id": str(item["id"]),
+                            "name": item["name"],
+                            "summary": item["summary"],
+                            "icon_url": item.get("logo", {}).get("thumbnailUrl"),
+                            "author": item.get("authors", [{}])[0].get("name", "Unknown"),
+                            "downloads": int(item.get("downloadCount", 0)),
+                            "url": item.get("links", {}).get("websiteUrl", ""),
+                            "provider": "curseforge"
+                        }
+                        mod_metadata_cache[cid] = meta
+                        results.append(meta)
+                except:
+                    results.append({"id": cid, "name": cid, "provider": "curseforge", "unknown": True})
+
+    return results
 
 # Mount the compiled frontend to be served statically
 

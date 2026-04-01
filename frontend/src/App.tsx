@@ -50,6 +50,9 @@ export default function App() {
   const [isModSearching, setIsModSearching] = useState(false);
   const [modSearchVersion, setModSearchVersion] = useState("");
   const [modSearchLoader, setModSearchLoader] = useState("");
+  const [modListView, setModListView] = useState<"list" | "search">("list");
+  const [installedModsMeta, setInstalledModsMeta] = useState<any[]>([]);
+  const [isMetaLoading, setIsMetaLoading] = useState(false);
 
   const fetchInstances = async () => {
     try {
@@ -237,6 +240,27 @@ export default function App() {
     }
   };
 
+  const fetchInstalledModsMeta = async () => {
+    if (!config || !config.environment) return;
+    const mIds = config.environment["MODRINTH_PROJECTS"] || "";
+    const cIds = config.environment["CF_PROJECTS"] || "";
+    if (!mIds && !cIds) {
+      setInstalledModsMeta([]);
+      return;
+    }
+    
+    setIsMetaLoading(true);
+    try {
+      const res = await fetch(`/api/mods/metadata?modrinth_ids=${mIds}&cf_ids=${cIds}`);
+      const data = await res.json();
+      setInstalledModsMeta(data);
+    } catch (e) {
+      console.error("Failed to fetch installed mods meta", e);
+    } finally {
+      setIsMetaLoading(false);
+    }
+  };
+
   const openEditModal = () => {
     if (!selectedId) return;
     setIsEditModalOpen(true);
@@ -264,6 +288,7 @@ export default function App() {
     if (isEditModalOpen && config.environment) {
       setModSearchVersion(config.environment["VERSION"] || "");
       setModSearchLoader(config.environment["TYPE"] || "");
+      fetchInstalledModsMeta();
     }
   }, [isEditModalOpen, config.environment]);
 
@@ -685,187 +710,233 @@ export default function App() {
                     </div>
                 )}
 
-                {editTab === "mods" && (
-                   <div className="flex flex-col h-full overflow-hidden">
-                      <div className="p-6 border-b border-[#323232] bg-[#242424] flex flex-col gap-4 shadow-sm">
-                         <div className="flex items-center justify-between">
-                            <h3 className="text-xl font-bold flex items-center gap-2">
-                               {modSearchProvider === 'modrinth' ? 'Modrinth Mod Search' : 'CurseForge Mod Search'}
-                            </h3>
-                            <div className="flex bg-[#1A1A1A] border border-[#3A3A3A] p-1 rounded-lg">
-                               <button 
-                                  onClick={() => setModSearchProvider("modrinth")}
-                                  className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${modSearchProvider === 'modrinth' ? 'bg-[#3E8ED0] text-white shadow-sm' : 'text-neutral-500 hover:text-neutral-300'}`}
-                               >
-                                  Modrinth
-                               </button>
-                               <button 
-                                  onClick={() => setModSearchProvider("curseforge")}
-                                  className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${modSearchProvider === 'curseforge' ? 'bg-[#3E8ED0] text-white shadow-sm' : 'text-neutral-500 hover:text-neutral-300'}`}
-                               >
-                                  CurseForge
-                               </button>
-                            </div>
-                         </div>
-                         
-                         <div className="flex items-center gap-3">
-                            <div className="flex-1 relative group">
-                               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500 group-focus-within:text-[#3E8ED0] transition-colors" />
-                               <input 
-                                  type="text"
-                                  className="w-full bg-[#1A1A1A] border border-[#3A3A3A] pl-10 pr-4 py-2 rounded focus:outline-none focus:border-[#3E8ED0] text-sm transition-all"
-                                  placeholder="Search for mods..."
-                                  value={modSearchQuery}
-                                  onChange={(e) => setModSearchQuery(e.target.value)}
-                                  onKeyDown={(e) => e.key === 'Enter' && handleModSearch(modSearchQuery, modSearchProvider)}
-                               />
-                            </div>
-                            
-                            <select 
-                               className="bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-2 rounded text-xs focus:outline-none focus:border-[#3E8ED0]"
-                               value={modSearchVersion}
-                               onChange={(e) => setModSearchVersion(e.target.value)}
-                            >
-                               <option value="">Any Version</option>
-                               {mcVersions.filter((v: any) => v.type === "release").slice(0, 150).map((v: any) => (
-                                  <option key={v.id} value={v.id}>{v.id}</option>
-                               ))}
-                            </select>
+                 {editTab === "mods" && (
+                    <div className="flex flex-col h-full overflow-hidden bg-[#1E1E1E]">
+                       {modListView === "list" ? (
+                          /* INSTALLED MODS LIST VIEW */
+                          <div className="flex flex-col h-full">
+                             <div className="p-4 border-b border-[#323232] bg-[#242424] flex items-center justify-between">
+                                <h3 className="text-lg font-bold flex items-center gap-2">
+                                   Mods ({installedModsMeta.length} installed)
+                                </h3>
+                                <div className="flex gap-2">
+                                   <button 
+                                      onClick={() => setModListView("search")}
+                                      className="flex items-center gap-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white px-4 py-1.5 rounded text-sm font-bold transition-all"
+                                   >
+                                      <Plus className="w-4 h-4" /> Download Mods
+                                   </button>
+                                   <button 
+                                      onClick={fetchInstalledModsMeta}
+                                      className="flex items-center gap-2 bg-[#333] hover:bg-[#444] text-white px-3 py-1.5 rounded text-sm font-bold transition-all"
+                                   >
+                                      <RefreshCw className={`w-4 h-4 ${isMetaLoading ? 'animate-spin' : ''}`} /> Check Updates
+                                   </button>
+                                </div>
+                             </div>
 
-                            <select 
-                               className="bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-2 rounded text-xs focus:outline-none focus:border-[#3E8ED0]"
-                               value={modSearchLoader}
-                               onChange={(e) => setModSearchLoader(e.target.value)}
-                            >
-                               <option value="">Any Loader</option>
-                               <option value="VANILLA">Vanilla</option>
-                               <option value="FABRIC">Fabric</option>
-                               <option value="FORGE">Forge</option>
-                               <option value="QUILT">Quilt</option>
-                               <option value="NEOFORGE">NeoForge</option>
-                            </select>
+                             <div className="flex-1 overflow-auto p-4">
+                                <div className="bg-[#242424] border border-[#323232] rounded-lg overflow-hidden">
+                                   <table className="w-full text-left border-collapse">
+                                      <thead>
+                                         <tr className="bg-[#2D2D2D] border-b border-[#323232] text-[11px] font-bold text-neutral-500 uppercase tracking-widest">
+                                            <th className="px-4 py-2 w-12 text-center">Enable</th>
+                                            <th className="px-4 py-2 w-16">Image</th>
+                                            <th className="px-4 py-2">Name</th>
+                                            <th className="px-4 py-2">Provider</th>
+                                            <th className="px-4 py-2 text-right">Actions</th>
+                                         </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-[#323232]">
+                                         {installedModsMeta.length === 0 ? (
+                                            <tr>
+                                               <td colSpan={5} className="p-12 text-center text-neutral-600 italic text-sm">
+                                                  No mods installed yet. Click "Download Mods" to start!
+                                               </td>
+                                            </tr>
+                                         ) : (
+                                            installedModsMeta.map((mod) => (
+                                               <tr key={mod.id} className="hover:bg-[#2A2A2A] transition-colors group">
+                                                  <td className="px-4 py-3 text-center">
+                                                     <input type="checkbox" checked readOnly className="rounded border-[#3E8ED0] bg-[#1A1A1A] accent-[#3E8ED0]" />
+                                                  </td>
+                                                  <td className="px-4 py-3">
+                                                     <div className="w-10 h-10 bg-[#333] rounded overflow-hidden shadow-inner flex items-center justify-center">
+                                                        {mod.icon_url ? <img src={mod.icon_url} className="w-full h-full object-cover" /> : <Box className="w-5 h-5 text-neutral-600" />}
+                                                     </div>
+                                                  </td>
+                                                  <td className="px-4 py-3">
+                                                     <div className="flex flex-col">
+                                                        <span className="font-bold text-sm text-[#E0E0E0]">{mod.name || mod.id}</span>
+                                                        <span className="text-[10px] text-neutral-500 truncate max-w-md">{mod.summary || "No description available"}</span>
+                                                     </div>
+                                                  </td>
+                                                  <td className="px-4 py-3">
+                                                     <span className="text-[10px] font-bold bg-[#333] px-2 py-0.5 rounded text-neutral-400 capitalize">{mod.provider}</span>
+                                                  </td>
+                                                  <td className="px-4 py-3 text-right">
+                                                     <div className="flex justify-end gap-2 group-hover:opacity-100 opacity-0 transition-opacity">
+                                                        <a href={mod.url} target="_blank" className="p-1.5 hover:text-white text-neutral-500"><ExternalLink className="w-4 h-4" /></a>
+                                                        <button 
+                                                           onClick={() => {
+                                                              const envKey = mod.provider === 'modrinth' ? 'MODRINTH_PROJECTS' : 'CF_PROJECTS';
+                                                              const current = (config.environment[envKey] || "").split(',').filter(Boolean);
+                                                              const newList = current.filter(x => x !== mod.id).join(',');
+                                                              setConfig(prev => ({
+                                                                 ...prev,
+                                                                 environment: { ...prev.environment, [envKey]: newList }
+                                                              }));
+                                                           }}
+                                                           className="p-1.5 hover:text-red-400 text-neutral-500"
+                                                        >
+                                                           <Trash2 className="w-4 h-4" />
+                                                        </button>
+                                                     </div>
+                                                  </td>
+                                               </tr>
+                                            ))
+                                         )}
+                                      </tbody>
+                                   </table>
+                                </div>
+                             </div>
+                             
+                             <div className="p-4 bg-[#242424] border-t border-[#323232] text-[10px] text-neutral-500 italic">
+                                These mods will be automatically downloaded and synchronized on server startup.
+                             </div>
+                          </div>
+                       ) : (
+                          /* SEARCH / DOWNLOAD VIEW */
+                          <div className="flex flex-col h-full overflow-hidden">
+                             <div className="p-4 border-b border-[#323232] bg-[#242424] flex items-center gap-4 shadow-sm">
+                                <button 
+                                   onClick={() => setModListView("list")}
+                                   className="p-2 hover:bg-[#333] rounded-full transition-colors text-neutral-400 hover:text-white"
+                                >
+                                   <X className="w-5 h-5" />
+                                </button>
+                                <h3 className="text-xl font-bold flex items-center gap-2">
+                                   {modSearchProvider === 'modrinth' ? 'Modrinth Mod Search' : 'CurseForge Mod Search'}
+                                </h3>
+                                <div className="flex bg-[#1A1A1A] border border-[#3A3A3A] p-1 rounded-lg ml-auto">
+                                   <button 
+                                      onClick={() => setModSearchProvider("modrinth")}
+                                      className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${modSearchProvider === 'modrinth' ? 'bg-[#3E8ED0] text-white shadow-sm' : 'text-neutral-500 hover:text-neutral-300'}`}
+                                   >
+                                      Modrinth
+                                   </button>
+                                   <button 
+                                      onClick={() => setModSearchProvider("curseforge")}
+                                      className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${modSearchProvider === 'curseforge' ? 'bg-[#3E8ED0] text-white shadow-sm' : 'text-neutral-500 hover:text-neutral-300'}`}
+                                   >
+                                      CurseForge
+                                   </button>
+                                </div>
+                             </div>
+                             
+                             <div className="p-6 bg-[#242424] border-b border-[#323232] flex flex-col gap-4">
+                                <div className="flex items-center gap-3">
+                                   <div className="flex-1 relative group">
+                                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500 group-focus-within:text-[#3E8ED0] transition-colors" />
+                                      <input 
+                                         type="text"
+                                         className="w-full bg-[#1A1A1A] border border-[#3A3A3A] pl-10 pr-4 py-2 rounded focus:outline-none focus:border-[#3E8ED0] text-sm transition-all"
+                                         placeholder="Search for mods..."
+                                         value={modSearchQuery}
+                                         onChange={(e) => setModSearchQuery(e.target.value)}
+                                         onKeyDown={(e) => e.key === 'Enter' && handleModSearch(modSearchQuery, modSearchProvider)}
+                                      />
+                                   </div>
+                                   
+                                   <select 
+                                      className="bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-2 rounded text-xs focus:outline-none focus:border-[#3E8ED0]"
+                                      value={modSearchVersion}
+                                      onChange={(e) => setModSearchVersion(e.target.value)}
+                                   >
+                                      <option value="">Any Version</option>
+                                      {mcVersions.filter((v: any) => v.type === "release").slice(0, 150).map((v: any) => (
+                                         <option key={v.id} value={v.id}>{v.id}</option>
+                                      ))}
+                                   </select>
 
-                            <button 
-                               onClick={() => handleModSearch(modSearchQuery, modSearchProvider)}
-                               className="px-6 py-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white rounded font-bold text-sm shadow-sm transition-all whitespace-nowrap"
-                            >
-                               Search
-                            </button>
-                         </div>
-                      </div>
+                                   <select 
+                                      className="bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-2 rounded text-xs focus:outline-none focus:border-[#3E8ED0]"
+                                      value={modSearchLoader}
+                                      onChange={(e) => setModSearchLoader(e.target.value)}
+                                   >
+                                      <option value="">Any Loader</option>
+                                      <option value="VANILLA">Vanilla</option>
+                                      <option value="FABRIC">Fabric</option>
+                                      <option value="FORGE">Forge</option>
+                                      <option value="QUILT">Quilt</option>
+                                      <option value="NEOFORGE">NeoForge</option>
+                                   </select>
 
-                      <div className="flex-1 overflow-hidden flex">
-                         {/* Results Column */}
-                         <div className="flex-1 overflow-auto p-4 border-r border-[#2D2D2D]">
-                            <div className="flex items-center justify-between mb-4 px-2">
-                               <h4 className="text-xs font-bold text-neutral-500 uppercase tracking-widest">Search Results</h4>
-                               {isModSearching && <RefreshCw className="w-3 h-3 animate-spin text-[#3E8ED0]" />}
-                            </div>
-                            
-                            <div className="grid grid-cols-1 gap-2">
-                               {modSearchResults.length === 0 ? (
-                                  <div className="flex flex-col items-center justify-center p-12 text-neutral-600 opacity-50">
-                                     <Search className="w-12 h-12 mb-3" />
-                                     <p className="text-sm font-medium text-center">{modSearchQuery ? "No mods found matching your query and filters." : "Search for something above!"}</p>
-                                  </div>
-                               ) : (
-                                  modSearchResults.map((res) => {
-                                     const envKey = modSearchProvider === 'modrinth' ? "MODRINTH_PROJECTS" : "CF_PROJECTS";
-                                     const currentList: string = config.environment[envKey] || "";
-                                     const isAdded = currentList.split(',').map(s => s.trim()).includes(res.id);
-                                     
-                                     return (
-                                        <div key={res.id} className="flex gap-4 p-3 rounded-lg border border-[#333] bg-[#222] hover:bg-[#282828] transition-colors group">
-                                           <div className="w-12 h-12 bg-[#333] rounded overflow-hidden flex-shrink-0 shadow-inner">
-                                              {res.icon_url ? <img src={res.icon_url} alt="" className="w-full h-full object-cover" /> : <Box className="w-full h-full p-2 text-neutral-600" />}
-                                           </div>
-                                           <div className="flex-1 min-w-0">
-                                              <div className="flex items-center justify-between mb-0.5">
-                                                 <h5 className="font-bold text-[#E0E0E0] truncate text-sm">{res.name}</h5>
-                                                 <a href={res.url} target="_blank" className="text-neutral-500 hover:text-white group-hover:block hidden"><ExternalLink className="w-3 h-3" /></a>
-                                              </div>
-                                              <p className="text-[11px] text-neutral-400 line-clamp-2 leading-relaxed mb-2">{res.summary}</p>
-                                              <div className="flex items-center justify-between">
-                                                 <span className="text-[10px] text-neutral-500 font-mono">By {res.author} • {res.downloads.toLocaleString()} downloads</span>
-                                                 {isAdded ? (
-                                                    <div className="flex items-center gap-1 text-emerald-400 text-[10px] font-bold bg-emerald-400/10 px-2 py-0.5 rounded border border-emerald-400/20">
-                                                       <Check className="w-3 h-3" /> Added
-                                                    </div>
-                                                 ) : (
-                                                    <button 
-                                                       onClick={() => {
-                                                          const newList = currentList ? `${currentList},${res.id}` : res.id;
-                                                          setConfig(prev => ({
-                                                             ...prev,
-                                                             environment: { ...prev.environment, [envKey]: newList }
-                                                          }));
-                                                       }}
-                                                       className="flex items-center gap-1.5 px-3 py-1 bg-[#3E8ED0]/10 hover:bg-[#3E8ED0] text-[#3E8ED0] hover:text-white rounded border border-[#3E8ED0]/30 transition-all text-[11px] font-bold"
-                                                    >
-                                                       <Plus className="w-3 h-3" /> Add Mod
-                                                    </button>
-                                                 )}
-                                              </div>
-                                           </div>
-                                        </div>
-                                     );
-                                  })
-                               )}
-                            </div>
-                         </div>
+                                   <button 
+                                      onClick={() => handleModSearch(modSearchQuery, modSearchProvider)}
+                                      className="px-6 py-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white rounded font-bold text-sm shadow-sm transition-all whitespace-nowrap"
+                                   >
+                                      Search
+                                   </button>
+                                </div>
+                             </div>
 
-                         {/* Tracked Mods Column */}
-                         <div className="w-72 bg-[#202020] p-4 flex flex-col shadow-[-4px_0_10px_rgba(0,0,0,0.2)]">
-                            <h4 className="text-xs font-bold text-neutral-500 uppercase tracking-widest mb-4">Tracked Mods</h4>
-                            <div className="flex-1 overflow-auto space-y-3 pr-2 custom-scrollbar">
-                               {[
-                                  { key: "MODRINTH_PROJECTS", label: "Modrinth", icon: Box },
-                                  { key: "CF_PROJECTS", label: "CurseForge", icon: Settings }
-                               ].map(group => {
-                                  const ids = (config.environment[group.key] || "").split(',').filter(Boolean);
-                                  return (
-                                     <div key={group.key} className="space-y-2">
-                                        {ids.length > 0 && <div className="text-[10px] font-bold text-[#3E8ED0] bg-[#3E8ED0]/5 px-2 py-0.5 rounded border border-[#3E8ED0]/10 flex items-center gap-1"><group.icon className="w-3 h-3" /> {group.label}</div>}
-                                        {ids.map(id => (
-                                           <div key={id} className="flex items-center justify-between p-2 rounded bg-[#2D2D2D] hover:bg-[#343434] transition-colors border border-transparent hover:border-[#444] group">
-                                              <span className="text-[11px] font-mono text-neutral-300 truncate pr-2">{id}</span>
-                                              <button 
-                                                 onClick={() => {
-                                                    const newList = ids.filter(x => x !== id).join(',');
-                                                    setConfig(prev => ({
-                                                       ...prev,
-                                                       environment: { ...prev.environment, [group.key]: newList }
-                                                    }));
-                                                 }}
-                                                 className="text-neutral-600 hover:text-red-400 transition-colors"
-                                              >
-                                                 <Trash2 className="w-3 h-3" />
-                                              </button>
-                                           </div>
-                                        ))}
-                                     </div>
-                                  );
-                               })}
-
-                               {/* Manual Mod URLs */}
-                               <div className="space-y-2 pt-2 border-t border-[#333]">
-                                  <label className="text-[10px] font-bold text-neutral-500 uppercase">Direct Mod URLs</label>
-                                  <textarea 
-                                     placeholder="逗号分隔的JAR链接"
-                                     className="w-full h-32 bg-[#1A1A1A] border border-[#333] rounded p-2 text-[10px] font-mono text-neutral-400 focus:outline-none focus:border-[#3E8ED0] resize-none"
-                                     value={config.environment["MODS"] || ""}
-                                     onChange={(e) => setConfig(prev => ({
-                                        ...prev,
-                                        environment: { ...prev.environment, MODS: e.target.value }
-                                     }))}
-                                  />
-                               </div>
-                            </div>
-                            <p className="mt-4 text-[10px] text-neutral-500 leading-tight italic">These mods will be automatically downloaded and synchronized on server startup.</p>
-                         </div>
-                      </div>
-                   </div>
-                )}
+                             <div className="flex-1 overflow-auto p-4 bg-[#1E1E1E]">
+                                <div className="grid grid-cols-1 gap-2">
+                                   {modSearchResults.length === 0 ? (
+                                      <div className="flex flex-col items-center justify-center p-12 text-neutral-600 opacity-50">
+                                         <Search className="w-12 h-12 mb-3" />
+                                         <p className="text-sm font-medium text-center">{modSearchQuery ? "No mods found matching your query and filters." : "Search for something above!"}</p>
+                                      </div>
+                                   ) : (
+                                      modSearchResults.map((res) => {
+                                         const envKey = modSearchProvider === 'modrinth' ? "MODRINTH_PROJECTS" : "CF_PROJECTS";
+                                         const currentList: string = config.environment[envKey] || "";
+                                         const isAdded = currentList.split(',').map(s => s.trim()).includes(res.id);
+                                         
+                                         return (
+                                            <div key={res.id} className="flex gap-4 p-3 rounded-lg border border-[#333] bg-[#222] hover:bg-[#282828] transition-colors group">
+                                               <div className="w-12 h-12 bg-[#333] rounded overflow-hidden flex-shrink-0 shadow-inner">
+                                                  {res.icon_url ? <img src={res.icon_url} alt="" className="w-full h-full object-cover" /> : <Box className="w-full h-full p-2 text-neutral-600" />}
+                                               </div>
+                                               <div className="flex-1 min-w-0">
+                                                  <div className="flex items-center justify-between mb-0.5">
+                                                     <h5 className="font-bold text-[#E0E0E0] truncate text-sm">{res.name}</h5>
+                                                     <a href={res.url} target="_blank" className="text-neutral-500 hover:text-white group-hover:block hidden"><ExternalLink className="w-3 h-3" /></a>
+                                                  </div>
+                                                  <p className="text-[11px] text-neutral-400 line-clamp-2 leading-relaxed mb-2">{res.summary}</p>
+                                                  <div className="flex items-center justify-between">
+                                                     <span className="text-[10px] text-neutral-500 font-mono">By {res.author} • {res.downloads.toLocaleString()} downloads</span>
+                                                     {isAdded ? (
+                                                        <div className="flex items-center gap-1 text-emerald-400 text-[10px] font-bold bg-emerald-400/10 px-2 py-0.5 rounded border border-emerald-400/20">
+                                                           <Check className="w-3 h-3" /> Added
+                                                        </div>
+                                                     ) : (
+                                                        <button 
+                                                           onClick={() => {
+                                                              const newList = currentList ? `${currentList},${res.id}` : res.id;
+                                                              setConfig(prev => ({
+                                                                 ...prev,
+                                                                 environment: { ...prev.environment, [envKey]: newList }
+                                                              }));
+                                                           }}
+                                                           className="flex items-center gap-1.5 px-3 py-1 bg-[#3E8ED0]/10 hover:bg-[#3E8ED0] text-[#3E8ED0] hover:text-white rounded border border-[#3E8ED0]/30 transition-all text-[11px] font-bold"
+                                                        >
+                                                           <Plus className="w-3 h-3" /> Add Mod
+                                                        </button>
+                                                     )}
+                                                  </div>
+                                               </div>
+                                            </div>
+                                         );
+                                      })
+                                   )}
+                                </div>
+                             </div>
+                          </div>
+                       )}
+                    </div>
+                 )}
 
                 {editTab === "config" && (
                   <div className="flex flex-col h-full p-8 overflow-auto">
