@@ -1,5 +1,7 @@
 import os
 import subprocess
+import shutil
+import re
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -33,6 +35,16 @@ except docker.errors.DockerException:
 class InstanceConfig(BaseModel):
     image: str
     environment: Dict[str, str]
+
+class InstanceStatus(BaseModel):
+    instance_id: str
+    is_running: bool
+    containers: list
+
+class CreateInstanceRequest(BaseModel):
+    name: str
+    template: str
+    port: int
 
 class Instance(BaseModel):
     id: str
@@ -174,7 +186,53 @@ def update_config(instance_id: str, new_config: InstanceConfig):
         
     return {"message": "Config updated"}
 
+def generate_slug(text: str) -> str:
+    slug = text.lower()
+    slug = re.sub(r'[^a-z0-9]+', '-', slug)
+    return slug.strip('-')
+
+@app.post("/api/instances")
+def create_instance(req: CreateInstanceRequest):
+    slug = generate_slug(req.name)
+    path = os.path.join(SERVERS_DIR, slug)
+    if os.path.exists(path):
+        raise HTTPException(status_code=400, detail="Instance with similar name already exists")
+        
+    os.makedirs(path, exist_ok=True)
+    
+    # Generate the docker-compose template using itzg/minecraft-server
+    compose_content = {
+        "services": {
+            "mc": {
+                "image": "itzg/minecraft-server",
+                "container_name": f"isopod_{slug}",
+                "ports": [f"{req.port}:25565"],
+                "environment": [
+                    "EULA=TRUE",
+                    f"TYPE={req.template.upper()}",
+                    f"MOTD={req.name} Hosted by Isopod"
+                ],
+                "volumes": ["./data:/data"],
+                "restart": "unless-stopped"
+            }
+        }
+    }
+    
+    with open(os.path.join(path, "docker-compose.yml"), "w") as f:
+        yaml.dump(compose_content, f, default_flow_style=False)
+        
+    return {"id": slug, "message": "Instance created"}
+
+@app.delete("/api/instances/{instance_id}")
+def delete_instance(instance_id: str):
+    path = get_instance_path(instance_id)
+    # Safely stop containers before purging
+    subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True)
+    shutil.rmtree(path, ignore_errors=True)
+    return {"message": "Instance deleted"}
+
 # Mount the compiled frontend to be served statically
+
 # Ensure '/app/frontend/dist' exists or gracefully ignore if not fully built locally
 dist_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.exists(dist_path):

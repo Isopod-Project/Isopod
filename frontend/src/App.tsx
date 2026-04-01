@@ -22,6 +22,13 @@ export default function App() {
   
   // Selected Instance for the right sidebar
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  
+  // Modal states
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newType, setNewType] = useState("vanilla");
+  const [newPort, setNewPort] = useState("25565");
+  const [isCreating, setIsCreating] = useState(false);
 
   const fetchInstances = async () => {
     try {
@@ -86,6 +93,41 @@ export default function App() {
     }
   };
 
+  const handleAddInstance = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newName) return;
+    setIsCreating(true);
+    try {
+      const res = await fetch("/api/instances", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName, template: newType, port: parseInt(newPort, 10) || 25565 })
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Failed to create instance");
+      }
+      setIsAddModalOpen(false);
+      setNewName("");
+      setTimeout(fetchInstances, 500); // refresh list and select
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Are you sure you want to permanently delete this instance and all its files?")) return;
+    try {
+      await fetch(`/api/instances/${id}`, { method: "DELETE" });
+      setSelectedId(null);
+      fetchInstances();
+    } catch (err) {
+      alert("Error deleting instance");
+    }
+  };
+
   useEffect(() => {
     fetchInstances();
     
@@ -110,7 +152,10 @@ export default function App() {
       <div className="flex-1 flex flex-col">
         {/* Top Navbar */}
         <header className="h-[52px] min-h-[52px] bg-[#3B3B3B] border-b border-[#1E1E1E] flex items-center px-4 gap-4 flex-shrink-0 shadow-sm z-10">
-          <button className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium">
+          <button 
+            onClick={() => setIsAddModalOpen(true)}
+            className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium"
+          >
             <Plus className="w-4 h-4 text-emerald-400" />
             Add Instance
           </button>
@@ -236,7 +281,10 @@ export default function App() {
                 <Settings className="w-4 h-4" /> Settings
               </button>
               <div className="h-px bg-[#323232] my-2"></div>
-              <button className="flex items-center gap-3 px-3 py-1.5 rounded hover:bg-[#3D2525] text-red-400/80 transition-colors">
+              <button 
+                onClick={() => handleDelete(selectedInstance.id)}
+                className="flex items-center gap-3 px-3 py-1.5 rounded hover:bg-[#3D2525] text-red-400/80 transition-colors"
+              >
                 <Trash2 className="w-4 h-4" /> Delete
               </button>
 
@@ -249,6 +297,73 @@ export default function App() {
           </div>
         )}
       </aside>
+
+      {/* Add Instance Modal */}
+      {isAddModalOpen && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-[#242424] border border-[#3A3A3A] p-6 rounded-lg shadow-xl w-full max-w-md">
+            <h2 className="text-xl font-bold mb-4 text-[#E0E0E0]">Add New Instance</h2>
+            <form onSubmit={handleAddInstance} className="flex flex-col gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1 text-neutral-300">Server Name</label>
+                <input 
+                  autoFocus
+                  required
+                  type="text" 
+                  value={newName} 
+                  onChange={e => setNewName(e.target.value)} 
+                  className="w-full bg-[#1A1A1A] border border-[#3A3A3A] p-2 rounded focus:outline-none focus:border-[#3E8ED0]"
+                  placeholder="e.g. My Vanilla Server"
+                />
+              </div>
+              <div className="flex gap-4">
+                <div className="flex-1">
+                  <label className="block text-sm font-medium mb-1 text-neutral-300">Type</label>
+                  <select 
+                    value={newType} 
+                    onChange={e => setNewType(e.target.value)}
+                    className="w-full bg-[#1A1A1A] border border-[#3A3A3A] p-2 rounded focus:outline-none focus:border-[#3E8ED0]"
+                  >
+                    <option value="vanilla">Vanilla</option>
+                    <option value="fabric">Fabric</option>
+                    <option value="forge">Forge</option>
+                    <option value="paper">Paper</option>
+                  </select>
+                </div>
+                <div className="flex-[0.5]">
+                  <label className="block text-sm font-medium mb-1 text-neutral-300">Port</label>
+                  <input 
+                    required
+                    type="number" 
+                    value={newPort} 
+                    onChange={e => setNewPort(e.target.value)} 
+                    className="w-full bg-[#1A1A1A] border border-[#3A3A3A] p-2 rounded focus:outline-none focus:border-[#3E8ED0]"
+                    placeholder="25565"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 mt-4">
+                <button 
+                  type="button" 
+                  onClick={() => setIsAddModalOpen(false)}
+                  className="px-4 py-2 rounded text-neutral-400 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  disabled={isCreating}
+                  className={`px-4 py-2 rounded font-medium shadow-sm transition-colors ${
+                    isCreating ? 'bg-[#3E8ED0]/50 text-white/50 cursor-not-allowed' : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white'
+                  }`}
+                >
+                  {isCreating ? "Creating..." : "Create"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );
