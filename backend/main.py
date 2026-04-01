@@ -225,10 +225,8 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
     mc_version = None if mc_version == "undefined" or not mc_version else mc_version
     loader = None if loader == "undefined" or not loader else loader
     
-    print(f"Modrinth Search: q={q}, mc={mc_version}, loader={loader}")
-    
-    if not q:
-        return []
+    # If query is empty, we browse via facets
+    query_str = q if q else ""
         
     facets = [["project_type:mod"]]
     if mc_version:
@@ -267,10 +265,8 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
     mc_version = None if mc_version == "undefined" or not mc_version else mc_version
     loader = None if loader == "undefined" or not loader else loader
     
-    print(f"CurseForge Search: q={q}, mc={mc_version}, loader={loader}")
-    
-    if not q:
-        return []
+    # If query is empty, we browse via parameters
+    query_str = q if q else ""
         
     # Using a known public proxy for CurseForge searches
     # itzg/minecraft-server uses the CurseForge ID (int)

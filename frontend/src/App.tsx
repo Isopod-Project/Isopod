@@ -216,13 +216,12 @@ export default function App() {
     }
   };
 
-  const handleModSearch = async (query: string, provider: string) => {
-    if (!query) return;
+  const handleModSearch = async (query: string, provider: string, forceVersion?: string, forceLoader?: string) => {
     setIsModSearching(true);
     try {
       // Default to what's in the search inputs, or fallback to instance configuration
-      let mc_version = modSearchVersion || (config?.environment ? (config.environment["VERSION"] || "") : "");
-      let raw_loader = modSearchLoader || (config?.environment ? (config.environment["TYPE"] || "") : "");
+      let mc_version = forceVersion !== undefined ? forceVersion : (modSearchVersion || (config?.environment ? (config.environment["VERSION"] || "") : ""));
+      let raw_loader = forceLoader !== undefined ? forceLoader : (modSearchLoader || (config?.environment ? (config.environment["TYPE"] || "") : ""));
       
       // Fix potential "undefined" literals
       if (mc_version === "undefined") mc_version = "";
@@ -286,11 +285,25 @@ export default function App() {
   // Sync mod search filters when config is loaded
   useEffect(() => {
     if (isEditModalOpen && config.environment) {
-      setModSearchVersion(config.environment["VERSION"] || "");
-      setModSearchLoader(config.environment["TYPE"] || "");
+      const v = config.environment["VERSION"] || "";
+      const l = config.environment["TYPE"] || "";
+      setModSearchVersion(v);
+      setModSearchLoader(l);
       fetchInstalledModsMeta();
+      // Auto-browse when opening search
+      handleModSearch("", modSearchProvider, v, l);
     }
   }, [isEditModalOpen, config.environment]);
+
+  // Debounced search
+  useEffect(() => {
+    if (modListView === "search") {
+      const timer = setTimeout(() => {
+        handleModSearch(modSearchQuery, modSearchProvider);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [modSearchQuery, modSearchProvider]);
 
   const selectedInstance = instances.find(i => i.id === selectedId);
   const selectedStatus = selectedId ? statuses[selectedId] : null;
