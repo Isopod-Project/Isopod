@@ -38,6 +38,7 @@ export default function App() {
   const [isLogsLoading, setIsLogsLoading] = useState(false);
   // Instance Config States
   const [config, setConfig] = useState<{image: string, environment: Record<string, string>}>({image: "", environment: {}});
+  const [originalConfig, setOriginalConfig] = useState<any>(null);
   const [isSaving, setIsSaving] = useState(false);
   
   // Versions
@@ -185,6 +186,7 @@ export default function App() {
       const res = await fetch(`/api/instances/${id}/config`);
       const data = await res.json();
       setConfig(data);
+      setOriginalConfig(JSON.stringify(data));
     } catch (e) {
       console.error("Failed to fetch config", e);
     }
@@ -201,8 +203,14 @@ export default function App() {
   };
 
 
-  const handleSaveConfig = async () => {
+   const handleSaveConfig = async () => {
     if (!selectedId || !config) return;
+    if (JSON.stringify(config) === originalConfig) {
+      alert("No changes to save.");
+      return;
+    }
+    if (!confirm("Are you sure you want to apply these changes to the instance configuration? This will recreate the container next time you start it.")) return;
+    
     setIsSaving(true);
     try {
       const res = await fetch(`/api/instances/${selectedId}/config`, {
@@ -211,11 +219,39 @@ export default function App() {
         body: JSON.stringify(config)
       });
       if (!res.ok) throw new Error("Failed to save config");
-      alert("Changes saved successfully!");
+      setOriginalConfig(JSON.stringify(config));
+      
+      // If server is currently running, suggest a restart
+      const status = statuses[selectedId];
+      if (status && status.is_running) {
+        if (confirm("Changes saved! The server needs to restart to apply them. Restart now?")) {
+            handleRestart(selectedId);
+        }
+      } else {
+        alert("Changes saved successfully!");
+      }
+
     } catch (e: any) {
       alert("Save Error: " + e.message);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleRestart = async (id: string) => {
+    try {
+        setStatuses((prev: Record<string, InstanceStatus>) => ({
+            ...prev, 
+            [id]: { ...prev[id], is_running: false }
+        }));
+        // We use stop then start for a clean reload of compose
+        await fetch(`/api/instances/${id}/stop`, { method: "POST" });
+        await fetch(`/api/instances/${id}/start`, { method: "POST" });
+        setTimeout(() => fetchStatus(id), 2000);
+    } catch (e) {
+        console.error("Restart failed", e);
+        alert("Failed to restart server. Please try manual Launch.");
+        fetchStatus(id);
     }
   };
 
@@ -648,11 +684,20 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="mt-auto pt-4 flex flex-col gap-2">
+                 <div className="mt-auto pt-4 flex flex-col gap-2">
+                  {JSON.stringify(config) !== originalConfig && (
+                    <div className="text-[10px] text-amber-500 font-bold mb-1 flex items-center gap-1 animate-pulse">
+                      <AlertCircle className="w-3 h-3" /> Unsaved Changes
+                    </div>
+                  )}
                   <button 
                     onClick={handleSaveConfig}
-                    disabled={isSaving}
-                    className="w-full flex items-center justify-center gap-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] disabled:bg-[#3E8ED0]/40 text-white font-bold py-2 rounded shadow-lg transition"
+                    disabled={isSaving || JSON.stringify(config) === originalConfig}
+                    className={`w-full flex items-center justify-center gap-2 font-bold py-2 rounded shadow-lg transition-all ${
+                      JSON.stringify(config) === originalConfig 
+                      ? 'bg-neutral-800 text-neutral-500 cursor-not-allowed opacity-50' 
+                      : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white'
+                    }`}
                   >
                     {isSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                     Save Changes
