@@ -2,6 +2,8 @@ import os
 import subprocess
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import docker
@@ -171,3 +173,13 @@ def update_config(instance_id: str, new_config: InstanceConfig):
         yaml.dump(config, f, default_flow_style=False)
         
     return {"message": "Config updated"}
+
+# Mount the compiled frontend to be served statically
+# Ensure '/app/frontend/dist' exists or gracefully ignore if not fully built locally
+dist_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+if os.path.exists(dist_path):
+    app.mount("/", StaticFiles(directory=dist_path, html=True), name="frontend")
+else:
+    # Docker container path
+    app.mount("/", StaticFiles(directory="/app/frontend/dist", html=True), name="frontend")
+
