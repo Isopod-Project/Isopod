@@ -727,7 +727,7 @@ export default function App() {
                                onChange={(e) => setModSearchVersion(e.target.value)}
                             >
                                <option value="">Any Version</option>
-                               {mcVersions.slice(0, 100).map((v: any) => (
+                               {mcVersions.filter((v: any) => v.type === "release").slice(0, 150).map((v: any) => (
                                   <option key={v.id} value={v.id}>{v.id}</option>
                                ))}
                             </select>
@@ -766,7 +766,7 @@ export default function App() {
                                {modSearchResults.length === 0 ? (
                                   <div className="flex flex-col items-center justify-center p-12 text-neutral-600 opacity-50">
                                      <Search className="w-12 h-12 mb-3" />
-                                     <p className="text-sm font-medium">Search for something above!</p>
+                                     <p className="text-sm font-medium text-center">{modSearchQuery ? "No mods found matching your query and filters." : "Search for something above!"}</p>
                                   </div>
                                ) : (
                                   modSearchResults.map((res) => {
