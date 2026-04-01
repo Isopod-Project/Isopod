@@ -41,6 +41,16 @@ export default function App() {
   const [modpackResults, setModpackResults] = useState<any[]>([]);
   const [isModpackLoading, setIsModpackLoading] = useState(false);
   const [selectedModpack, setSelectedModpack] = useState<any>(null);
+  const [versionSearch, setVersionSearch] = useState("");
+  const [versionFilters, setVersionFilters] = useState({
+    Releases: true,
+    Snapshots: false,
+    Betas: false,
+    Alphas: false
+  });
+  const [loaderVersions, setLoaderVersions] = useState<any[]>([]);
+  const [isLoaderLoading, setIsLoaderLoading] = useState(false);
+  const [selectedAddLoaderVersion, setSelectedAddLoaderVersion] = useState("latest");
   
   // Edit Modal states
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -158,6 +168,25 @@ export default function App() {
     }
   };
 
+  const fetchLoaderVersions = async (loader: string, mcVersion: string) => {
+    if (loader === "VANILLA") {
+       setLoaderVersions([]);
+       return;
+    }
+    setIsLoaderLoading(true);
+    try {
+       const res = await fetch(`/api/meta/loaders/${loader}?mc_version=${mcVersion}`);
+       const data = await res.json();
+       setLoaderVersions(data || []);
+       setSelectedAddLoaderVersion("latest");
+    } catch (e) {
+       console.error("Failed to fetch loader versions", e);
+       setLoaderVersions([]);
+    } finally {
+       setIsLoaderLoading(false);
+    }
+  };
+
   const handleAddInstance = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsCreating(true);
@@ -166,16 +195,12 @@ export default function App() {
         name: newName, 
         template: selectedAddLoader.toLowerCase(), 
         port: parseInt(newPort),
-        version: selectedAddVersion,
+        version: selectedAddVersion === 'latest' ? '' : selectedAddVersion,
+        loader_version: selectedAddLoaderVersion,
         modrinth_id: addTab === 'modrinth' && selectedModpack ? selectedModpack.id : null,
         cf_id: addTab === 'curseforge' && selectedModpack ? selectedModpack.id : null
       };
-      
-      // If a modpack is selected, we'll need to pass that to the backend
-      // The current backend create_instance only takes name, template, port.
-      // I should probably update the backend to take more initial env vars or just use the config update after.
-      // But for simplicity, I'll update the backend create_instance as well.
-      
+
       const res = await fetch("/api/instances", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -183,11 +208,7 @@ export default function App() {
       });
       if (!res.ok) throw new Error("Failed to create instance");
       const data = await res.json();
-      
-      // After creation, if we have a version or modpack, we might want to update the config immediately
-      // But let's assume the backend handles the basic template.
-      // I'll update the backend to support version and potentially modpacks in creation.
-      
+
       setInstances((prev: Instance[]) => [...prev, data]);
       setIsAddModalOpen(false);
       
@@ -196,6 +217,7 @@ export default function App() {
       setSelectedModpack(null);
       setSelectedAddVersion("latest");
       setSelectedAddLoader("VANILLA");
+      setSelectedAddLoaderVersion("latest");
       
       fetchInstances();
     } catch (e) {
@@ -579,6 +601,15 @@ export default function App() {
   const selectedInstance = instances.find(i => i.id === selectedId);
   const selectedStatus = selectedId ? statuses[selectedId] : null;
 
+  // Fetch loader versions when selection changes
+  useEffect(() => {
+    if (isAddModalOpen && selectedAddLoader !== "VANILLA" && selectedAddVersion !== "latest") {
+       fetchLoaderVersions(selectedAddLoader, selectedAddVersion);
+    } else {
+       setLoaderVersions([]);
+    }
+  }, [selectedAddLoader, selectedAddVersion, isAddModalOpen]);
+
   return (
     <div className="flex h-screen bg-[#242424] text-[#E0E0E0] font-sans selection:bg-[#3E8ED0]/40 overflow-hidden">
       <div className="flex-1 flex flex-col">
@@ -870,27 +901,42 @@ export default function App() {
                                  <div className="text-right">Released</div>
                                  <div className="text-right">Type</div>
                               </div>
-                              <div className="flex-1 overflow-auto">
-                                 {mcVersions.map((v: any) => (
-                                    <div 
-                                       key={v.id}
-                                       onClick={() => setSelectedAddVersion(v.id)}
-                                       className={`grid grid-cols-3 px-4 py-2 text-sm font-mono cursor-pointer border-b border-[#1A1A1A] transition-colors ${selectedAddVersion === v.id ? 'bg-[#3E8ED0]/20 text-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
-                                    >
-                                       <div className="flex items-center gap-2">
-                                          {v.type === 'release' && <Check className="w-3 h-3 text-emerald-500" />}
-                                          <span>{v.id}</span>
+                               <div className="flex-1 overflow-auto">
+                                 {mcVersions
+                                    .filter(v => {
+                                       if (versionSearch && !v.id.includes(versionSearch)) return false;
+                                       if (v.type === 'release' && versionFilters.Releases) return true;
+                                       if (v.type === 'snapshot' && versionFilters.Snapshots) return true;
+                                       if (v.type === 'old_beta' && versionFilters.Betas) return true;
+                                       if (v.type === 'old_alpha' && versionFilters.Alphas) return true;
+                                       return false;
+                                    })
+                                    .map((v: any) => (
+                                       <div 
+                                          key={v.id}
+                                          onClick={() => setSelectedAddVersion(v.id)}
+                                          className={`grid grid-cols-3 px-4 py-2 text-sm font-mono cursor-pointer border-b border-[#1A1A1A] transition-colors ${selectedAddVersion === v.id ? 'bg-[#3E8ED0]/20 text-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
+                                       >
+                                          <div className="flex items-center gap-2">
+                                             {v.type === 'release' && <Check className="w-3 h-3 text-emerald-500" />}
+                                             <span>{v.id}</span>
+                                          </div>
+                                          <div className="text-right opacity-50">{new Date(v.releaseTime).toLocaleDateString()}</div>
+                                          <div className="text-right capitalize text-[10px] font-bold opacity-60">{v.type}</div>
                                        </div>
-                                       <div className="text-right opacity-50">{new Date(v.releaseTime).toLocaleDateString()}</div>
-                                       <div className="text-right capitalize text-[10px] font-bold opacity-60">{v.type}</div>
-                                    </div>
-                                 ))}
+                                    ))}
                               </div>
                            </div>
                            <div className="mt-4 flex gap-4">
                               <div className="flex-1 relative">
                                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-neutral-600" />
-                                 <input type="text" placeholder="Search versions..." className="w-full bg-[#141414] border border-[#333] pl-9 pr-4 py-1.5 rounded text-xs focus:outline-none focus:border-[#3E8ED0]" />
+                                 <input 
+                                    type="text" 
+                                    placeholder="Search versions..." 
+                                    className="w-full bg-[#141414] border border-[#333] pl-9 pr-4 py-1.5 rounded text-xs focus:outline-none focus:border-[#3E8ED0]" 
+                                    value={versionSearch}
+                                    onChange={(e) => setVersionSearch(e.target.value)}
+                                 />
                               </div>
                               <button onClick={fetchMcVersions} className="px-4 py-1.5 bg-[#323232] hover:bg-[#404040] rounded text-xs font-bold text-neutral-400 transition-colors">Refresh</button>
                            </div>
@@ -901,9 +947,14 @@ export default function App() {
                            <div className="flex-1">
                               <h5 className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-3">Filters</h5>
                               <div className="space-y-2">
-                                 {['Releases', 'Snapshots', 'Betas', 'Alphas'].map(f => (
+                                 {(['Releases', 'Snapshots', 'Betas', 'Alphas'] as const).map(f => (
                                     <label key={f} className="flex items-center gap-2 text-xs text-neutral-400 hover:text-white cursor-pointer">
-                                       <input type="checkbox" defaultChecked={f === 'Releases'} className="rounded bg-[#141414] border-[#333] accent-[#3E8ED0]" />
+                                       <input 
+                                          type="checkbox" 
+                                          checked={versionFilters[f]} 
+                                          onChange={(e) => setVersionFilters(prev => ({ ...prev, [f]: e.target.checked }))}
+                                          className="rounded bg-[#141414] border-[#333] accent-[#3E8ED0]" 
+                                       />
                                        {f}
                                     </label>
                                  ))}
@@ -914,12 +965,35 @@ export default function App() {
                               <h5 className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-3">Mod Loader</h5>
                               <div className="space-y-2">
                                  {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT'].map(l => (
-                                    <label key={l} className="flex items-center gap-2 text-xs text-neutral-400 hover:text-white cursor-pointer" onClick={() => setSelectedAddLoader(l)}>
-                                       <div className={`w-3 h-3 rounded-full border border-[#444] flex items-center justify-center ${selectedAddLoader === l ? 'bg-[#3E8ED0] border-[#3E8ED0]' : ''}`}>
-                                          {selectedAddLoader === l && <div className="w-1 h-1 bg-white rounded-full" />}
-                                       </div>
-                                       <span className={selectedAddLoader === l ? 'text-white font-bold' : ''}>{l}</span>
-                                    </label>
+                                    <div key={l} className="flex flex-col gap-1">
+                                       <label className="flex items-center gap-2 text-xs text-neutral-400 hover:text-white cursor-pointer" onClick={() => setSelectedAddLoader(l)}>
+                                          <div className={`w-3 h-3 rounded-full border border-[#444] flex items-center justify-center ${selectedAddLoader === l ? 'bg-[#3E8ED0] border-[#3E8ED0]' : ''}`}>
+                                             {selectedAddLoader === l && <div className="w-1 h-1 bg-white rounded-full" />}
+                                          </div>
+                                          <span className={selectedAddLoader === l ? 'text-white font-bold' : ''}>{l}</span>
+                                       </label>
+                                       
+                                       {selectedAddLoader === l && l !== 'VANILLA' && (
+                                          <div className="ml-5 mt-1 animate-in slide-in-from-left duration-200">
+                                             {isLoaderLoading ? (
+                                                <div className="text-[10px] text-neutral-500 italic animate-pulse py-1">Loading versions...</div>
+                                             ) : (
+                                                <select 
+                                                   value={selectedAddLoaderVersion}
+                                                   onChange={(e) => setSelectedAddLoaderVersion(e.target.value)}
+                                                   className="bg-[#141414] border border-[#333] text-[10px] text-neutral-300 rounded px-1.5 py-1 focus:outline-none focus:border-[#3E8ED0] w-full shadow-inner"
+                                                >
+                                                   <option value="latest">Latest Recommended</option>
+                                                   {loaderVersions.map((lv) => (
+                                                      <option key={lv.id} value={lv.id}>
+                                                         {lv.id} {lv.stable ? '' : '(unstable)'}
+                                                      </option>
+                                                   ))}
+                                                </select>
+                                             )}
+                                          </div>
+                                       )}
+                                    </div>
                                  ))}
                               </div>
                            </div>

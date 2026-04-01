@@ -58,6 +58,7 @@ class CreateInstanceRequest(BaseModel):
     template: str
     port: int
     version: Optional[str] = "latest"
+    loader_version: Optional[str] = "latest"
     modrinth_id: Optional[str] = None
     cf_id: Optional[str] = None
 
@@ -262,6 +263,56 @@ async def get_mc_versions():
         cached_versions = {"time": now, "data": data}
         return data
 
+@app.get("/api/meta/loaders/{loader}")
+async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
+    """Fetch available versions for a specific mod loader, optionally filtered by MC version."""
+    loader = loader.lower()
+    async with httpx.AsyncClient() as client:
+        if loader == "fabric":
+            url = f"https://meta.fabricmc.net/v2/versions/loader"
+            if mc_version:
+                url = f"https://meta.fabricmc.net/v2/versions/loader/{mc_version}"
+            res = await client.get(url)
+            data = res.json()
+            # Return a simplified list of versions
+            if mc_version:
+                return [{"id": v["loader"]["version"], "stable": v["loader"]["stable"]} for v in data]
+            else:
+                return [{"id": v["version"], "stable": v["stable"]} for v in data]
+
+        elif loader == "quilt":
+            url = f"https://meta.quiltmc.org/v2/versions/loader"
+            if mc_version:
+                url = f"https://meta.quiltmc.org/v2/versions/loader/{mc_version}"
+            res = await client.get(url)
+            data = res.json()
+            if mc_version:
+                return [{"id": v["loader"]["version"], "stable": v["loader"]["version"].count('-') == 0} for v in data]
+            else:
+                return [{"id": v["version"], "stable": v["version"].count('-') == 0} for v in data]
+
+        elif loader == "forge":
+            # Forge is tricky, using BMCLAPI mirror for ease of use
+            url = f"https://bmclapi2.bangbang93.com/forge/minecraft/{mc_version}" if mc_version else "https://bmclapi2.bangbang93.com/forge/promotions"
+            res = await client.get(url)
+            data = res.json()
+            if mc_version:
+                return [{"id": v["version"], "stable": v["type"] == "recommended"} for v in data]
+            else:
+                # promos
+                promos = data.get("promos", {})
+                return [{"id": v, "name": k} for k, v in promos.items()]
+        
+        elif loader == "neoforge":
+            # NeoForge also on BMCLAPI
+            url = f"https://bmclapi2.bangbang93.com/neoforge/list/{mc_version}" if mc_version else "https://bmclapi2.bangbang93.com/neoforge/list"
+            res = await client.get(url)
+            # data is a list of strings
+            data = res.json()
+            return [{"id": v, "stable": True} for v in data]
+
+    return []
+
 @app.get("/api/mods/search/modrinth")
 async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None, class_type: str = "mod"):
     # Handle "undefined" literals from frontend
@@ -402,6 +453,8 @@ def create_instance(req: CreateInstanceRequest):
     
     # Add modpack if present
     env = compose_content["services"]["mc"]["environment"]
+    if req.loader_version and req.loader_version != "latest":
+        env.append(f"LOADER_VERSION={req.loader_version}")
     if req.modrinth_id:
         env.append(f"MODRINTH_PROJECTS={req.modrinth_id}")
     if req.cf_id:
