@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Folder, Play, Square, Settings, RefreshCw, Server, AlertCircle } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2 } from "lucide-react";
 
 interface Instance {
   id: string;
@@ -19,14 +19,22 @@ export default function App() {
   const [instances, setInstances] = useState<Instance[]>([]);
   const [statuses, setStatuses] = useState<Record<string, InstanceStatus>>({});
   const [loading, setLoading] = useState(true);
+  
+  // Selected Instance for the right sidebar
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const fetchInstances = async () => {
     try {
       const res = await fetch("http://localhost:8000/api/instances");
+      if (!res.ok) throw new Error("Backend error");
       const data = await res.json();
       setInstances(data);
       
-      // Fetch status for each valid one
+      // Auto select the first instance if none is selected
+      if (data.length > 0 && !selectedId) {
+        setSelectedId(data[0].id);
+      }
+      
       for (const inst of data) {
         if (inst.has_compose) {
           fetchStatus(inst.id);
@@ -34,6 +42,7 @@ export default function App() {
       }
     } catch (e) {
       console.error(e);
+      alert("Failed to connect to Isopod backend. Is it running on port 8000?");
     } finally {
       setLoading(false);
     }
@@ -51,129 +60,196 @@ export default function App() {
 
   const handleStart = async (id: string) => {
     try {
+      setStatuses(prev => ({ 
+        ...prev, 
+        [id]: { ...prev[id], is_running: true } // Optimistic update
+      }));
       await fetch(`http://localhost:8000/api/instances/${id}/start`, { method: "POST" });
       setTimeout(() => fetchStatus(id), 2000);
     } catch (e) {
       console.error(e);
+      alert("Error starting container");
     }
   };
 
   const handleStop = async (id: string) => {
     try {
+      setStatuses(prev => ({ 
+        ...prev, 
+        [id]: { ...prev[id], is_running: false } // Optimistic update
+      }));
       await fetch(`http://localhost:8000/api/instances/${id}/stop`, { method: "POST" });
       setTimeout(() => fetchStatus(id), 2000);
     } catch (e) {
       console.error(e);
+      alert("Error stopping container");
     }
   };
 
   useEffect(() => {
     fetchInstances();
+    
+    // Poll for status every 5 seconds
+    const interval = setInterval(() => {
+        setInstances(prevInstances => {
+            prevInstances.forEach(inst => fetchStatus(inst.id));
+            return prevInstances;
+        });
+    }, 5000);
+    
+    return () => clearInterval(interval);
   }, []);
 
+  const selectedInstance = instances.find(i => i.id === selectedId);
+  const selectedStatus = selectedId ? statuses[selectedId] : null;
+
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 p-8 font-sans selection:bg-indigo-500/30">
-      <header className="max-w-6xl mx-auto mb-12 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-600/20">
-            <Server className="text-white w-6 h-6" />
-          </div>
-          <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-white to-neutral-400 bg-clip-text text-transparent">
-            Isopod
-          </h1>
-        </div>
-        <button 
-          onClick={fetchInstances}
-          className="flex items-center gap-2 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 transition-colors border border-neutral-800 rounded-lg text-sm font-medium"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Refresh
-        </button>
-      </header>
+    <div className="flex h-screen bg-[#242424] text-[#E0E0E0] font-sans selection:bg-[#3E8ED0]/40 overflow-hidden">
       
-      <main className="max-w-6xl mx-auto">
-        {loading ? (
-          <div className="flex animate-pulse space-x-4">
-            <div className="flex-1 space-y-4 py-1">
-              <div className="h-4 bg-neutral-800 rounded w-3/4"></div>
-              <div className="space-y-3">
-                <div className="h-4 bg-neutral-800 rounded"></div>
-                <div className="h-4 bg-neutral-800 rounded w-5/6"></div>
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col">
+        {/* Top Navbar */}
+        <header className="h-[52px] min-h-[52px] bg-[#3B3B3B] border-b border-[#1E1E1E] flex items-center px-4 gap-4 flex-shrink-0 shadow-sm z-10">
+          <button className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium">
+            <Plus className="w-4 h-4 text-emerald-400" />
+            Add Instance
+          </button>
+          <button className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium">
+            <Folder className="w-4 h-4 text-yellow-500" />
+            Folders
+          </button>
+          <button className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium">
+            <Settings className="w-4 h-4 text-neutral-300" />
+            Settings
+          </button>
+          <button 
+            onClick={fetchInstances}
+            className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium ml-auto"
+          >
+            <RefreshCw className="w-4 h-4 text-sky-400" />
+            Refresh
+          </button>
+        </header>
+        
+        {/* Instances Grid */}
+        <main className="flex-1 overflow-auto p-6 bg-[#2B2B2B]">
+          {loading ? (
+             <div className="text-neutral-400 flex items-center gap-2">
+                <RefreshCw className="w-5 h-5 animate-spin" /> Loading Instances...
+             </div>
+          ) : instances.length === 0 ? (
+             <div className="flex flex-col items-center justify-center h-full text-neutral-500">
+                <AlertCircle className="w-12 h-12 mb-4 opacity-50" />
+                <p>No instances found. Create folders in your servers directory.</p>
+             </div>
+          ) : (
+            <div>
+              <div className="flex items-center gap-2 border-b border-[#404040] pb-2 mb-4 cursor-default">
+                 <Layers className="w-4 h-4 text-neutral-400" />
+                 <span className="font-semibold text-neutral-300">Ungrouped</span>
+              </div>
+              
+              {/* Prism Launcher style Grid */}
+              <div className="flex flex-wrap gap-4">
+                {instances.map((inst) => {
+                  const isSelected = selectedId === inst.id;
+                  const isRunning = statuses[inst.id]?.is_running;
+                  
+                  return (
+                    <div 
+                      key={inst.id}
+                      onClick={() => setSelectedId(inst.id)}
+                      className={`flex flex-col flex-wrap items-center justify-center p-3 rounded cursor-pointer transition-all w-[110px] select-none ${
+                        isSelected 
+                          ? 'bg-[#3E8ED0]/20 outline outline-2 outline-[#3E8ED0] shadow-sm' 
+                          : 'hover:bg-[#404040] border border-transparent'
+                      }`}
+                    >
+                      <div className="relative mb-3 flex items-center justify-center w-[72px] h-[72px] bg-[#3B3B3B] rounded shadow-inner">
+                        <Gamepad2 className={`w-10 h-10 ${isRunning ? 'text-emerald-400' : 'text-[#878787]'}`} />
+                        {/* Status Dot */}
+                        <div className={`absolute bottom-1 right-1 w-3 h-3 rounded-full border-2 border-[#3B3B3B] ${isRunning ? 'bg-emerald-500' : 'bg-neutral-500'}`}></div>
+                      </div>
+                      <span className="text-xs text-center font-medium line-clamp-2 leading-tight">
+                        {inst.name}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
-          </div>
-        ) : instances.length === 0 ? (
-          <div className="text-center py-24 border border-dashed border-neutral-800 rounded-2xl bg-neutral-900/50 flex flex-col items-center justify-center">
-             <AlertCircle className="w-12 h-12 text-neutral-500 mb-4" />
-             <h3 className="text-xl font-medium text-neutral-300">No Instances Found</h3>
-             <p className="text-neutral-500 mt-2 max-w-sm">Create a folder in your configured SERVERS_DIR to get started.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {instances.map((inst) => {
-              const statusInfo = statuses[inst.id];
-              const isRunning = statusInfo?.is_running;
-              
-              return (
-                <div key={inst.id} className="group relative bg-neutral-900/80 backdrop-blur-xl border border-neutral-800/80 rounded-2xl p-6 transition-all duration-300 hover:shadow-2xl hover:shadow-indigo-500/10 hover:-translate-y-1 overflow-hidden">
-                  <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                  
-                  <div className="relative z-10">
-                    <div className="flex items-start justify-between mb-4">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2.5 bg-neutral-800 rounded-lg">
-                           <Folder className="w-6 h-6 text-indigo-400" />
-                        </div>
-                        <div>
-                          <h2 className="text-xl font-semibold text-white tracking-wide">{inst.name}</h2>
-                          <div className="flex items-center gap-2 mt-1">
-                             {isRunning ? (
-                               <div className="flex items-center gap-1.5 cursor-help" title="Containers are actively running">
-                                 <span className="relative flex h-2.5 w-2.5">
-                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-                                 </span>
-                                 <span className="text-xs text-emerald-400 font-medium tracking-wide uppercase">Running</span>
-                               </div>
-                             ) : (
-                               <div className="flex items-center gap-1.5 cursor-help" title="Valid instance configuration detected">
-                                  <span className="w-2.5 h-2.5 rounded-full bg-neutral-700"></span>
-                                  <span className="text-xs text-neutral-500 font-medium tracking-wide uppercase">Valid</span>
-                               </div>
-                             )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+          )}
+        </main>
+      </div>
 
-                    <div className="pt-6 mt-6 border-t border-neutral-800 flex items-center gap-3">
-                      {isRunning ? (
-                        <button 
-                          onClick={() => handleStop(inst.id)}
-                          className="flex-1 flex items-center justify-center gap-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-500 px-4 py-2.5 rounded-xl font-medium transition-colors"
-                        >
-                          <Square className="w-4 h-4" /> Stop
-                        </button>
-                      ) : (
-                        <button 
-                          onClick={() => handleStart(inst.id)}
-                          className="flex-1 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-xl font-medium transition-colors shadow-lg shadow-indigo-600/20"
-                        >
-                          <Play className="w-4 h-4 fill-current" /> Start
-                        </button>
-                      )}
-                      
-                      <button className="p-2.5 text-neutral-400 hover:text-white bg-neutral-800 hover:bg-neutral-700 rounded-xl transition-colors">
-                        <Settings className="w-5 h-5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+      {/* Right Sidebar */}
+      <aside className="w-[280px] min-w-[280px] flex-shrink-0 bg-[#242424] border-l border-[#1E1E1E] flex flex-col shadow-[rgba(0,0,0,0.1)_-4px_0px_15px_-3px] z-20">
+        {selectedInstance ? (
+          <>
+            {/* Sidebar Header: Large Icon and Title */}
+            <div className="p-6 flex flex-col items-center border-b border-[#323232]">
+              <div className="w-24 h-24 bg-[#3B3B3B] rounded-lg shadow-inner flex flex-col items-center justify-center mb-4 relative">
+                 <Gamepad2 className="w-12 h-12 text-[#878787]" />
+                 {selectedStatus?.is_running && (
+                   <span className="absolute top-2 right-2 flex h-3 w-3">
+                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                     <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                   </span>
+                 )}
+              </div>
+              <h2 className="text-lg font-bold text-center leading-tight mb-1">{selectedInstance.name}</h2>
+              <p className="text-xs text-neutral-400">
+                 {selectedStatus?.is_running ? 'Online (Containers Running)' : 'Offline (Setup Valid)'}
+              </p>
+            </div>
+
+            {/* Sidebar Actions */}
+            <div className="p-4 flex flex-col gap-1.5 flex-1 overflow-auto">
+              
+              {selectedStatus?.is_running ? (
+                <button 
+                  onClick={() => handleStop(selectedInstance.id)}
+                  className="flex items-center gap-3 px-3 py-2.5 rounded bg-[#402020] hover:bg-[#5A2525] border border-[#502020] text-red-400 transition-colors"
+                >
+                  <Square className="w-4 h-4 fill-current" />
+                  <span className="font-semibold">Kill</span>
+                </button>
+              ) : (
+                <button 
+                  onClick={() => handleStart(selectedInstance.id)}
+                  className="flex items-center gap-3 px-3 py-2.5 rounded bg-[#1A3A22] hover:bg-[#204A2A] border border-[#2A5030] text-emerald-400 transition-colors"
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                  <span className="font-semibold">Launch</span>
+                </button>
+              )}
+
+              <div className="h-px bg-[#323232] my-2"></div>
+              
+              <button className="flex items-center gap-3 px-3 py-1.5 rounded hover:bg-[#323232] text-neutral-300 transition-colors">
+                <Edit className="w-4 h-4" /> Edit
+              </button>
+              <button className="flex items-center gap-3 px-3 py-1.5 rounded hover:bg-[#323232] text-neutral-300 transition-colors">
+                <Folder className="w-4 h-4" /> Folder
+              </button>
+              <button className="flex items-center gap-3 px-3 py-1.5 rounded hover:bg-[#323232] text-neutral-300 transition-colors">
+                <Settings className="w-4 h-4" /> Settings
+              </button>
+              <div className="h-px bg-[#323232] my-2"></div>
+              <button className="flex items-center gap-3 px-3 py-1.5 rounded hover:bg-[#3D2525] text-red-400/80 transition-colors">
+                <Trash2 className="w-4 h-4" /> Delete
+              </button>
+
+            </div>
+          </>
+        ) : (
+          <div className="flex flex-col items-center justify-center p-8 h-full text-center text-neutral-500">
+             <Layers className="w-12 h-12 mb-4 opacity-30" />
+             <p className="text-sm">Select an instance to view actions and details.</p>
           </div>
         )}
-      </main>
+      </aside>
+
     </div>
   );
 }
