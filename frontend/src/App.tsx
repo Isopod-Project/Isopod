@@ -310,6 +310,19 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Live Logs Polling
+  useEffect(() => {
+    let interval: any;
+    if (isEditModalOpen && editTab === "logs" && selectedId) {
+      interval = setInterval(() => {
+        if (!isLogsLoading) {
+            fetchLogs(selectedId);
+        }
+      }, 3000);
+    }
+    return () => interval && clearInterval(interval);
+  }, [isEditModalOpen, editTab, selectedId, isLogsLoading]);
+
   // Sync mod search filters when config is loaded
   useEffect(() => {
     if (isEditModalOpen && config.environment) {
