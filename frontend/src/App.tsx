@@ -12,6 +12,7 @@ interface Instance {
 interface InstanceStatus {
   instance_id: string;
   is_running: boolean;
+  is_ready: boolean;
   containers: unknown[];
 }
 
@@ -476,8 +477,12 @@ export default function App() {
                       }`}
                     >
                       <div className="relative mb-3 flex items-center justify-center w-[72px] h-[72px] bg-[#3B3B3B] rounded shadow-inner">
-                        <Gamepad2 className={`w-10 h-10 ${isRunning ? 'text-emerald-400' : 'text-[#878787]'}`} />
-                        <div className={`absolute bottom-1 right-1 w-3 h-3 rounded-full border-2 border-[#3B3B3B] ${isRunning ? 'bg-emerald-500' : 'bg-neutral-500'}`}></div>
+                        <Gamepad2 className={`w-10 h-10 ${isRunning ? (statuses[inst.id]?.is_ready ? 'text-emerald-400' : 'text-amber-400') : 'text-[#878787]'}`} />
+                        <div className={`absolute bottom-1 right-1 w-3 h-3 rounded-full border-2 border-[#3B3B3B] ${
+                           isRunning 
+                           ? (statuses[inst.id]?.is_ready ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse') 
+                           : 'bg-neutral-500'
+                        }`}></div>
                       </div>
                       <span className="text-xs text-center font-medium line-clamp-2 leading-tight">
                         {inst.name}
@@ -507,7 +512,7 @@ export default function App() {
               </div>
               <h2 className="text-lg font-bold text-center leading-tight mb-1">{selectedInstance.name}</h2>
               <p className="text-xs text-neutral-400">
-                 {selectedStatus?.is_running ? 'Online (Containers Running)' : 'Offline (Setup Valid)'}
+                 {!selectedStatus?.is_running ? 'Offline' : (selectedStatus?.is_ready ? 'Online' : 'Starting...')}
               </p>
             </div>
 

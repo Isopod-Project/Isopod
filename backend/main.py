@@ -117,6 +117,21 @@ def get_instance_status(instance_id: str):
 
     is_running = any(c.status == "running" for c in containers)
     
+    # Check logs for "Done" heartbeat if running
+    is_ready = False
+    if is_running:
+        try:
+            # Check most recent logs for Minecraft heartbeats
+            log_result = subprocess.run(
+                ["docker", "compose", "logs", "--tail=100", "mc"],
+                cwd=get_instance_path(instance_id),
+                capture_output=True, text=True, timeout=5
+            )
+            # Log heartbeats: Done (2.345s)! or Done!
+            if "Done (" in log_result.stdout or "Done!" in log_result.stdout:
+                is_ready = True
+        except: pass
+
     container_info = []
     for c in containers:
         container_info.append({
@@ -129,6 +144,7 @@ def get_instance_status(instance_id: str):
     return {
         "instance_id": instance_id,
         "is_running": is_running,
+        "is_ready": is_ready,
         "containers": container_info
     }
 
