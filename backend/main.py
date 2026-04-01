@@ -232,7 +232,7 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
     if mc_version:
         facets.append([f"versions:{mc_version}"])
     if loader:
-        facets.append([f"loaders:{loader.lower()}"])
+        facets.append([f"categories:{loader.lower()}"])
         
     url = "https://api.modrinth.com/v2/search"
     params = {
