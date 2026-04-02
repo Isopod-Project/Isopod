@@ -107,6 +107,8 @@ export default function App() {
      defaultWhitelistEnabled: false,
      defaultWhitelistUsers: [] as string[]
   });
+  const [originalGlobalSettings, setOriginalGlobalSettings] = useState("");
+  const [isSavingGlobal, setIsSavingGlobal] = useState(false);
   const [newWhitelistUser, setNewWhitelistUser] = useState("");
   const [whitelistPreview, setWhitelistPreview] = useState<{name: string, uuid: string} | null>(null);
   const [isVerifyingUser, setIsVerifyingUser] = useState(false);
@@ -712,6 +714,20 @@ export default function App() {
     }
   }, [selectedAddLoader, selectedAddVersion, isAddModalOpen]);
 
+  const openSettings = () => {
+    setOriginalGlobalSettings(JSON.stringify(globalSettings));
+    setIsSettingsModalOpen(true);
+    setSettingsTab("general");
+  };
+
+  const handleSaveGlobalSettings = async () => {
+    setIsSavingGlobal(true);
+    // Simulation of saving settings
+    await new Promise(r => setTimeout(r, 600));
+    setOriginalGlobalSettings(JSON.stringify(globalSettings));
+    setIsSavingGlobal(false);
+  };
+
   return (
     <div className="flex h-screen bg-[#242424] text-[#E0E0E0] font-sans selection:bg-[#3E8ED0]/40 overflow-hidden">
       <div className="flex-1 flex flex-col">
@@ -748,10 +764,7 @@ export default function App() {
             Folders
           </button>
           <button 
-             onClick={() => {
-                setIsSettingsModalOpen(true);
-                setSettingsTab("general");
-             }}
+             onClick={openSettings}
              className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium"
           >
             <Settings className="w-4 h-4 text-neutral-300" />
@@ -882,10 +895,7 @@ export default function App() {
                  <Folder className="w-4 h-4" /> Folder
                </button>
               <button 
-                 onClick={() => {
-                   setIsSettingsModalOpen(true);
-                   setSettingsTab("general");
-                 }}
+                 onClick={openSettings}
                  className="flex items-center gap-3 px-3 py-1.5 rounded hover:bg-[#323232] text-neutral-300 transition-colors"
               >
                 <Settings className="w-4 h-4" /> Settings
@@ -1938,7 +1948,15 @@ export default function App() {
                                        <div className="relative flex-1 group">
                                           <div className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-[#1A1A1A] border border-[#333] flex items-center justify-center overflow-hidden">
                                              {instanceWhitelistPreview ? (
-                                                <img src={`https://crafatar.com/avatars/${instanceWhitelistPreview.uuid}?size=32&overlay`} alt="" className="w-full h-full" />
+                                                <img 
+                                                   src={`https://crafatar.com/avatars/${instanceWhitelistPreview.uuid}?size=32&overlay`} 
+                                                   referrerPolicy="no-referrer"
+                                                   alt="" 
+                                                   className="w-full h-full"
+                                                   onError={(e) => {
+                                                      e.currentTarget.src = `https://minotar.net/avatar/${instanceWhitelistUser}/32`;
+                                                   }}
+                                                />
                                              ) : (
                                                 <Users className="w-3 h-3 text-neutral-600" />
                                              )}
@@ -2338,7 +2356,15 @@ export default function App() {
                                        <div className="relative flex-1">
                                           <div className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-sm bg-[#1A1A1A] border border-[#333] flex items-center justify-center overflow-hidden">
                                              {whitelistPreview ? (
-                                                <img src={`https://crafatar.com/avatars/${whitelistPreview.uuid}?size=32&overlay`} alt="" className="w-full h-full" />
+                                                <img 
+                                                   src={`https://crafatar.com/avatars/${whitelistPreview.uuid}?size=32&overlay`} 
+                                                   referrerPolicy="no-referrer"
+                                                   alt="" 
+                                                   className="w-full h-full"
+                                                   onError={(e) => {
+                                                      e.currentTarget.src = `https://minotar.net/avatar/${newWhitelistUser}/32`;
+                                                   }}
+                                                />
                                              ) : (
                                                 <Users className="w-3 h-3 text-neutral-500" />
                                              )}
@@ -2446,13 +2472,40 @@ export default function App() {
             </div>
 
             {/* Footer */}
-            <div className="p-6 bg-[#2D2D2D] border-t border-[#3A3A3A] flex justify-end gap-3">
-               <button 
-                 onClick={() => setIsSettingsModalOpen(false)}
-                 className="px-8 py-2.5 rounded-lg bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white font-bold transition-all shadow-xl shadow-[#3E8ED0]/15"
-               >
-                 Close
-               </button>
+            <div className="p-6 bg-[#2D2D2D] border-t border-[#3A3A3A] flex justify-between items-center px-8 shadow-inner">
+               <div className="flex items-center gap-3">
+                  {JSON.stringify(globalSettings) !== originalGlobalSettings && (
+                     <div className="flex items-center gap-2 text-amber-500 text-xs font-bold animate-pulse">
+                        <AlertCircle className="w-4 h-4" />
+                        UNSAVED CHANGES
+                     </div>
+                  )}
+               </div>
+               <div className="flex gap-3">
+                  <button 
+                    onClick={() => {
+                       if (JSON.stringify(globalSettings) !== originalGlobalSettings) {
+                          setGlobalSettings(JSON.parse(originalGlobalSettings));
+                       }
+                       setIsSettingsModalOpen(false);
+                    }}
+                    className="px-6 py-2.5 rounded-lg text-neutral-400 hover:bg-[#3A3A3A] hover:text-white font-bold transition-all text-sm"
+                  >
+                    {JSON.stringify(globalSettings) !== originalGlobalSettings ? "Discard Changes" : "Close"}
+                  </button>
+                  <button 
+                    onClick={handleSaveGlobalSettings}
+                    disabled={isSavingGlobal || JSON.stringify(globalSettings) === originalGlobalSettings}
+                    className={`px-8 py-2.5 rounded-lg flex items-center gap-2 font-bold transition-all shadow-xl text-sm ${
+                      JSON.stringify(globalSettings) === originalGlobalSettings 
+                      ? 'bg-neutral-800 text-neutral-500 cursor-not-allowed opacity-50 border border-neutral-700' 
+                      : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white shadow-[#3E8ED0]/15'
+                    }`}
+                  >
+                    {isSavingGlobal ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    Save Settings
+                  </button>
+               </div>
             </div>
           </div>
         </div>
