@@ -1653,6 +1653,7 @@ export default function App() {
                                             <th className="px-4 py-2 w-12 text-center">Enable</th>
                                             <th className="px-4 py-2 w-16">Image</th>
                                             <th className="px-4 py-2">Name</th>
+                                            <th className="px-4 py-2">Versions</th>
                                             <th className="px-4 py-2">Provider</th>
                                             <th className="px-4 py-2 text-right">Actions</th>
                                          </tr>
@@ -1660,7 +1661,7 @@ export default function App() {
                                       <tbody className="divide-y divide-[#323232]">
                                          {installedModsMeta.length === 0 ? (
                                             <tr>
-                                               <td colSpan={5} className="p-12 text-center text-neutral-600 italic text-sm">
+                                               <td colSpan={6} className="p-12 text-center text-neutral-600 italic text-sm">
                                                   No mods installed yet. Click "Download Mods" to start!
                                                </td>
                                             </tr>
@@ -1682,7 +1683,31 @@ export default function App() {
                                                      </div>
                                                   </td>
                                                   <td className="px-4 py-3">
-                                                     <span className="text-[10px] font-bold bg-[#333] px-2 py-0.5 rounded text-neutral-400 capitalize">{mod.provider}</span>
+                                                     <div className="flex flex-col gap-1.5">
+                                                        {mod.latest_version && (
+                                                           <div className="flex items-center gap-2">
+                                                              <span className="text-[9px] text-neutral-500 font-medium uppercase tracking-tighter opacity-70">Mod</span>
+                                                              <span className="text-[10px] font-bold text-[#3E8ED0] bg-[#3E8ED0]/10 px-1.5 py-0.5 rounded border border-[#3E8ED0]/20 truncate max-w-[140px]" title={mod.latest_version}>
+                                                                 {mod.latest_version}
+                                                              </span>
+                                                           </div>
+                                                        )}
+                                                        {mod.mc_versions && mod.mc_versions.length > 0 && (
+                                                           <div className="flex items-center gap-2">
+                                                              <span className="text-[9px] text-neutral-500 font-medium uppercase tracking-tighter opacity-70">Game</span>
+                                                              <div className="flex gap-1 overflow-hidden">
+                                                                 {mod.mc_versions.map((v: string) => (
+                                                                    <span key={v} className="text-[9px] font-bold text-emerald-400 bg-emerald-400/10 px-1 py-0.5 rounded border border-emerald-400/20 whitespace-nowrap">
+                                                                       {v}
+                                                                    </span>
+                                                                 ))}
+                                                              </div>
+                                                           </div>
+                                                        )}
+                                                     </div>
+                                                     </td>
+                                                     <td className="px-4 py-3 text-center">
+                                                        <span className="text-[10px] font-bold bg-[#333] px-2 py-0.5 rounded text-neutral-400 capitalize">{mod.provider}</span>
                                                   </td>
                                                   <td className="px-4 py-3 text-right">
                                                      <div className="flex justify-end gap-2 group-hover:opacity-100 opacity-0 transition-opacity">

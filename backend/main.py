@@ -653,10 +653,12 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
                                 "name": project["title"],
                                 "summary": project["description"],
                                 "icon_url": project.get("icon_url"),
-                                "author": "-", # Needs another call or deeper parsing
+                                "author": "-", 
                                 "downloads": project.get("downloads", 0),
                                 "url": f"https://modrinth.com/mod/{project['slug']}",
-                                "provider": "modrinth"
+                                "provider": "modrinth",
+                                "mc_versions": project.get("game_versions", [])[:3],
+                                "latest_version": project.get("latest_version", "Unknown")
                             }
                             mod_metadata_cache[project["slug"]] = meta
                             mod_metadata_cache[project["id"]] = meta
@@ -671,7 +673,7 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
                 else:
                     results.append({"id": mid, "name": mid, "provider": "modrinth", "unknown": True, "requested_id": mid})
 
-        # CurseForge lookup (One by one since proxy doesn't support bulk well)
+        # CurseForge lookup
         if c_ids:
             for cid in c_ids:
                 if cid in mod_metadata_cache:
@@ -683,6 +685,7 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
                     res = await client.get(f"https://api.curse.tools/v1/cf/mods/{cid}")
                     if res.status_code == 200:
                         item = res.json()["data"]
+                        latest_file = item.get("latestFiles", [{}])[0]
                         meta = {
                             "id": str(item["id"]),
                             "name": item["name"],
@@ -691,7 +694,9 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
                             "author": item.get("authors", [{}])[0].get("name", "Unknown"),
                             "downloads": int(item.get("downloadCount", 0)),
                             "url": item.get("links", {}).get("websiteUrl", ""),
-                            "provider": "curseforge"
+                            "provider": "curseforge",
+                            "mc_versions": latest_file.get("gameVersions", [])[:3],
+                            "latest_version": latest_file.get("displayName", "Unknown")
                         }
                         mod_metadata_cache[cid] = meta
                         meta_copy = meta.copy()
