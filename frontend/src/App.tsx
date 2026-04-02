@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages } from "lucide-react";
 
 interface Instance {
   id: string;
@@ -93,6 +93,18 @@ export default function App() {
   const [currentFilePath, setCurrentFilePath] = useState(".");
   const [isFilesLoading, setIsFilesLoading] = useState(false);
   const [viewingFile, setViewingFile] = useState<{name: string, content: string} | null>(null);
+  
+  // Global App Settings
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState("general");
+  const [globalSettings, setGlobalSettings] = useState({
+     language: 'English',
+     theme: 'Dark',
+     defaultPort: '25565',
+     defaultLoader: 'VANILLA',
+     autoRefresh: true,
+     showSnapshots: false
+  });
 
   const fetchInstances = async () => {
     try {
@@ -684,7 +696,13 @@ export default function App() {
             <Folder className="w-4 h-4 text-yellow-500" />
             Folders
           </button>
-          <button className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium">
+          <button 
+             onClick={() => {
+                setIsSettingsModalOpen(true);
+                setSettingsTab("general");
+             }}
+             className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium"
+          >
             <Settings className="w-4 h-4 text-neutral-300" />
             Settings
           </button>
@@ -812,7 +830,13 @@ export default function App() {
                >
                  <Folder className="w-4 h-4" /> Folder
                </button>
-              <button className="flex items-center gap-3 px-3 py-1.5 rounded hover:bg-[#323232] text-neutral-300 transition-colors">
+              <button 
+                 onClick={() => {
+                   setIsSettingsModalOpen(true);
+                   setSettingsTab("general");
+                 }}
+                 className="flex items-center gap-3 px-3 py-1.5 rounded hover:bg-[#323232] text-neutral-300 transition-colors"
+              >
                 <Settings className="w-4 h-4" /> Settings
               </button>
               <div className="h-px bg-[#323232] my-2"></div>
@@ -1958,6 +1982,223 @@ export default function App() {
                   className={`flex-[1.5] px-4 py-3 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white font-bold rounded-lg shadow-xl shadow-[#3E8ED0]/10 transition-all ${isCheckingCompatibility ? 'opacity-50 cursor-not-allowed' : ''}`}
                >
                   Change to {pendingVersion}
+               </button>
+             </div>
+          </div>
+        </div>
+      )}
+
+      {isSettingsModalOpen && (
+        <div className="absolute inset-0 z-[110] flex items-center justify-center bg-black/75 backdrop-blur-md p-6">
+          <div className="bg-[#242424] border border-[#3A3A3A] rounded-xl shadow-2xl w-full max-w-4xl h-[70vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200 text-[#E0E0E0]">
+            {/* Header */}
+            <div className="px-6 py-5 border-b border-[#323232] bg-[#2B2B2B] flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                 <div className="p-2 bg-[#3E8ED0]/10 rounded-lg text-[#3E8ED0]">
+                    <Settings className="w-6 h-6" />
+                 </div>
+                 <div>
+                    <h2 className="text-xl font-bold text-white">Application Settings</h2>
+                    <p className="text-[10px] text-neutral-500 uppercase tracking-widest font-bold mt-0.5">Global Configuration & Defaults</p>
+                 </div>
+              </div>
+              <button 
+                onClick={() => setIsSettingsModalOpen(false)}
+                className="p-1.5 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="flex-1 flex overflow-hidden">
+               {/* Sidebar */}
+               <div className="w-56 bg-[#1E1E1E] border-r border-[#323232] p-3 flex flex-col gap-1.5">
+                  <h5 className="px-3 text-[10px] font-bold text-neutral-600 uppercase tracking-widest mb-1 mt-2">Preferences</h5>
+                  {[
+                     { id: "general", name: "General", icon: Monitor },
+                     { id: "language", name: "Language", icon: Languages },
+                     { id: "appearance", name: "Appearance", icon: Moon }
+                  ].map((tab) => (
+                     <button 
+                        key={tab.id}
+                        onClick={() => setSettingsTab(tab.id)}
+                        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${settingsTab === tab.id ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                     >
+                        <tab.icon className="w-4 h-4" />
+                        {tab.name}
+                     </button>
+                  ))}
+
+                  <h5 className="px-3 text-[10px] font-bold text-neutral-600 uppercase tracking-widest mb-1 mt-4">System</h5>
+                  {[
+                     { id: "defaults", name: "Server Defaults", icon: Database },
+                     { id: "advanced", name: "Advanced", icon: Shield }
+                  ].map((tab) => (
+                     <button 
+                        key={tab.id}
+                        onClick={() => setSettingsTab(tab.id)}
+                        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${settingsTab === tab.id ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                     >
+                        <tab.icon className="w-4 h-4" />
+                        {tab.name}
+                     </button>
+                  ))}
+               </div>
+
+               {/* Content Area */}
+               <div className="flex-1 bg-[#1A1A1A] p-8 overflow-auto scrollbar-custom text-[#E0E0E0]">
+                  {settingsTab === "general" && (
+                     <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
+                        <div>
+                           <h3 className="text-lg font-bold mb-1">General Settings</h3>
+                           <p className="text-sm text-neutral-500">Configure basic application behavior.</p>
+                        </div>
+                        <div className="space-y-4">
+                           <div className="flex items-center justify-between p-4 bg-[#242424] rounded-lg border border-[#333]">
+                              <div className="flex flex-col">
+                                 <span className="font-bold text-sm">Automatic Refresh</span>
+                                 <span className="text-xs text-neutral-500">Auto-update instance statuses every 5 seconds.</span>
+                              </div>
+                              <button 
+                                 onClick={() => setGlobalSettings({...globalSettings, autoRefresh: !globalSettings.autoRefresh})}
+                                 className={`w-12 h-6 rounded-full transition-all relative ${globalSettings.autoRefresh ? 'bg-emerald-500' : 'bg-[#333]'}`}
+                              >
+                                 <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${globalSettings.autoRefresh ? 'left-7' : 'left-1'}`} />
+                              </button>
+                           </div>
+                           <div className="flex items-center justify-between p-4 bg-[#242424] rounded-lg border border-[#333]">
+                              <div className="flex flex-col">
+                                 <span className="font-bold text-sm">Show Snapshots</span>
+                                 <span className="text-xs text-neutral-500">Show Minecraft snapshots in version selection by default.</span>
+                              </div>
+                              <button 
+                                 onClick={() => setGlobalSettings({...globalSettings, showSnapshots: !globalSettings.showSnapshots})}
+                                 className={`w-12 h-6 rounded-full transition-all relative ${globalSettings.showSnapshots ? 'bg-[#3E8ED0]' : 'bg-[#333]'}`}
+                              >
+                                 <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${globalSettings.showSnapshots ? 'left-7' : 'left-1'}`} />
+                              </button>
+                           </div>
+                        </div>
+                     </div>
+                  )}
+
+                  {settingsTab === "language" && (
+                     <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
+                        <div>
+                           <h3 className="text-lg font-bold mb-1">Language</h3>
+                           <p className="text-sm text-neutral-500">Select your preferred interface language.</p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                           {['English', 'Spanish', 'French', 'German', 'Russian', 'Chinese', 'Japanese'].map((lang) => (
+                              <button 
+                                 key={lang}
+                                 onClick={() => setGlobalSettings({...globalSettings, language: lang})}
+                                 className={`flex items-center justify-between p-4 rounded-lg border transition-all ${globalSettings.language === lang ? 'border-[#3E8ED0] bg-[#3E8ED0]/10 text-white' : 'border-[#333] bg-[#242424] text-neutral-400 hover:border-[#444]'}`}
+                              >
+                                 <span className="font-bold text-sm">{lang}</span>
+                                 {globalSettings.language === lang && <Check className="w-4 h-4" />}
+                              </button>
+                           ))}
+                        </div>
+                     </div>
+                  )}
+
+                  {settingsTab === "appearance" && (
+                     <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
+                        <div>
+                           <h3 className="text-lg font-bold mb-1">Appearance</h3>
+                           <p className="text-sm text-neutral-500">Customize the look and feel of Isopod.</p>
+                        </div>
+                        <div className="grid grid-cols-3 gap-4">
+                           {[
+                              { id: 'Dark', name: 'Dark Mode', icon: Moon },
+                              { id: 'Light', name: 'Light Mode', icon: Sun },
+                              { id: 'OLED', name: 'OLED Black', icon: Monitor }
+                           ].map((theme) => (
+                              <button 
+                                 key={theme.id}
+                                 onClick={() => setGlobalSettings({...globalSettings, theme: theme.id})}
+                                 className={`flex flex-col items-center gap-3 p-6 rounded-xl border transition-all ${globalSettings.theme === theme.id ? 'border-[#3E8ED0] bg-[#3E8ED0]/15' : 'border-[#333] bg-[#242424] grayscale opacity-60 hover:grayscale-0 hover:opacity-100 hover:border-[#444]'}`}
+                              >
+                                 <theme.icon className={`w-8 h-8 ${globalSettings.theme === theme.id ? 'text-[#3E8ED0]' : 'text-neutral-500'}`} />
+                                 <span className={`font-bold text-sm ${globalSettings.theme === theme.id ? 'text-white' : 'text-neutral-400'}`}>{theme.name}</span>
+                              </button>
+                           ))}
+                        </div>
+                     </div>
+                  )}
+
+                  {settingsTab === "defaults" && (
+                     <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
+                        <div>
+                           <h3 className="text-lg font-bold mb-1">Server Defaults</h3>
+                           <p className="text-sm text-neutral-500">Initial values for new server instances.</p>
+                        </div>
+                        <div className="space-y-6">
+                           <div className="flex flex-col gap-2">
+                              <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Default Port Range Start</label>
+                              <input 
+                                 type="number"
+                                 value={globalSettings.defaultPort}
+                                 onChange={(e) => setGlobalSettings({...globalSettings, defaultPort: e.target.value})}
+                                 className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-[#3E8ED0] text-sm font-mono text-emerald-400"
+                              />
+                           </div>
+                           <div className="flex flex-col gap-2">
+                              <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Default Mod Loader</label>
+                              <div className="grid grid-cols-5 gap-2">
+                                 {['VANILLA', 'FABRIC', 'FORGE', 'QUILT', 'NEOFORGE'].map((loader) => (
+                                    <button 
+                                       key={loader}
+                                       onClick={() => setGlobalSettings({...globalSettings, defaultLoader: loader})}
+                                       className={`py-2 rounded-md border text-[10px] font-bold transition-all ${globalSettings.defaultLoader === loader ? 'border-[#3E8ED0] bg-[#3E8ED0] text-white' : 'border-[#333] bg-[#242424] text-neutral-500 hover:border-[#444]'}`}
+                                    >
+                                       {loader}
+                                    </button>
+                                 ))}
+                              </div>
+                           </div>
+                        </div>
+                     </div>
+                  )}
+
+                  {settingsTab === "advanced" && (
+                     <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
+                        <div className="p-6 bg-amber-500/10 border border-amber-500/20 rounded-xl flex gap-4">
+                           <AlertCircle className="w-8 h-8 text-amber-500 flex-shrink-0" />
+                           <div className="space-y-2">
+                              <h3 className="text-amber-500 font-bold">Advanced Settings</h3>
+                              <p className="text-xs text-neutral-400 leading-relaxed">
+                                 These settings can affect application stability and security. 
+                                 Only modify them if you know what you are doing.
+                              </p>
+                           </div>
+                        </div>
+                        <div className="space-y-4">
+                           <div className="flex flex-col gap-2">
+                              <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Docker Socket Path</label>
+                              <input 
+                                 type="text"
+                                 defaultValue="/var/run/docker.sock"
+                                 className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-red-500/50 text-xs font-mono text-neutral-400"
+                              />
+                           </div>
+                           <button className="w-full py-3 bg-[#333] hover:bg-[#3D2525] text-red-400 font-bold rounded-lg border border-[#444] hover:border-red-500/30 transition-all text-xs">
+                              EXPORT APPLICATION LOGS
+                           </button>
+                        </div>
+                     </div>
+                  )}
+               </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-6 bg-[#2D2D2D] border-t border-[#3A3A3A] flex justify-end gap-3">
+               <button 
+                 onClick={() => setIsSettingsModalOpen(false)}
+                 className="px-8 py-2.5 rounded-lg bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white font-bold transition-all shadow-xl shadow-[#3E8ED0]/15"
+               >
+                 Close
                </button>
             </div>
           </div>
