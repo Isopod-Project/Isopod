@@ -295,33 +295,59 @@ async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
                     return [{"id": v["version"], "stable": v["version"].count('-') == 0} for v in data]
 
             elif loader == "forge":
-                # Use BMCLAPI for specific MC versions, promotions for generic
-                if mc_version and mc_version != "latest":
-                    url = f"https://bmclapi2.bangbang93.com/forge/minecraft/{mc_version}"
-                    print(f"DEBUG: Fetching Forge (MC={mc_version}) from {url}")
-                    res = await client.get(url)
+                url = f"https://bmclapi2.bangbang93.com/forge/minecraft/{mc_version}" if mc_version and mc_version != "latest" else "https://bmclapi2.bangbang93.com/forge/promotions"
+                print(f"DEBUG: Fetching Forge from {url}")
+                res = await client.get(url)
+                if not res.is_success and mc_version:
+                    # Fallback to promotions
+                    print("DEBUG: Forge version-specific fetch failed, falling back to promotions")
+                    res = await client.get("https://bmclapi2.bangbang93.com/forge/promotions")
                     data = res.json()
-                    # Filter for only stable/recommended if needed? No, show all but mark them
+                    promos = data.get("promos", {})
+                    return [{"id": v, "name": k, "stable": "recommended" in k} for k, v in promos.items()]
+                
+                data = res.json()
+                if mc_version and mc_version != "latest" and isinstance(data, list):
                     return [{"id": v["version"], "stable": v["type"] == "recommended"} for v in data]
                 else:
-                    url = "https://bmclapi2.bangbang93.com/forge/promotions"
-                    res = await client.get(url)
-                    data = res.json()
                     promos = data.get("promos", {})
                     return [{"id": v, "name": k, "stable": "recommended" in k} for k, v in promos.items()]
             
             elif loader == "neoforge":
-                # NeoForge can be fetched from BMCLAPI or Maven
                 url = f"https://bmclapi2.bangbang93.com/neoforge/list/{mc_version}" if mc_version and mc_version != "latest" else "https://bmclapi2.bangbang93.com/neoforge/list"
                 print(f"DEBUG: Fetching NeoForge from {url}")
                 res = await client.get(url)
+                if not res.is_success and mc_version:
+                     print("DEBUG: NeoForge version-specific fetch failed, falling back to all")
+                     res = await client.get("https://bmclapi2.bangbang93.com/neoforge/list")
                 data = res.json()
-                # If filtered by MC version, we get specific versions
-                if mc_version and mc_version != "latest":
-                    return [{"id": v, "stable": True} for v in data]
-                else:
-                    # Generic list
-                    return [{"id": v, "stable": True} for v in data]
+                return [{"id": v, "stable": True} for v in data]
+
+            elif loader == "paper":
+                if not mc_version or mc_version == "latest":
+                    # Paper doesn't have a global 'latest' endpoint, need to pick one?
+                    # Let's just return a placeholder for latest
+                    return [{"id": "latest", "stable": True}]
+                
+                url = f"https://api.papermc.io/v2/projects/paper/versions/{mc_version}"
+                print(f"DEBUG: Fetching Paper from {url}")
+                res = await client.get(url)
+                if res.is_success:
+                    data = res.json()
+                    # Return builds? Or just the version?
+                    # PaperMC API for versions returns a list of builds
+                    builds_res = await client.get(f"{url}/builds")
+                    if builds_res.is_success:
+                        builds_data = builds_res.json()
+                        builds = builds_data.get("builds", [])
+                        # Return in reverse order (newest first)
+                        return [{"id": str(b["build"]), "stable": b["channel"] == "default"} for b in reversed(builds)]
+                return [{"id": "latest", "stable": True}]
+
+            elif loader == "spigot":
+                # Spigot is traditionally built via BuildTools, but itzg handles it
+                return [{"id": "latest", "stable": True}]
+
     except Exception as e:
         print(f"DEBUG: Error fetching {loader} versions: {e}")
         return []
@@ -478,6 +504,11 @@ def create_instance(req: CreateInstanceRequest):
             env.append(f"NEOFORGEVERSION={req.loader_version}")
         elif template == "QUILT":
             env.append(f"QUILT_LOADER_VERSION={req.loader_version}")
+        elif template == "PAPER":
+            # Paper uses its own version but itzg handles TYPE=PAPER
+            # If loader_version is a build number, it might not be what it expects in TYPE=PAPER
+            # But we can try setting it. Normally TYPE=PAPER handles it.
+            pass
         else:
             env.append(f"LOADER_VERSION={req.loader_version}")
 

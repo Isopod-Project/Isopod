@@ -1014,12 +1014,12 @@ export default function App() {
                                  <Cpu className="w-4 h-4 text-[#3E8ED0]" />
                                  Mod Loader
                               </h4>
-                              <div className="flex bg-[#1E1E1E] rounded p-1 border border-[#323232]">
-                                 {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT'].map(l => (
+                              <div className="flex bg-[#1E1E1E] rounded p-1 border border-[#323232] overflow-x-auto max-w-full">
+                                 {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT', 'PAPER', 'SPIGOT'].map(l => (
                                     <button 
                                        key={l}
                                        onClick={() => setSelectedAddLoader(l)}
-                                       className={`px-3 py-1 rounded text-[10px] font-bold transition-all ${selectedAddLoader === l ? 'bg-[#3E8ED0] text-white shadow-md' : 'text-neutral-500 hover:text-white'}`}
+                                       className={`px-3 py-1 rounded text-[10px] font-bold transition-all flex-shrink-0 ${selectedAddLoader === l ? 'bg-[#3E8ED0] text-white shadow-md' : 'text-neutral-500 hover:text-white'}`}
                                     >
                                        {l}
                                     </button>
