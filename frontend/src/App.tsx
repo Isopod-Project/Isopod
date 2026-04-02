@@ -109,6 +109,7 @@ export default function App() {
   });
   const [originalGlobalSettings, setOriginalGlobalSettings] = useState("");
   const [isSavingGlobal, setIsSavingGlobal] = useState(false);
+  const [seenPlayers, setSeenPlayers] = useState<{name: string, uuid: string}[]>([]);
   const [newWhitelistUser, setNewWhitelistUser] = useState("");
   const [whitelistPreview, setWhitelistPreview] = useState<{name: string, uuid: string} | null>(null);
   const [isVerifyingUser, setIsVerifyingUser] = useState(false);
@@ -116,6 +117,21 @@ export default function App() {
   // Instance Whitelist States
   const [instanceWhitelistUser, setInstanceWhitelistUser] = useState("");
   const [instanceWhitelistPreview, setInstanceWhitelistPreview] = useState<{name: string, uuid: string} | null>(null);
+
+  // Bootstrap seenPlayers with defaults and common entries
+  useEffect(() => {
+    const defaults = globalSettings.defaultWhitelistUsers.map(u => ({ name: u, uuid: u }));
+    const common = [
+       { name: "Technoblade", uuid: "ad8b121c-a330-4c8d-83c3-6311ce833c94" },
+       { name: "Dream", uuid: "ec70bc6c-7023-4402-847c-c0494426545b" },
+       { name: "TheTacomin", uuid: "8696c21e-7b7e-400a-b50a-f02755e1136c" }
+    ];
+    setSeenPlayers(prev => {
+       const existing = new Set(prev.map(p => p.name.toLowerCase()));
+       const toAdd = [...defaults, ...common].filter(p => !existing.has(p.name.toLowerCase()));
+       return [...prev, ...toAdd];
+    });
+  }, [globalSettings.defaultWhitelistUsers]);
 
   const fetchInstances = async () => {
     try {
@@ -667,7 +683,12 @@ export default function App() {
              const res = await fetch(`https://playerdb.co/api/player/minecraft/${newWhitelistUser}`);
              const data = await res.json();
              if (data.success) {
-                setWhitelistPreview({ name: data.data.player.username, uuid: data.data.player.id });
+                const p = { name: data.data.player.username, uuid: data.data.player.id };
+                setWhitelistPreview(p);
+                setSeenPlayers(prev => {
+                   if (prev.find(x => x.uuid === p.uuid)) return prev;
+                   return [...prev, p].slice(-20); // Keep last 20
+                });
              } else {
                 setWhitelistPreview(null);
              }
@@ -688,7 +709,12 @@ export default function App() {
              const res = await fetch(`https://playerdb.co/api/player/minecraft/${instanceWhitelistUser}`);
              const data = await res.json();
              if (data.success) {
-                setInstanceWhitelistPreview({ name: data.data.player.username, uuid: data.data.player.id });
+                const p = { name: data.data.player.username, uuid: data.data.player.id };
+                setInstanceWhitelistPreview(p);
+                setSeenPlayers(prev => {
+                   if (prev.find(x => x.uuid === p.uuid)) return prev;
+                   return [...prev, p].slice(-20);
+                });
              } else {
                 setInstanceWhitelistPreview(null);
              }
@@ -1984,6 +2010,29 @@ export default function App() {
                                                 FOUND
                                              </div>
                                           )}
+                                          
+                                          {/* Dropdown Suggestions */}
+                                          {instanceWhitelistUser.length >= 1 && (
+                                             <div className="absolute top-full left-0 right-0 mt-1 bg-[#1E1E1E] border border-[#333] rounded-lg shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-200">
+                                                {seenPlayers.filter(p => p.name.toLowerCase().includes(instanceWhitelistUser.toLowerCase())).slice(0, 5).map(p => (
+                                                   <div 
+                                                      key={p.uuid}
+                                                      onClick={() => {
+                                                         setInstanceWhitelistUser(p.name);
+                                                         setInstanceWhitelistPreview(p);
+                                                      }}
+                                                      className="flex items-center gap-3 px-4 py-2.5 hover:bg-[#333] cursor-pointer border-b border-[#282828] last:border-0 group"
+                                                   >
+                                                      <img src={`https://minotar.net/avatar/${p.name}/16`} alt="" className="w-4 h-4 rounded-sm" />
+                                                      <span className="text-sm font-medium text-neutral-300 group-hover:text-white">{p.name}</span>
+                                                      <span className="text-[10px] text-neutral-600 font-mono ml-auto">RECENT</span>
+                                                   </div>
+                                                ))}
+                                                {seenPlayers.filter(p => p.name.toLowerCase().includes(instanceWhitelistUser.toLowerCase())).length === 0 && !instanceWhitelistPreview && !isVerifyingUser && (
+                                                   <div className="px-4 py-2.5 text-xs text-neutral-600 italic">No matches found in history.</div>
+                                                )}
+                                             </div>
+                                          )}
                                        </div>
                                        <button 
                                           onClick={() => {
@@ -2391,6 +2440,26 @@ export default function App() {
                                           {isVerifyingUser && (
                                              <div className="absolute right-3 top-1/2 -translate-y-1/2">
                                                 <RefreshCw className="w-3 h-3 animate-spin text-neutral-600" />
+                                             </div>
+                                          )}
+
+                                          {/* Dropdown Suggestions */}
+                                          {newWhitelistUser.length >= 1 && (
+                                             <div className="absolute top-full left-0 right-0 mt-1 bg-[#1E1E1E] border border-[#333] rounded-lg shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-200">
+                                                {seenPlayers.filter(p => p.name.toLowerCase().includes(newWhitelistUser.toLowerCase())).slice(0, 5).map(p => (
+                                                   <div 
+                                                      key={p.uuid}
+                                                      onClick={() => {
+                                                         setNewWhitelistUser(p.name);
+                                                         setWhitelistPreview(p);
+                                                      }}
+                                                      className="flex items-center gap-3 px-4 py-2.5 hover:bg-[#333] cursor-pointer border-b border-[#282828] last:border-0 group"
+                                                   >
+                                                      <img src={`https://minotar.net/avatar/${p.name}/16`} alt="" className="w-4 h-4 rounded-sm" />
+                                                      <span className="text-sm font-medium text-neutral-300 group-hover:text-white">{p.name}</span>
+                                                      <span className="text-[10px] text-neutral-600 font-mono ml-auto">RECENT</span>
+                                                   </div>
+                                                ))}
                                              </div>
                                           )}
                                        </div>
