@@ -624,6 +624,7 @@ export default function App() {
 
   const openEditModal = () => {
     if (!selectedId) return;
+    setIsGlobalBrowser(false);
     setIsEditModalOpen(true);
     setEditTab("logs");
     fetchLogs(selectedId);
@@ -1318,7 +1319,9 @@ export default function App() {
                  <div className="p-1.5 bg-[#3E8ED0]/10 rounded border border-[#3E8ED0]/30">
                     <Edit className="w-5 h-5 text-[#3E8ED0]" />
                  </div>
-                 <h2 className="text-xl font-bold text-[#E0E0E0]">{isGlobalBrowser ? "Global Folders" : `Editing: ${selectedInstance?.name}`}</h2>
+                 <h2 className="text-xl font-bold text-[#E0E0E0]">
+                   {isGlobalBrowser ? "Global Folders" : (selectedInstance ? `Editing: ${selectedInstance.name}` : "Editing")}
+                 </h2>
               </div>
               <button onClick={() => setIsEditModalOpen(false)} className="p-1 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition">
                 <X className="w-6 h-6" />
@@ -1329,31 +1332,27 @@ export default function App() {
               {/* Left Sidebar Tabs */}
               <div className="w-56 bg-[#1E1E1E] border-r border-[#3A3A3A] p-4 flex flex-col justify-between">
                 <div className="flex flex-col gap-1.5">
-                  {!isGlobalBrowser && (
-                    <>
-                      <button 
-                        onClick={() => setEditTab("logs")}
-                        className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "logs" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
-                      >
-                        <Terminal className="w-4 h-4" />
-                        Minecraft Log
-                      </button>
-                      <button 
-                        onClick={() => setEditTab("version")}
-                        className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "version" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
-                      >
-                        <Database className="w-4 h-4" />
-                        Versions
-                      </button>
-                      <button 
-                        onClick={() => setEditTab("loader")}
-                        className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "loader" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
-                      >
-                        <Cpu className="w-4 h-4" />
-                        Loaders
-                      </button>
-                    </>
-                  )}
+                  <button 
+                    onClick={() => setEditTab("logs")}
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "logs" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                  >
+                    <Terminal className="w-4 h-4" />
+                    Minecraft Log
+                  </button>
+                  <button 
+                    onClick={() => setEditTab("version")}
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "version" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                  >
+                    <Database className="w-4 h-4" />
+                    Versions
+                  </button>
+                  <button 
+                    onClick={() => setEditTab("loader")}
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "loader" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                  >
+                    <Cpu className="w-4 h-4" />
+                    Loaders
+                  </button>
                    <button 
                     onClick={() => {
                        setEditTab("files");
@@ -1364,24 +1363,20 @@ export default function App() {
                     <Folder className="w-4 h-4" />
                     Files
                   </button>
-                  {!isGlobalBrowser && (
-                    <>
-                      <button 
-                        onClick={() => setEditTab("mods")}
-                        className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "mods" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
-                      >
-                        <Box className="w-4 h-4" />
-                        Mods
-                      </button>
-                      <button 
-                        onClick={() => setEditTab("config")}
-                        className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "config" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
-                      >
-                        <Settings className="w-4 h-4" />
-                        Configuration
-                      </button>
-                    </>
-                  )}
+                  <button 
+                    onClick={() => setEditTab("mods")}
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "mods" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                  >
+                    <Box className="w-4 h-4" />
+                    Mods
+                  </button>
+                  <button 
+                    onClick={() => setEditTab("config")}
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "config" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                  >
+                    <Settings className="w-4 h-4" />
+                    Configuration
+                  </button>
                 </div>
 
                  <div className="mt-auto pt-4 flex flex-col gap-2">
@@ -1819,7 +1814,7 @@ export default function App() {
                        <div className="flex justify-between items-center mb-6">
                           <div className="flex flex-col">
                              <h3 className="text-xl font-bold flex items-center gap-2">
-                                <Folder className="w-6 h-6 text-yellow-500" /> {isGlobalBrowser ? "Global Folders" : "Instance Files"}
+                                <Folder className="w-6 h-6 text-yellow-500" /> {isGlobalBrowser ? "Global Folders" : "Files"}
                              </h3>
                              <div className="flex items-center gap-1.5 text-[11px] text-neutral-500 mt-1">
                                 <span>{isGlobalBrowser ? "isopod" : "root"}</span>
