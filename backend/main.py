@@ -295,22 +295,33 @@ async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
                     return [{"id": v["version"], "stable": v["version"].count('-') == 0} for v in data]
 
             elif loader == "forge":
-                url = f"https://bmclapi2.bangbang93.com/forge/minecraft/{mc_version}" if mc_version and mc_version != "latest" else "https://bmclapi2.bangbang93.com/forge/promotions"
-                print(f"DEBUG: Fetching Forge from {url}")
-                res = await client.get(url)
-                data = res.json()
+                # Use BMCLAPI for specific MC versions, promotions for generic
                 if mc_version and mc_version != "latest":
+                    url = f"https://bmclapi2.bangbang93.com/forge/minecraft/{mc_version}"
+                    print(f"DEBUG: Fetching Forge (MC={mc_version}) from {url}")
+                    res = await client.get(url)
+                    data = res.json()
+                    # Filter for only stable/recommended if needed? No, show all but mark them
                     return [{"id": v["version"], "stable": v["type"] == "recommended"} for v in data]
                 else:
+                    url = "https://bmclapi2.bangbang93.com/forge/promotions"
+                    res = await client.get(url)
+                    data = res.json()
                     promos = data.get("promos", {})
-                    return [{"id": v, "name": k} for k, v in promos.items()]
+                    return [{"id": v, "name": k, "stable": "recommended" in k} for k, v in promos.items()]
             
             elif loader == "neoforge":
+                # NeoForge can be fetched from BMCLAPI or Maven
                 url = f"https://bmclapi2.bangbang93.com/neoforge/list/{mc_version}" if mc_version and mc_version != "latest" else "https://bmclapi2.bangbang93.com/neoforge/list"
                 print(f"DEBUG: Fetching NeoForge from {url}")
                 res = await client.get(url)
                 data = res.json()
-                return [{"id": v, "stable": True} for v in data]
+                # If filtered by MC version, we get specific versions
+                if mc_version and mc_version != "latest":
+                    return [{"id": v, "stable": True} for v in data]
+                else:
+                    # Generic list
+                    return [{"id": v, "stable": True} for v in data]
     except Exception as e:
         print(f"DEBUG: Error fetching {loader} versions: {e}")
         return []
@@ -455,10 +466,21 @@ def create_instance(req: CreateInstanceRequest):
         }
     }
     
-    # Add modpack if present
+    # Add modpack/loader if present
     env = compose_content["services"]["mc"]["environment"]
+    template = req.template.upper()
     if req.loader_version and req.loader_version != "latest":
-        env.append(f"LOADER_VERSION={req.loader_version}")
+        if template == "FABRIC":
+            env.append(f"FABRIC_LOADER_VERSION={req.loader_version}")
+        elif template == "FORGE":
+            env.append(f"FORGEVERSION={req.loader_version}")
+        elif template == "NEOFORGE":
+            env.append(f"NEOFORGEVERSION={req.loader_version}")
+        elif template == "QUILT":
+            env.append(f"QUILT_LOADER_VERSION={req.loader_version}")
+        else:
+            env.append(f"LOADER_VERSION={req.loader_version}")
+
     if req.modrinth_id:
         env.append(f"MODRINTH_PROJECTS={req.modrinth_id}")
     if req.cf_id:
