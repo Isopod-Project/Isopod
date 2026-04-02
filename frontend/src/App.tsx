@@ -93,6 +93,7 @@ export default function App() {
   const [currentFilePath, setCurrentFilePath] = useState(".");
   const [isFilesLoading, setIsFilesLoading] = useState(false);
   const [viewingFile, setViewingFile] = useState<{name: string, content: string} | null>(null);
+  const [isGlobalBrowser, setIsGlobalBrowser] = useState(false);
   
   // Global App Settings
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
@@ -421,10 +422,13 @@ export default function App() {
     }
   };
 
-  const fetchFileList = async (id: string, path: string = ".") => {
+  const fetchFileList = async (id: string | null, path: string = ".") => {
     setIsFilesLoading(true);
     try {
-      const res = await fetch(`/api/instances/${id}/files?path=${encodeURIComponent(path)}`);
+      const url = id 
+        ? `/api/instances/${id}/files?path=${encodeURIComponent(path)}`
+        : `/api/files?path=${encodeURIComponent(path)}`;
+      const res = await fetch(url);
       const data = await res.json();
       setFileList(data.items || []);
       setCurrentFilePath(data.path);
@@ -489,9 +493,12 @@ export default function App() {
     setIsVersionModalOpen(false);
   };
 
-  const handleOpenFile = async (id: string, path: string, name: string) => {
+  const handleOpenFile = async (id: string | null, path: string, name: string) => {
      try {
-        const res = await fetch(`/api/instances/${id}/file/content?path=${encodeURIComponent(path)}`);
+        const url = id
+            ? `/api/instances/${id}/file/content?path=${encodeURIComponent(path)}`
+            : `/api/file/content?path=${encodeURIComponent(path)}`;
+        const res = await fetch(url);
         if (!res.ok) throw new Error("Could not read file");
         const data = await res.json();
         setViewingFile({ name, content: data.content });
@@ -778,11 +785,10 @@ export default function App() {
           </button>
           <button 
              onClick={() => {
-                if (selectedId) {
-                  setIsEditModalOpen(true);
-                  setEditTab("files");
-                  fetchFileList(selectedId);
-                }
+                setIsGlobalBrowser(true);
+                setEditTab("files");
+                setIsEditModalOpen(true);
+                fetchFileList(null);
              }}
              className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium"
           >
@@ -912,6 +918,7 @@ export default function App() {
               </button>
                <button 
                  onClick={() => {
+                   setIsGlobalBrowser(false);
                    setIsEditModalOpen(true);
                    setEditTab("files");
                    fetchFileList(selectedInstance.id);
@@ -1302,7 +1309,7 @@ export default function App() {
         </div>
       )}
 
-      {isEditModalOpen && selectedInstance && (
+      {isEditModalOpen && (selectedInstance || isGlobalBrowser) && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-6">
           <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg shadow-2xl w-full max-w-6xl h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
             {/* Header */}
@@ -1311,7 +1318,7 @@ export default function App() {
                  <div className="p-1.5 bg-[#3E8ED0]/10 rounded border border-[#3E8ED0]/30">
                     <Edit className="w-5 h-5 text-[#3E8ED0]" />
                  </div>
-                 <h2 className="text-xl font-bold text-[#E0E0E0]">Editing: {selectedInstance.name}</h2>
+                 <h2 className="text-xl font-bold text-[#E0E0E0]">{isGlobalBrowser ? "Global Folders" : `Editing: ${selectedInstance?.name}`}</h2>
               </div>
               <button onClick={() => setIsEditModalOpen(false)} className="p-1 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition">
                 <X className="w-6 h-6" />
@@ -1322,51 +1329,59 @@ export default function App() {
               {/* Left Sidebar Tabs */}
               <div className="w-56 bg-[#1E1E1E] border-r border-[#3A3A3A] p-4 flex flex-col justify-between">
                 <div className="flex flex-col gap-1.5">
-                  <button 
-                    onClick={() => setEditTab("logs")}
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "logs" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
-                  >
-                    <Terminal className="w-4 h-4" />
-                    Minecraft Log
-                  </button>
-                  <button 
-                    onClick={() => setEditTab("version")}
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "version" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
-                  >
-                    <Database className="w-4 h-4" />
-                    Versions
-                  </button>
-                  <button 
-                    onClick={() => setEditTab("loader")}
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "loader" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
-                  >
-                    <Cpu className="w-4 h-4" />
-                    Loaders
-                  </button>
+                  {!isGlobalBrowser && (
+                    <>
+                      <button 
+                        onClick={() => setEditTab("logs")}
+                        className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "logs" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                      >
+                        <Terminal className="w-4 h-4" />
+                        Minecraft Log
+                      </button>
+                      <button 
+                        onClick={() => setEditTab("version")}
+                        className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "version" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                      >
+                        <Database className="w-4 h-4" />
+                        Versions
+                      </button>
+                      <button 
+                        onClick={() => setEditTab("loader")}
+                        className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "loader" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                      >
+                        <Cpu className="w-4 h-4" />
+                        Loaders
+                      </button>
+                    </>
+                  )}
                    <button 
                     onClick={() => {
                        setEditTab("files");
-                       fetchFileList(selectedInstance.id);
+                       fetchFileList(isGlobalBrowser ? null : (selectedInstance?.id || null));
                     }}
                     className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "files" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
                   >
                     <Folder className="w-4 h-4" />
                     Files
                   </button>
-                  <button 
-                    onClick={() => setEditTab("mods")}
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "mods" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
-                  >
-                    <Box className="w-4 h-4" />
-                    Mods
-                  </button>
-                  <button 
-                    onClick={() => setEditTab("config")}
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "config" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
-                  >
-                    <Settings className="w-4 h-4" />
-                    Configuration
-                  </button>
+                  {!isGlobalBrowser && (
+                    <>
+                      <button 
+                        onClick={() => setEditTab("mods")}
+                        className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "mods" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                      >
+                        <Box className="w-4 h-4" />
+                        Mods
+                      </button>
+                      <button 
+                        onClick={() => setEditTab("config")}
+                        className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "config" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                      >
+                        <Settings className="w-4 h-4" />
+                        Configuration
+                      </button>
+                    </>
+                  )}
                 </div>
 
                  <div className="mt-auto pt-4 flex flex-col gap-2">
@@ -1375,18 +1390,20 @@ export default function App() {
                       <AlertCircle className="w-3 h-3" /> Unsaved Changes
                     </div>
                   )}
-                  <button 
-                    onClick={handleSaveConfig}
-                    disabled={isSaving || JSON.stringify(config) === originalConfig}
-                    className={`w-full flex items-center justify-center gap-2 font-bold py-2 rounded shadow-lg transition-all ${
-                      JSON.stringify(config) === originalConfig 
-                      ? 'bg-neutral-800 text-neutral-500 cursor-not-allowed opacity-50' 
-                      : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white'
-                    }`}
-                  >
-                    {isSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                    Save Changes
-                  </button>
+                  {!isGlobalBrowser && (
+                    <button 
+                      onClick={handleSaveConfig}
+                      disabled={isSaving || JSON.stringify(config) === originalConfig}
+                      className={`w-full flex items-center justify-center gap-2 font-bold py-2 rounded shadow-lg transition-all ${
+                        JSON.stringify(config) === originalConfig 
+                        ? 'bg-neutral-800 text-neutral-500 cursor-not-allowed opacity-50' 
+                        : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white'
+                      }`}
+                    >
+                      {isSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                      Save Changes
+                    </button>
+                  )}
                 </div>
               </div>
               
@@ -1400,7 +1417,7 @@ export default function App() {
                          <span className="text-lg font-semibold text-neutral-300">Console Output</span>
                       </div>
                       <button 
-                        onClick={() => fetchLogs(selectedInstance.id)}
+                        onClick={() => selectedInstance && fetchLogs(selectedInstance.id)}
                         className="flex items-center gap-2 px-4 py-1.5 bg-[#323232] hover:bg-[#404040] rounded-md text-sm font-medium transition-colors border border-[#404040]"
                       >
                         <RefreshCw className={`w-4 h-4 ${isLogsLoading ? 'animate-spin' : ''}`} />
@@ -1797,117 +1814,117 @@ export default function App() {
                           </div>
                        )}
                     </div>
-                 )}
+                 )}                  {editTab === "files" && (
+                    <div className="flex flex-col h-full bg-[#1A1A1A] p-6 overflow-hidden">
+                       <div className="flex justify-between items-center mb-6">
+                          <div className="flex flex-col">
+                             <h3 className="text-xl font-bold flex items-center gap-2">
+                                <Folder className="w-6 h-6 text-yellow-500" /> {isGlobalBrowser ? "Global Folders" : "Instance Files"}
+                             </h3>
+                             <div className="flex items-center gap-1.5 text-[11px] text-neutral-500 mt-1">
+                                <span>{isGlobalBrowser ? "isopod" : "root"}</span>
+                                {currentFilePath !== "." && currentFilePath.split('/').map((seg, i) => (
+                                   <React.Fragment key={i}>
+                                      <ChevronRight className="w-3 h-3" />
+                                      <span>{seg}</span>
+                                   </React.Fragment>
+                                ))}
+                             </div>
+                          </div>
+                          <div className="flex gap-2">
+                             {currentFilePath !== "." && (
+                                <button 
+                                   onClick={() => {
+                                      const parts = currentFilePath.split('/');
+                                      parts.pop();
+                                      const instanceId = isGlobalBrowser ? null : (selectedInstance?.id || null);
+                                      fetchFileList(instanceId, parts.join('/') || ".");
+                                   }}
+                                   className="flex items-center gap-2 px-3 py-1.5 bg-[#323232] hover:bg-[#404040] rounded text-sm transition"
+                                >
+                                   <ArrowLeft className="w-4 h-4" /> Go Back
+                                </button>
+                             )}
+                             <button 
+                                onClick={() => fetchFileList(isGlobalBrowser ? null : (selectedInstance?.id || null), currentFilePath)}
+                                className="flex items-center justify-center p-2 bg-[#323232] hover:bg-[#404040] rounded text-neutral-300 transition"
+                             >
+                                <RefreshCw className={`w-4 h-4 ${isFilesLoading ? 'animate-spin' : ''}`} />
+                             </button>
+                          </div>
+                       </div>
 
-                 {editTab === "files" && (
-                   <div className="flex flex-col h-full bg-[#1A1A1A] p-6 overflow-hidden">
-                      <div className="flex justify-between items-center mb-6">
-                         <div className="flex flex-col">
-                            <h3 className="text-xl font-bold flex items-center gap-2">
-                               <Folder className="w-6 h-6 text-yellow-500" /> Instance Files
-                            </h3>
-                            <div className="flex items-center gap-1.5 text-[11px] text-neutral-500 mt-1">
-                               <span>root</span>
-                               {currentFilePath !== "." && currentFilePath.split('/').map((seg, i) => (
-                                  <React.Fragment key={i}>
-                                     <ChevronRight className="w-3 h-3" />
-                                     <span>{seg}</span>
-                                  </React.Fragment>
-                               ))}
-                            </div>
-                         </div>
-                         <div className="flex gap-2">
-                            {currentFilePath !== "." && (
-                               <button 
-                                  onClick={() => {
-                                     const parts = currentFilePath.split('/');
-                                     parts.pop();
-                                     fetchFileList(selectedInstance.id, parts.join('/') || ".");
-                                  }}
-                                  className="flex items-center gap-2 px-3 py-1.5 bg-[#323232] hover:bg-[#404040] rounded text-sm transition"
-                               >
-                                  <ArrowLeft className="w-4 h-4" /> Go Back
-                               </button>
-                            )}
-                            <button 
-                               onClick={() => fetchFileList(selectedInstance.id, currentFilePath)}
-                               className="flex items-center justify-center p-2 bg-[#323232] hover:bg-[#404040] rounded text-neutral-300 transition"
-                            >
-                               <RefreshCw className={`w-4 h-4 ${isFilesLoading ? 'animate-spin' : ''}`} />
-                            </button>
-                         </div>
-                      </div>
-
-                      {viewingFile ? (
-                         <div className="flex flex-col flex-1 bg-[#0D0D0D] border border-[#333] rounded-lg overflow-hidden animate-in slide-in-from-bottom-4 duration-300">
-                            <div className="px-4 py-2.5 bg-[#1F1F1F] border-b border-[#333] flex justify-between items-center">
-                               <div className="flex items-center gap-2">
-                                  <FileText className="w-4 h-4 text-[#3E8ED0]" />
-                                  <span className="text-sm font-bold text-neutral-300">{viewingFile.name}</span>
-                               </div>
-                               <button onClick={() => setViewingFile(null)} className="p-1 hover:bg-[#333] rounded text-neutral-500 hover:text-white transition">
-                                  <X className="w-5 h-5" />
-                               </button>
-                            </div>
-                            <pre className="flex-1 p-6 overflow-auto text-xs font-mono text-neutral-400 selection:bg-[#3E8ED0]/30 whitespace-pre scrollbar-custom">
-                               {viewingFile.content}
-                            </pre>
-                         </div>
-                      ) : (
-                         <div className="flex-1 bg-[#1E1E1E]/50 border border-[#333] rounded-lg overflow-hidden shadow-2xl">
-                            <div className="grid grid-cols-12 px-4 py-2 border-b border-[#333] text-[10px] uppercase font-bold text-neutral-500 tracking-wider bg-[#242424]">
-                               <div className="col-span-7">Name</div>
-                               <div className="col-span-2">Size</div>
-                               <div className="col-span-3">Modified</div>
-                            </div>
-                            <div className="flex-1 overflow-auto max-h-[calc(85vh-240px)] scrollbar-custom">
-                               {isFilesLoading ? (
-                                  <div className="flex flex-col items-center justify-center h-64 text-neutral-600 gap-3">
-                                     <RefreshCw className="w-8 h-8 animate-spin" />
-                                     <span className="text-sm font-medium">Scanning directory...</span>
-                                  </div>
-                               ) : fileList.length === 0 ? (
-                                  <div className="flex flex-col items-center justify-center h-64 text-neutral-600 gap-2 opacity-50">
-                                     <Box className="w-10 h-10" />
-                                     <span className="text-sm">Empty folder</span>
-                                  </div>
-                               ) : (
-                                  fileList.map((file, i) => {
-                                     const isText = ['.txt', '.log', '.properties', '.yml', '.yaml', '.json', '.conf', '.cfg', '.env'].includes(file.ext);
-                                     
-                                     return (
-                                        <div 
-                                           key={i} 
-                                           onClick={() => {
-                                              const newPath = currentFilePath === "." ? file.name : `${currentFilePath}/${file.name}`;
-                                              if (file.is_dir) {
-                                                 fetchFileList(selectedInstance.id, newPath);
-                                              } else if (isText) {
-                                                 handleOpenFile(selectedInstance.id, newPath, file.name);
-                                              }
-                                           }}
-                                           className="grid grid-cols-12 px-4 py-3 border-b border-[#282828] hover:bg-white/[0.03] transition-colors cursor-pointer group"
-                                        >
-                                           <div className="col-span-7 flex items-center gap-3 min-w-0">
-                                              {file.is_dir ? <Folder className="w-4 h-4 text-yellow-500/80 fill-current" /> : <FileText className="w-4 h-4 text-neutral-500" />}
-                                              <span className={`text-sm truncate ${file.is_dir ? 'text-neutral-300 font-medium' : 'text-neutral-400 font-normal'} group-hover:text-white transition-colors`}>{file.name}</span>
-                                              {isText && <span className="bg-[#3E8ED0]/10 text-[9px] px-1.5 py-0.5 rounded text-[#3E8ED0] font-bold border border-[#3E8ED0]/20 hidden group-hover:block">VIEW</span>}
-                                           </div>
-                                           <div className="col-span-2 text-xs text-neutral-500 flex items-center">
-                                              {file.is_dir ? '--' : (file.size > 1024 * 1024 ? `${(file.size / (1024 * 1024)).toFixed(1)} MB` : `${(file.size / 1024).toFixed(1)} KB`)}
-                                           </div>
-                                           <div className="col-span-3 text-xs text-neutral-600 flex items-center italic">
-                                              {new Date(file.modified * 1000).toLocaleDateString()}
-                                           </div>
-                                        </div>
-                                     );
-                                  })
-                               )}
-                            </div>
-                         </div>
-                      )}
-                   </div>
-                 )}
+                       {viewingFile ? (
+                          <div className="flex flex-col flex-1 bg-[#0D0D0D] border border-[#333] rounded-lg overflow-hidden animate-in slide-in-from-bottom-4 duration-300">
+                             <div className="px-4 py-2.5 bg-[#1F1F1F] border-b border-[#333] flex justify-between items-center">
+                                <div className="flex items-center gap-2">
+                                   <FileText className="w-4 h-4 text-[#3E8ED0]" />
+                                   <span className="text-sm font-bold text-neutral-300">{viewingFile.name}</span>
+                                </div>
+                                <button onClick={() => setViewingFile(null)} className="p-1 hover:bg-[#333] rounded text-neutral-500 hover:text-white transition">
+                                   <X className="w-5 h-5" />
+                                </button>
+                             </div>
+                             <pre className="flex-1 p-6 overflow-auto text-xs font-mono text-neutral-400 selection:bg-[#3E8ED0]/30 whitespace-pre scrollbar-custom">
+                                {viewingFile.content}
+                             </pre>
+                          </div>
+                       ) : (
+                          <div className="flex-1 bg-[#1E1E1E]/50 border border-[#333] rounded-lg overflow-hidden shadow-2xl">
+                             <div className="grid grid-cols-12 px-4 py-2 border-b border-[#333] text-[10px] uppercase font-bold text-neutral-500 tracking-wider bg-[#242424]">
+                                <div className="col-span-7">Name</div>
+                                <div className="col-span-2">Size</div>
+                                <div className="col-span-3">Modified</div>
+                             </div>
+                             <div className="flex-1 overflow-auto max-h-[calc(85vh-240px)] scrollbar-custom">
+                                {isFilesLoading ? (
+                                   <div className="flex flex-col items-center justify-center h-64 text-neutral-600 gap-3">
+                                      <RefreshCw className="w-8 h-8 animate-spin" />
+                                      <span className="text-sm font-medium">Scanning directory...</span>
+                                   </div>
+                                ) : fileList.length === 0 ? (
+                                   <div className="flex flex-col items-center justify-center h-64 text-neutral-600 gap-2 opacity-50">
+                                      <Box className="w-10 h-10" />
+                                      <span className="text-sm">Empty folder</span>
+                                   </div>
+                                ) : (
+                                   fileList.map((file, i) => {
+                                      const isText = ['.txt', '.log', '.properties', '.yml', '.yaml', '.json', '.conf', '.cfg', '.env'].includes(file.ext);
+                                      
+                                      return (
+                                         <div 
+                                            key={i} 
+                                            onClick={() => {
+                                               const newPath = currentFilePath === "." ? file.name : `${currentFilePath}/${file.name}`;
+                                               const instanceId = isGlobalBrowser ? null : (selectedInstance?.id || null);
+                                               if (file.is_dir) {
+                                                  fetchFileList(instanceId, newPath);
+                                               } else if (isText) {
+                                                  handleOpenFile(instanceId, newPath, file.name);
+                                               }
+                                            }}
+                                            className="grid grid-cols-12 px-4 py-3 border-b border-[#282828] hover:bg-white/[0.03] transition-colors cursor-pointer group"
+                                         >
+                                            <div className="col-span-7 flex items-center gap-3 min-w-0">
+                                               {file.is_dir ? <Folder className="w-4 h-4 text-yellow-500/80 fill-current" /> : <FileText className="w-4 h-4 text-neutral-500" />}
+                                               <span className={`text-sm truncate ${file.is_dir ? 'text-neutral-300 font-medium' : 'text-neutral-400 font-normal'} group-hover:text-white transition-colors`}>{file.name}</span>
+                                               {isText && <span className="bg-[#3E8ED0]/10 text-[9px] px-1.5 py-0.5 rounded text-[#3E8ED0] font-bold border border-[#3E8ED0]/20 hidden group-hover:block">VIEW</span>}
+                                            </div>
+                                            <div className="col-span-2 text-xs text-neutral-500 flex items-center">
+                                               {file.is_dir ? '--' : (file.size > 1024 * 1024 ? `${(file.size / (1024 * 1024)).toFixed(1)} MB` : `${(file.size / 1024).toFixed(1)} KB`)}
+                                            </div>
+                                            <div className="col-span-3 text-xs text-neutral-600 flex items-center italic">
+                                               {new Date(file.modified * 1000).toLocaleDateString()}
+                                            </div>
+                                         </div>
+                                      );
+                                   })
+                                )}
+                             </div>
+                          </div>
+                       )}
+                    </div>
+                  )}
 
                 {editTab === "config" && (
                   <div className="flex flex-col h-full p-8 overflow-auto">

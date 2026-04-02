@@ -756,6 +756,58 @@ async def get_mod_conflicts(provider: str, project_id: str, current_mods: str = 
     """Check for obvious loader/engine conflicts."""
     return {"conflicts": []}
 
+
+@app.get("/api/files")
+def list_global_files(path: str = "."):
+    """List files within the SERVERS_DIR."""
+    base_path = os.path.abspath(SERVERS_DIR)
+    target_path = os.path.abspath(os.path.join(base_path, path))
+    
+    if not target_path.startswith(base_path):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    if not os.path.exists(target_path):
+        # Gracefully handle non-existent path
+        if path == ".":
+            os.makedirs(base_path, exist_ok=True)
+        else:
+            raise HTTPException(status_code=404, detail="Path not found")
+        
+    items = []
+    for entry in os.scandir(target_path):
+        st = entry.stat()
+        items.append({
+            "name": entry.name,
+            "is_dir": entry.is_dir(),
+            "size": st.st_size,
+            "modified": st.st_mtime,
+            "ext": os.path.splitext(entry.name)[1].lower() if entry.is_file() else ""
+        })
+    
+    items.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
+    return {"path": path, "items": items}
+
+@app.get("/api/file/content")
+def get_global_file_content(path: str):
+    """Get text content of a file in SERVERS_DIR."""
+    base_path = os.path.abspath(SERVERS_DIR)
+    target_path = os.path.abspath(os.path.join(base_path, path))
+    
+    if not target_path.startswith(base_path):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if not os.path.isfile(target_path):
+        raise HTTPException(status_code=400, detail="Not a file")
+        
+    if os.path.getsize(target_path) > 1 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large to view (Max 1MB)")
+        
+    try:
+        with open(target_path, 'r', encoding='utf-8', errors='replace') as f:
+            return {"content": f.read()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/instances/{instance_id}/files")
 def list_instance_files(instance_id: str, path: str = "."):
     """List files within an instance directory."""
