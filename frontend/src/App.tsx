@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle } from "lucide-react";
 
 interface Instance {
   id: string;
@@ -29,6 +29,33 @@ export default function App() {
 
   // Context Menu state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; instanceId: string } | null>(null);
+
+  // Dialog state
+  const [dialog, setDialog] = useState<{
+    title: string;
+    message: string;
+    type: "alert" | "confirm" | "prompt";
+    defaultValue?: string;
+    onResult: (result: any) => void;
+  } | null>(null);
+
+  const showAlert = (message: string, title = "Alert") => {
+    return new Promise<void>((resolve) => {
+      setDialog({ title, message, type: "alert", onResult: () => { setDialog(null); resolve(); } });
+    });
+  };
+
+  const showConfirm = (message: string, title = "Confirm") => {
+    return new Promise<boolean>((resolve) => {
+      setDialog({ title, message, type: "confirm", onResult: (res) => { setDialog(null); resolve(!!res); } });
+    });
+  };
+
+  const showPrompt = (message: string, defaultValue = "", title = "Prompt") => {
+    return new Promise<string | null>((resolve) => {
+      setDialog({ title, message, type: "prompt", defaultValue, onResult: (res) => { setDialog(null); resolve(res); } });
+    });
+  };
   
   // Modal states
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -151,19 +178,25 @@ export default function App() {
 
   const handleRename = async (id: string) => {
     const inst = instances.find(i => i.id === id);
-    const newName = prompt("Enter new name for instance:", inst?.name);
+    const newName = await showPrompt("Enter new name for instance:", inst?.name, "Rename Instance");
     if (newName && newName !== inst?.name) {
-       // Ideally we have a rename API
        try {
           const res = await fetch(`/api/instances/${id}/rename`, {
              method: "POST",
              headers: { "Content-Type": "application/json" },
              body: JSON.stringify({ name: newName })
           });
-          if (res.ok) fetchInstances();
-          else alert("Failed to rename instance");
+          if (res.ok) {
+            await fetchInstances();
+            if (id === selectedId) {
+               const data = await res.json();
+               setSelectedId(data.id);
+            }
+          } else {
+            await showAlert("Failed to rename instance", "Error");
+          }
        } catch (e) {
-          alert("Error renaming instance");
+          await showAlert("Error renaming instance", "Error");
        }
     }
   };
@@ -187,7 +220,7 @@ export default function App() {
       }
     } catch (e) {
       console.error(e);
-      alert("Failed to connect to Isopod backend. Is it running on port 8000?");
+      await showAlert("Failed to connect to Isopod backend. Is it running on port 8000?", "System Error");
     } finally {
       setLoading(false);
     }
@@ -218,7 +251,7 @@ export default function App() {
       setTimeout(() => fetchStatus(id), 2000);
     } catch (e) {
       console.error(e);
-      alert(`Launch Error: ${e instanceof Error ? e.message : String(e)}`);
+      await showAlert(`Launch Error: ${e instanceof Error ? e.message : String(e)}`, "Launch Failed");
       fetchStatus(id);
     }
   };
@@ -238,7 +271,7 @@ export default function App() {
       setTimeout(() => fetchStatus(id), 2000);
     } catch (e) {
       console.error(e);
-      alert(`Stop Error: ${e instanceof Error ? e.message : String(e)}`);
+      await showAlert(`Stop Error: ${e instanceof Error ? e.message : String(e)}`, "Stop Failed");
       fetchStatus(id);
     }
   };
@@ -302,21 +335,22 @@ export default function App() {
       fetchInstances();
     } catch (e) {
       console.error(e);
-      alert("Failed to create instance");
+      await showAlert("Failed to create instance", "Creation Failed");
     } finally {
       setIsCreating(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to permanently delete this instance and all its files?")) return;
+    const confirmed = await showConfirm("Are you sure you want to permanently delete this instance and all its files?", "Delete Instance");
+    if (!confirmed) return;
     try {
       await fetch(`/api/instances/${id}`, { method: "DELETE" });
       setSelectedId(null);
       fetchInstances();
     } catch (err) {
       console.error(err);
-      alert("Error deleting instance");
+      await showAlert("Error deleting instance", "Delete Error");
     }
   };
 
@@ -387,7 +421,7 @@ export default function App() {
    const handleSaveConfig = async () => {
     if (!selectedId || !config) return;
     if (JSON.stringify(config) === originalConfig) {
-      alert("No changes to save.");
+      await showAlert("No changes to save.", "Settings");
       return;
     }
 
@@ -398,12 +432,14 @@ export default function App() {
     let shouldRestartAfter = false;
 
     if (isRunning) {
-      if (confirm("Apply changes and restart the server now?")) {
+      const confirmed = await showConfirm("Apply changes and restart the server now?", "Apply Configuration");
+      if (confirmed) {
         proceed = true;
         shouldRestartAfter = true;
       }
     } else {
-      if (confirm("Save changes to instance configuration?")) {
+      const confirmed = await showConfirm("Save changes to instance configuration?", "Save Configuration");
+      if (confirmed) {
         proceed = true;
       }
     }
@@ -424,11 +460,11 @@ export default function App() {
         setIsEditModalOpen(false); // Exit to main screen
         handleRestart(selectedId);
       } else {
-        alert("Changes saved explicitly.");
+        await showAlert("Changes saved explicitly.", "Configuration");
       }
 
     } catch (e: any) {
-      alert("Save Error: " + e.message);
+      await showAlert("Save Error: " + e.message, "Save Failed");
     } finally {
       setIsSaving(true); // Small delay to prevent double save
       setTimeout(() => setIsSaving(false), 500);
@@ -537,7 +573,7 @@ export default function App() {
         const data = await res.json();
         setViewingFile({ name, content: data.content });
      } catch (e: any) {
-        alert(e.message);
+        await showAlert(e.message, "File Error");
      }
   };
 
@@ -558,7 +594,7 @@ export default function App() {
       setModSearchResults(data);
     } catch (e: any) {
       console.error("Mod search failed", e);
-      alert("Search Error: " + e.message);
+      await showAlert("Search Error: " + e.message, "Search Failed");
     } finally {
       setIsModSearching(false);
     }
@@ -2704,6 +2740,59 @@ export default function App() {
           </button>
         </div>
       )}
+      {dialog && (
+        <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+           <div className="bg-[#2A2A2A] border border-[#3A3A3A] rounded-lg shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
+              <div className="px-6 py-4 border-b border-[#323232] bg-[#242424] flex items-center gap-3">
+                 {dialog.type === 'alert' && <AlertCircle className="w-5 h-5 text-amber-500" />}
+                 {dialog.type === 'confirm' && <HelpCircle className="w-5 h-5 text-[#3E8ED0]" />}
+                 {dialog.type === 'prompt' && <Edit className="w-5 h-5 text-[#3E8ED0]" />}
+                 <h3 className="font-bold text-white tracking-wide uppercase text-[10px]">{dialog.title}</h3>
+              </div>
+              <div className="p-6">
+                 <p className="text-neutral-300 text-sm leading-relaxed mb-4">{dialog.message}</p>
+                 {dialog.type === 'prompt' && (
+                    <input 
+                      autoFocus
+                      id="dialog-input"
+                      type="text" 
+                      defaultValue={dialog.defaultValue}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') dialog.onResult(e.currentTarget.value);
+                        if (e.key === 'Escape') dialog.onResult(null);
+                      }}
+                      className="w-full bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-2 rounded text-white focus:outline-none focus:border-[#3E8ED0] text-sm"
+                    />
+                 )}
+              </div>
+              <div className="px-6 py-4 bg-[#242424] border-t border-[#323232] flex justify-end gap-3">
+                 {(dialog.type === 'confirm' || dialog.type === 'prompt') && (
+                    <button 
+                      onClick={() => dialog.onResult(null)}
+                      className="px-4 py-2 text-[10px] font-bold text-neutral-400 hover:text-white transition-colors uppercase tracking-widest"
+                    >
+                       Cancel
+                    </button>
+                 )}
+                 <button 
+                   autoFocus={dialog.type !== 'prompt'}
+                   onClick={() => {
+                     if (dialog.type === 'prompt') {
+                        const input = document.getElementById('dialog-input') as HTMLInputElement;
+                        dialog.onResult(input?.value || "");
+                     } else {
+                        dialog.onResult(true);
+                     }
+                   }}
+                   className="px-6 py-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white font-bold rounded text-[10px] transition-all shadow-lg shadow-[#3E8ED0]/15 uppercase tracking-widest"
+                 >
+                   OK
+                 </button>
+              </div>
+           </div>
+        </div>
+      )}
     </div>
+
   );
 }

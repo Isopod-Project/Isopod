@@ -62,6 +62,9 @@ class CreateInstanceRequest(BaseModel):
     modrinth_id: Optional[str] = None
     cf_id: Optional[str] = None
 
+class RenameInstanceRequest(BaseModel):
+    name: str
+
 class CommandRequest(BaseModel):
     command: str
 
@@ -544,6 +547,55 @@ def delete_instance(instance_id: str):
     subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True)
     shutil.rmtree(path, ignore_errors=True)
     return {"message": "Instance deleted"}
+
+@app.post("/api/instances/{instance_id}/rename")
+def rename_instance(instance_id: str, req: RenameInstanceRequest):
+    old_path = get_instance_path(instance_id)
+    new_slug = generate_slug(req.name)
+    new_path = os.path.join(SERVERS_DIR, new_slug)
+    
+    if os.path.exists(new_path):
+        raise HTTPException(status_code=400, detail="Instance with that name already exists")
+
+    # Rename the directory
+    try:
+        os.rename(old_path, new_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    # Update docker-compose.yml
+    compose_path = os.path.join(new_path, "docker-compose.yml")
+    if os.path.exists(compose_path):
+        try:
+            with open(compose_path, "r") as f:
+                config = yaml.safe_load(f)
+            
+            services = config.get("services", {})
+            if services:
+                # Assuming first or "mc" service is the primary
+                service_name = "mc" if "mc" in services else list(services.keys())[0]
+                service = services[service_name]
+                service["container_name"] = f"isopod_{new_slug}"
+                
+                # Update MOTD in environment if it exists
+                env = service.get("environment", [])
+                if isinstance(env, list):
+                    for i, item in enumerate(env):
+                        if item.startswith("MOTD="):
+                            env[i] = f"MOTD={req.name} Hosted by Isopod"
+                            break
+                elif isinstance(env, dict):
+                    if "MOTD" in env:
+                        env["MOTD"] = f"{req.name} Hosted by Isopod"
+            
+            with open(compose_path, "w") as f:
+                yaml.dump(config, f, default_flow_style=False)
+        except Exception as e:
+            # Revert folder name if compose update radically fails?
+            # Or just continue since directory rename is the main thing
+            print(f"Error updating compose after rename: {e}")
+            
+    return {"id": new_slug, "message": "Instance renamed"}
 
 @app.get("/api/instances/{instance_id}/logs")
 def get_instance_logs(instance_id: str, tail: int = 200):
