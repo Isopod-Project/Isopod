@@ -928,12 +928,6 @@ export default function App() {
                >
                  <Folder className="w-4 h-4" /> Folder
                </button>
-              <button 
-                 onClick={openSettings}
-                 className="flex items-center gap-3 px-3 py-1.5 rounded hover:bg-[#323232] text-neutral-300 transition-colors"
-              >
-                <Settings className="w-4 h-4" /> Settings
-              </button>
               <div className="h-px bg-[#323232] my-2"></div>
               <button 
                 onClick={() => handleDelete(selectedInstance.id)}
