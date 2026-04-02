@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share } from "lucide-react";
 
 interface Instance {
   id: string;
@@ -26,6 +26,9 @@ export default function App() {
   
   // Selected Instance for the right sidebar
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // Context Menu state
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; instanceId: string } | null>(null);
   
   // Modal states
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -133,6 +136,37 @@ export default function App() {
        return [...prev, ...toAdd];
     });
   }, [globalSettings.defaultWhitelistUsers]);
+
+  useEffect(() => {
+    const handleClick = () => setContextMenu(null);
+    window.addEventListener('click', handleClick);
+    return () => window.removeEventListener('click', handleClick);
+  }, []);
+
+  const handleContextMenu = (e: React.MouseEvent, id: string) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, instanceId: id });
+    setSelectedId(id);
+  };
+
+  const handleRename = async (id: string) => {
+    const inst = instances.find(i => i.id === id);
+    const newName = prompt("Enter new name for instance:", inst?.name);
+    if (newName && newName !== inst?.name) {
+       // Ideally we have a rename API
+       try {
+          const res = await fetch(`/api/instances/${id}/rename`, {
+             method: "POST",
+             headers: { "Content-Type": "application/json" },
+             body: JSON.stringify({ name: newName })
+          });
+          if (res.ok) fetchInstances();
+          else alert("Failed to rename instance");
+       } catch (e) {
+          alert("Error renaming instance");
+       }
+    }
+  };
 
   const fetchInstances = async () => {
     try {
@@ -838,6 +872,7 @@ export default function App() {
                     <div 
                       key={inst.id}
                       onClick={() => setSelectedId(inst.id)}
+                      onContextMenu={(e) => handleContextMenu(e, inst.id)}
                       className={`flex flex-col items-center justify-center p-3 rounded cursor-pointer transition-all w-[110px] select-none ${
                         isSelected 
                           ? 'bg-[#3E8ED0]/20 outline outline-2 outline-[#3E8ED0] shadow-sm' 
@@ -2583,6 +2618,90 @@ export default function App() {
                </div>
             </div>
           </div>
+        </div>
+      )}
+      {contextMenu && (
+        <div 
+          className="fixed z-[1000] w-[220px] bg-[#2A2A2A] border border-[#3A3A3A] rounded-lg shadow-2xl py-1 animate-in fade-in zoom-in duration-150"
+          style={{ 
+            top: contextMenu.y + 400 > window.innerHeight ? contextMenu.y - 400 : contextMenu.y, 
+            left: contextMenu.x + 220 > window.innerWidth ? contextMenu.x - 220 : contextMenu.x 
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-3 py-1.5 text-[10px] font-bold text-neutral-500 uppercase tracking-widest border-b border-[#3A3A3A] mb-1 truncate">
+            {instances.find(i => i.id === contextMenu.instanceId)?.name || 'Instance'}
+          </div>
+
+          <button 
+            onClick={() => { handleRename(contextMenu.instanceId); setContextMenu(null); }}
+            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left"
+          >
+            <Pencil className="w-4 h-4" /> Rename
+          </button>
+          <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
+            <span className="w-4 h-4 bg-neutral-700 rounded-sm flex items-center justify-center text-[8px] font-bold">F0</span> Change Icon
+          </button>
+
+          <div className="h-px bg-[#3A3A3A] my-1"></div>
+
+          <button 
+            onClick={(e) => { handleStart(contextMenu.instanceId, e as any); setContextMenu(null); }}
+            className="w-full flex items-center justify-between px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left"
+          >
+            <div className="flex items-center gap-3">
+              <Play className="w-4 h-4" /> Launch
+            </div>
+            <ChevronRight className="w-3.5 h-3.5 opacity-50" />
+          </button>
+          <button 
+            onClick={(e) => { handleStop(contextMenu.instanceId, e as any); setContextMenu(null); }}
+            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-400 hover:bg-red-500 hover:text-white transition-colors text-left"
+          >
+            <div className="w-4 h-4 bg-red-500/20 rounded-sm flex items-center justify-center">
+              <X className="w-3 h-3 text-red-500" />
+            </div> 
+            Kill
+          </button>
+
+          <div className="h-px bg-[#3A3A3A] my-1"></div>
+
+          <button 
+            onClick={() => { setSelectedId(contextMenu.instanceId); openEditModal(); setContextMenu(null); }}
+            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left"
+          >
+            <List className="w-4 h-4" /> Edit...
+          </button>
+          <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
+            <Tag className="w-4 h-4" /> Change Group...
+          </button>
+          <button 
+            onClick={() => {
+              setIsGlobalBrowser(false);
+              setIsEditModalOpen(true);
+              setEditTab("files");
+              fetchFileList(contextMenu.instanceId);
+              setContextMenu(null);
+            }}
+            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left"
+          >
+            <Folder className="w-4 h-4" /> Folder
+          </button>
+          <button className="w-full flex items-center justify-between px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
+            <div className="flex items-center gap-3">
+              <Share className="w-4 h-4" /> Export...
+            </div>
+            <ChevronRight className="w-3.5 h-3.5 opacity-50" />
+          </button>
+          <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
+            <Copy className="w-4 h-4" /> Copy...
+          </button>
+          <button 
+            onClick={() => { handleDelete(contextMenu.instanceId); setContextMenu(null); }}
+            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-400 hover:bg-red-500 hover:text-white transition-colors text-left"
+          >
+            <Trash2 className="w-4 h-4" /> Delete
+          </button>
         </div>
       )}
     </div>
