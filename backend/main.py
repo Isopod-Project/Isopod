@@ -58,6 +58,7 @@ class CreateInstanceRequest(BaseModel):
     template: str
     port: int
     version: Optional[str] = "latest"
+    loader_version: Optional[str] = "latest"
     modrinth_id: Optional[str] = None
     cf_id: Optional[str] = None
 
@@ -262,6 +263,97 @@ async def get_mc_versions():
         cached_versions = {"time": now, "data": data}
         return data
 
+@app.get("/api/meta/loaders/{loader}")
+async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
+    """Fetch available versions for a specific mod loader, optionally filtered by MC version."""
+    loader = loader.lower()
+    print(f"DEBUG: Fetching {loader} versions for MC={mc_version}")
+    try:
+        async with httpx.AsyncClient() as client:
+            if loader == "fabric":
+                url = f"https://meta.fabricmc.net/v2/versions/loader"
+                if mc_version and mc_version != "latest":
+                    url = f"https://meta.fabricmc.net/v2/versions/loader/{mc_version}"
+                print(f"DEBUG: Fetching Fabric from {url}")
+                res = await client.get(url)
+                data = res.json()
+                if mc_version and mc_version != "latest":
+                    return [{"id": v["loader"]["version"], "stable": v["loader"]["stable"]} for v in data]
+                else:
+                    return [{"id": v["version"], "stable": v["stable"]} for v in data]
+
+            elif loader == "quilt":
+                url = f"https://meta.quiltmc.org/v2/versions/loader"
+                if mc_version and mc_version != "latest":
+                    url = f"https://meta.quiltmc.org/v2/versions/loader/{mc_version}"
+                print(f"DEBUG: Fetching Quilt from {url}")
+                res = await client.get(url)
+                data = res.json()
+                if mc_version and mc_version != "latest":
+                    return [{"id": v["loader"]["version"], "stable": v["loader"]["version"].count('-') == 0} for v in data]
+                else:
+                    return [{"id": v["version"], "stable": v["version"].count('-') == 0} for v in data]
+
+            elif loader == "forge":
+                url = f"https://bmclapi2.bangbang93.com/forge/minecraft/{mc_version}" if mc_version and mc_version != "latest" else "https://bmclapi2.bangbang93.com/forge/promotions"
+                print(f"DEBUG: Fetching Forge from {url}")
+                res = await client.get(url)
+                if not res.is_success and mc_version:
+                    # Fallback to promotions
+                    print("DEBUG: Forge version-specific fetch failed, falling back to promotions")
+                    res = await client.get("https://bmclapi2.bangbang93.com/forge/promotions")
+                    data = res.json()
+                    promos = data.get("promos", {})
+                    return [{"id": v, "name": k, "stable": "recommended" in k} for k, v in promos.items()]
+                
+                data = res.json()
+                if mc_version and mc_version != "latest" and isinstance(data, list):
+                    return [{"id": v["version"], "stable": v["type"] == "recommended"} for v in data]
+                else:
+                    promos = data.get("promos", {})
+                    return [{"id": v, "name": k, "stable": "recommended" in k} for k, v in promos.items()]
+            
+            elif loader == "neoforge":
+                url = f"https://bmclapi2.bangbang93.com/neoforge/list/{mc_version}" if mc_version and mc_version != "latest" else "https://bmclapi2.bangbang93.com/neoforge/list"
+                print(f"DEBUG: Fetching NeoForge from {url}")
+                res = await client.get(url)
+                if not res.is_success and mc_version:
+                     print("DEBUG: NeoForge version-specific fetch failed, falling back to all")
+                     res = await client.get("https://bmclapi2.bangbang93.com/neoforge/list")
+                data = res.json()
+                return [{"id": v, "stable": True} for v in data]
+
+            elif loader == "paper":
+                if not mc_version or mc_version == "latest":
+                    # Paper doesn't have a global 'latest' endpoint, need to pick one?
+                    # Let's just return a placeholder for latest
+                    return [{"id": "latest", "stable": True}]
+                
+                url = f"https://api.papermc.io/v2/projects/paper/versions/{mc_version}"
+                print(f"DEBUG: Fetching Paper from {url}")
+                res = await client.get(url)
+                if res.is_success:
+                    data = res.json()
+                    # Return builds? Or just the version?
+                    # PaperMC API for versions returns a list of builds
+                    builds_res = await client.get(f"{url}/builds")
+                    if builds_res.is_success:
+                        builds_data = builds_res.json()
+                        builds = builds_data.get("builds", [])
+                        # Return in reverse order (newest first)
+                        return [{"id": str(b["build"]), "stable": b["channel"] == "default"} for b in reversed(builds)]
+                return [{"id": "latest", "stable": True}]
+
+            elif loader == "spigot":
+                # Spigot is traditionally built via BuildTools, but itzg handles it
+                return [{"id": "latest", "stable": True}]
+
+    except Exception as e:
+        print(f"DEBUG: Error fetching {loader} versions: {e}")
+        return []
+
+    return []
+
 @app.get("/api/mods/search/modrinth")
 async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None, class_type: str = "mod"):
     # Handle "undefined" literals from frontend
@@ -352,17 +444,32 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
         raise HTTPException(status_code=502, detail=f"CurseForge proxy error: {str(e)}")
         
     results = []
-    for item in data.get("data", []):
-        results.append({
-            "id": str(item["id"]),
-            "name": item["name"],
-            "summary": item["summary"],
-            "icon_url": item.get("logo", {}).get("thumbnailUrl"),
-            "author": item.get("authors", [{}])[0].get("name", "Unknown"),
-            "downloads": int(item.get("downloadCount", 0)),
-            "url": item.get("links", {}).get("websiteUrl", ""),
-            "categories": [c["name"].lower() for c in item.get("categories", [])]
-        })
+    try:
+        # CurseForge API is notoriously flaky with its data structure
+        mod_list = data.get("data", [])
+        if not isinstance(mod_list, list):
+            mod_list = []
+            
+        for item in mod_list:
+            authors = item.get("authors", [])
+            author_name = authors[0].get("name", "Unknown") if authors and len(authors) > 0 else "Unknown"
+            
+            logo = item.get("logo", {})
+            icon_url = logo.get("thumbnailUrl") if logo else None
+            
+            results.append({
+                "id": str(item.get("id", "")),
+                "name": item.get("name", "Unknown Modpack"),
+                "summary": item.get("summary", ""),
+                "icon_url": icon_url,
+                "author": author_name,
+                "downloads": int(item.get("downloadCount", 0)) if item.get("downloadCount") is not None else 0,
+                "url": item.get("links", {}).get("websiteUrl", "") if item.get("links") else "",
+                "categories": [c.get("name", "").lower() for c in item.get("categories", [])] if item.get("categories") else []
+            })
+    except Exception as e:
+        print(f"DEBUG: Error parsing CurseForge data: {e}")
+        
     return results
 
 def generate_slug(text: str) -> str:
@@ -400,8 +507,26 @@ def create_instance(req: CreateInstanceRequest):
         }
     }
     
-    # Add modpack if present
+    # Add modpack/loader if present
     env = compose_content["services"]["mc"]["environment"]
+    template = req.template.upper()
+    if req.loader_version and req.loader_version != "latest":
+        if template == "FABRIC":
+            env.append(f"FABRIC_LOADER_VERSION={req.loader_version}")
+        elif template == "FORGE":
+            env.append(f"FORGEVERSION={req.loader_version}")
+        elif template == "NEOFORGE":
+            env.append(f"NEOFORGEVERSION={req.loader_version}")
+        elif template == "QUILT":
+            env.append(f"QUILT_LOADER_VERSION={req.loader_version}")
+        elif template == "PAPER":
+            # Paper uses its own version but itzg handles TYPE=PAPER
+            # If loader_version is a build number, it might not be what it expects in TYPE=PAPER
+            # But we can try setting it. Normally TYPE=PAPER handles it.
+            pass
+        else:
+            env.append(f"LOADER_VERSION={req.loader_version}")
+
     if req.modrinth_id:
         env.append(f"MODRINTH_PROJECTS={req.modrinth_id}")
     if req.cf_id:

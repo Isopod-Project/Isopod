@@ -41,6 +41,16 @@ export default function App() {
   const [modpackResults, setModpackResults] = useState<any[]>([]);
   const [isModpackLoading, setIsModpackLoading] = useState(false);
   const [selectedModpack, setSelectedModpack] = useState<any>(null);
+  const [versionSearch, setVersionSearch] = useState("");
+  const [versionFilters, setVersionFilters] = useState({
+    Releases: true,
+    Snapshots: false,
+    Betas: false,
+    Alphas: false
+  });
+  const [loaderVersions, setLoaderVersions] = useState<any[]>([]);
+  const [isLoaderLoading, setIsLoaderLoading] = useState(false);
+  const [selectedAddLoaderVersion, setSelectedAddLoaderVersion] = useState("latest");
   
   // Edit Modal states
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -54,6 +64,7 @@ export default function App() {
   
   // Versions
   const [mcVersions, setMcVersions] = useState<any[]>([]);
+  const [isVersionsLoading, setIsVersionsLoading] = useState(false);
   
   // Mod Search States
   const [modSearchQuery, setModSearchQuery] = useState("");
@@ -158,6 +169,30 @@ export default function App() {
     }
   };
 
+  const fetchLoaderVersions = async (loader: string, mcVersion: string) => {
+    if (!loader || loader === "VANILLA") {
+       setLoaderVersions([]);
+       return;
+    }
+    setIsLoaderLoading(true);
+    console.log(`DEBUG: Fetching loader versions for ${loader} ${mcVersion}`);
+    try {
+       // Use a stable latest version if mcVersion is still "latest"
+       const finalMcVersion = mcVersion === "latest" ? "" : mcVersion;
+       const res = await fetch(`/api/meta/loaders/${loader}?mc_version=${finalMcVersion}`);
+       if (!res.ok) throw new Error("Loader fetch failed");
+       const data = await res.json();
+       console.log(`DEBUG: Loader versions data:`, data);
+       setLoaderVersions(Array.isArray(data) ? data : []);
+       setSelectedAddLoaderVersion("latest");
+    } catch (e) {
+       console.error("Failed to fetch loader versions", e);
+       setLoaderVersions([]);
+    } finally {
+       setIsLoaderLoading(false);
+    }
+  };
+
   const handleAddInstance = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsCreating(true);
@@ -166,16 +201,12 @@ export default function App() {
         name: newName, 
         template: selectedAddLoader.toLowerCase(), 
         port: parseInt(newPort),
-        version: selectedAddVersion,
+        version: selectedAddVersion === 'latest' ? '' : selectedAddVersion,
+        loader_version: selectedAddLoaderVersion,
         modrinth_id: addTab === 'modrinth' && selectedModpack ? selectedModpack.id : null,
         cf_id: addTab === 'curseforge' && selectedModpack ? selectedModpack.id : null
       };
-      
-      // If a modpack is selected, we'll need to pass that to the backend
-      // The current backend create_instance only takes name, template, port.
-      // I should probably update the backend to take more initial env vars or just use the config update after.
-      // But for simplicity, I'll update the backend create_instance as well.
-      
+
       const res = await fetch("/api/instances", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -183,11 +214,7 @@ export default function App() {
       });
       if (!res.ok) throw new Error("Failed to create instance");
       const data = await res.json();
-      
-      // After creation, if we have a version or modpack, we might want to update the config immediately
-      // But let's assume the backend handles the basic template.
-      // I'll update the backend to support version and potentially modpacks in creation.
-      
+
       setInstances((prev: Instance[]) => [...prev, data]);
       setIsAddModalOpen(false);
       
@@ -196,6 +223,7 @@ export default function App() {
       setSelectedModpack(null);
       setSelectedAddVersion("latest");
       setSelectedAddLoader("VANILLA");
+      setSelectedAddLoaderVersion("latest");
       
       fetchInstances();
     } catch (e) {
@@ -244,12 +272,25 @@ export default function App() {
   };
 
   const fetchMcVersions = async () => {
+    setIsVersionsLoading(true);
     try {
       const res = await fetch("/api/meta/versions");
+      if (!res.ok) throw new Error("Failed to fetch versions");
       const data = await res.json();
-      setMcVersions(data.versions || []);
+      const versions = data.versions || [];
+      setMcVersions(versions);
+      
+      // Auto-resolve 'latest' if it's still selected
+      if (selectedAddVersion === "latest" && versions.length > 0) {
+         const latestStable = versions.find((v: any) => v.type === 'release');
+         if (latestStable) {
+            setSelectedAddVersion(latestStable.id);
+         }
+      }
     } catch (e) {
       console.error("Failed to fetch MC versions", e);
+    } finally {
+      setIsVersionsLoading(false);
     }
   };
 
@@ -257,10 +298,11 @@ export default function App() {
     setIsModpackLoading(true);
     try {
       const res = await fetch(`/api/mods/search/${provider}?q=${encodeURIComponent(query)}&class_type=modpack`);
+      if (!res.ok) throw new Error(`${provider} search failed`);
       const data = await res.json();
-      setModpackResults(data);
+      setModpackResults(Array.isArray(data) ? data : []);
     } catch (e) {
-      console.error(e);
+      console.error("Search error:", e);
       setModpackResults([]);
     } finally {
       setIsModpackLoading(false);
@@ -545,6 +587,7 @@ export default function App() {
 
   useEffect(() => {
     fetchInstances();
+    fetchMcVersions();
     
     const interval = setInterval(() => {
         setInstances((prevInstances: Instance[]) => {
@@ -594,6 +637,17 @@ export default function App() {
 
   const selectedInstance = instances.find(i => i.id === selectedId);
   const selectedStatus = selectedId ? statuses[selectedId] : null;
+
+  // Fetch loader versions when selection changes
+  useEffect(() => {
+    if (isAddModalOpen && selectedAddLoader !== "VANILLA") {
+       // Only fetch if we have an actual version ID or 'latest'
+       const versionToFetch = selectedAddVersion === "latest" ? "" : selectedAddVersion;
+       fetchLoaderVersions(selectedAddLoader, versionToFetch);
+    } else {
+       setLoaderVersions([]);
+    }
+  }, [selectedAddLoader, selectedAddVersion, isAddModalOpen]);
 
   return (
     <div className="flex h-screen bg-[#242424] text-[#E0E0E0] font-sans selection:bg-[#3E8ED0]/40 overflow-hidden">
@@ -877,67 +931,169 @@ export default function App() {
                {/* Content Area */}
                <div className="flex-1 bg-[#1A1A1A] flex flex-col overflow-hidden">
                   {addTab === "custom" && (
-                     <div className="flex h-full overflow-hidden">
-                        <div className="flex-1 flex flex-col p-4 overflow-hidden">
-                           <h4 className="text-sm font-bold text-neutral-300 mb-3 ml-1">Minecraft Version</h4>
-                           <div className="flex-1 border border-[#333] bg-[#0F0F0F] rounded overflow-hidden flex flex-col">
+                     <div className="flex flex-col h-full overflow-hidden">
+                        {/* Top Half: Minecraft Version Selection */}
+                        <div className="flex-1 flex flex-col p-4 overflow-hidden border-b border-[#323232]">
+                           <div className="flex items-center justify-between mb-3">
+                              <h4 className="text-sm font-bold text-neutral-300 flex items-center gap-2">
+                                 <Layers className="w-4 h-4 text-[#3E8ED0]" />
+                                 Minecraft Version
+                              </h4>
+                              <div className="flex items-center gap-4">
+                                 <div className="flex items-center gap-4 mr-2">
+                                    {(['Releases', 'Snapshots', 'Betas', 'Alphas'] as const).map(f => (
+                                       <label key={f} className="flex items-center gap-2 text-xs text-neutral-400 hover:text-white cursor-pointer">
+                                          <input 
+                                             type="checkbox" 
+                                             checked={versionFilters[f]} 
+                                             onChange={(e) => setVersionFilters(prev => ({ ...prev, [f]: e.target.checked }))}
+                                             className="rounded bg-[#141414] border-[#333] accent-[#3E8ED0]" 
+                                          />
+                                          {f}
+                                       </label>
+                                    ))}
+                                 </div>
+                                 <div className="relative w-48">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-neutral-600" />
+                                    <input 
+                                       type="text" 
+                                       placeholder="Search..." 
+                                       className="w-full bg-[#141414] border border-[#333] pl-9 pr-4 py-1.5 rounded text-xs focus:outline-none focus:border-[#3E8ED0]" 
+                                       value={versionSearch}
+                                       onChange={(e) => setVersionSearch(e.target.value)}
+                                    />
+                                 </div>
+                                 <button onClick={fetchMcVersions} className="p-1.5 bg-[#323232] hover:bg-[#404040] rounded text-neutral-400 transition-colors">
+                                    <RefreshCw className={`w-3.5 h-3.5 ${isVersionsLoading ? 'animate-spin' : ''}`} />
+                                 </button>
+                              </div>
+                           </div>
+
+                           <div className="flex-1 border border-[#333] bg-[#0F0F0F] rounded overflow-hidden flex flex-col shadow-inner">
                               <div className="grid grid-cols-3 px-4 py-2 border-b border-[#333] bg-[#242424] text-[10px] font-bold text-neutral-500 uppercase tracking-widest">
                                  <div>Version</div>
                                  <div className="text-right">Released</div>
                                  <div className="text-right">Type</div>
                               </div>
-                              <div className="flex-1 overflow-auto">
-                                 {mcVersions.map((v: any) => (
-                                    <div 
-                                       key={v.id}
-                                       onClick={() => setSelectedAddVersion(v.id)}
-                                       className={`grid grid-cols-3 px-4 py-2 text-sm font-mono cursor-pointer border-b border-[#1A1A1A] transition-colors ${selectedAddVersion === v.id ? 'bg-[#3E8ED0]/20 text-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
-                                    >
-                                       <div className="flex items-center gap-2">
-                                          {v.type === 'release' && <Check className="w-3 h-3 text-emerald-500" />}
-                                          <span>{v.id}</span>
+                              <div className="flex-1 overflow-auto relative">
+                                 {isVersionsLoading ? (
+                                    <div className="absolute inset-0 flex items-center justify-center bg-[#0F0F0F]/50">
+                                       <div className="flex flex-col items-center gap-3">
+                                          <RefreshCw className="w-8 h-8 text-[#3E8ED0] animate-spin" />
+                                          <span className="text-xs font-medium text-neutral-500 tracking-wide">Fetching versions...</span>
                                        </div>
-                                       <div className="text-right opacity-50">{new Date(v.releaseTime).toLocaleDateString()}</div>
-                                       <div className="text-right capitalize text-[10px] font-bold opacity-60">{v.type}</div>
                                     </div>
-                                 ))}
+                                 ) : mcVersions.filter(v => {
+                                       if (versionSearch && !v.id.includes(versionSearch)) return false;
+                                       if (v.type === 'release' && versionFilters.Releases) return true;
+                                       if (v.type === 'snapshot' && versionFilters.Snapshots) return true;
+                                       if (v.type === 'old_beta' && versionFilters.Betas) return true;
+                                       if (v.type === 'old_alpha' && versionFilters.Alphas) return true;
+                                       return false;
+                                    }).length === 0 ? (
+                                       <div className="flex flex-col items-center justify-center h-full gap-2 text-neutral-600 opacity-50">
+                                          <Search className="w-6 h-6" />
+                                          <p className="text-xs">No versions match your filters</p>
+                                       </div>
+                                    ) : (
+                                       mcVersions
+                                          .filter(v => {
+                                             if (versionSearch && !v.id.includes(versionSearch)) return false;
+                                             if (v.type === 'release' && versionFilters.Releases) return true;
+                                             if (v.type === 'snapshot' && versionFilters.Snapshots) return true;
+                                             if (v.type === 'old_beta' && versionFilters.Betas) return true;
+                                             if (v.type === 'old_alpha' && versionFilters.Alphas) return true;
+                                             return false;
+                                          })
+                                          .map((v: any) => (
+                                             <div 
+                                                key={v.id}
+                                                onClick={() => setSelectedAddVersion(v.id)}
+                                                className={`grid grid-cols-3 px-4 py-2 text-sm font-mono cursor-pointer border-b border-[#1A1A1A] last:border-0 transition-all ${selectedAddVersion === v.id ? 'bg-[#3E8ED0]/20 text-[#3E8ED0] border-l-2 border-l-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
+                                             >
+                                                <div className="flex items-center gap-2">
+                                                   {v.type === 'release' && <Check className={`w-3 h-3 ${selectedAddVersion === v.id ? 'text-[#3E8ED0]' : 'text-emerald-500'}`} />}
+                                                   <span>{v.id}</span>
+                                                </div>
+                                                <div className="text-right opacity-50">{new Date(v.releaseTime).toLocaleDateString()}</div>
+                                                <div className="text-right capitalize text-[10px] font-bold opacity-60">{v.type}</div>
+                                             </div>
+                                          ))
+                                    )}
                               </div>
-                           </div>
-                           <div className="mt-4 flex gap-4">
-                              <div className="flex-1 relative">
-                                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-neutral-600" />
-                                 <input type="text" placeholder="Search versions..." className="w-full bg-[#141414] border border-[#333] pl-9 pr-4 py-1.5 rounded text-xs focus:outline-none focus:border-[#3E8ED0]" />
-                              </div>
-                              <button onClick={fetchMcVersions} className="px-4 py-1.5 bg-[#323232] hover:bg-[#404040] rounded text-xs font-bold text-neutral-400 transition-colors">Refresh</button>
                            </div>
                         </div>
-                        
-                        {/* Filters & Loaders Panel */}
-                        <div className="w-48 border-l border-[#323232] flex flex-col p-4 bg-[#1E1E1E]">
-                           <div className="flex-1">
-                              <h5 className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-3">Filters</h5>
-                              <div className="space-y-2">
-                                 {['Releases', 'Snapshots', 'Betas', 'Alphas'].map(f => (
-                                    <label key={f} className="flex items-center gap-2 text-xs text-neutral-400 hover:text-white cursor-pointer">
-                                       <input type="checkbox" defaultChecked={f === 'Releases'} className="rounded bg-[#141414] border-[#333] accent-[#3E8ED0]" />
-                                       {f}
-                                    </label>
+
+                        {/* Bottom Half: Mod Loader selection */}
+                        <div className="flex-1 flex flex-col p-4 bg-[#141414] overflow-hidden">
+                           <div className="flex items-center justify-between mb-3">
+                              <h4 className="text-sm font-bold text-neutral-300 flex items-center gap-2">
+                                 <Cpu className="w-4 h-4 text-[#3E8ED0]" />
+                                 Mod Loader
+                              </h4>
+                              <div className="flex bg-[#1E1E1E] rounded p-1 border border-[#323232] overflow-x-auto max-w-full">
+                                 {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT', 'PAPER', 'SPIGOT'].map(l => (
+                                    <button 
+                                       key={l}
+                                       onClick={() => setSelectedAddLoader(l)}
+                                       className={`px-3 py-1 rounded text-[10px] font-bold transition-all flex-shrink-0 ${selectedAddLoader === l ? 'bg-[#3E8ED0] text-white shadow-md' : 'text-neutral-500 hover:text-white'}`}
+                                    >
+                                       {l}
+                                    </button>
                                  ))}
                               </div>
                            </div>
-                           
-                           <div className="pt-4 border-t border-[#323232]">
-                              <h5 className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-3">Mod Loader</h5>
-                              <div className="space-y-2">
-                                 {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT'].map(l => (
-                                    <label key={l} className="flex items-center gap-2 text-xs text-neutral-400 hover:text-white cursor-pointer" onClick={() => setSelectedAddLoader(l)}>
-                                       <div className={`w-3 h-3 rounded-full border border-[#444] flex items-center justify-center ${selectedAddLoader === l ? 'bg-[#3E8ED0] border-[#3E8ED0]' : ''}`}>
-                                          {selectedAddLoader === l && <div className="w-1 h-1 bg-white rounded-full" />}
-                                       </div>
-                                       <span className={selectedAddLoader === l ? 'text-white font-bold' : ''}>{l}</span>
-                                    </label>
-                                 ))}
-                              </div>
+
+                           <div className="flex-1 border border-[#333] bg-[#0F0F0F] rounded overflow-hidden flex flex-col shadow-inner">
+                              {selectedAddLoader === 'VANILLA' ? (
+                                 <div className="flex flex-col items-center justify-center h-full text-neutral-500 italic text-xs gap-3 p-8 text-center bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] opacity-20">
+                                    <div className="w-12 h-12 rounded-full border border-neutral-700 flex items-center justify-center">
+                                       <Box className="w-6 h-6" />
+                                    </div>
+                                    Vanilla does not require a mod loader.
+                                 </div>
+                              ) : (
+                                 <>
+                                    <div className="grid grid-cols-2 px-4 py-2 border-b border-[#333] bg-[#242424] text-[10px] font-bold text-neutral-500 uppercase tracking-widest">
+                                       <div>Loader Version</div>
+                                       <div className="text-right">Status</div>
+                                    </div>
+                                    <div className="flex-1 overflow-auto relative">
+                                       {isLoaderLoading ? (
+                                          <div className="absolute inset-0 flex items-center justify-center bg-[#0F0F0F]/50">
+                                             <div className="flex flex-col items-center gap-3">
+                                                <RefreshCw className="w-6 h-6 text-[#3E8ED0] animate-spin" />
+                                                <span className="text-[10px] text-neutral-500">Scanning versions...</span>
+                                             </div>
+                                          </div>
+                                       ) : (
+                                          <div className="divide-y divide-[#1A1A1A]">
+                                             <div 
+                                                onClick={() => setSelectedAddLoaderVersion("latest")}
+                                                className={`grid grid-cols-2 px-4 py-2 text-sm cursor-pointer transition-all ${selectedAddLoaderVersion === 'latest' ? 'bg-[#3E8ED0]/20 text-[#3E8ED0] border-l-2 border-l-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
+                                             >
+                                                <div className="font-bold italic">Latest Recommended</div>
+                                                <div className="text-right text-[10px] opacity-60">AUTO</div>
+                                             </div>
+                                             {loaderVersions.map((lv) => (
+                                                <div 
+                                                   key={lv.id}
+                                                   onClick={() => setSelectedAddLoaderVersion(lv.id)}
+                                                   className={`grid grid-cols-2 px-4 py-2 text-sm font-mono cursor-pointer transition-all ${selectedAddLoaderVersion === lv.id ? 'bg-[#3E8ED0]/20 text-[#3E8ED0] border-l-2 border-l-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
+                                                >
+                                                   <div>{lv.id}</div>
+                                                   <div className="text-right">
+                                                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${lv.stable ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'}`}>
+                                                         {lv.stable ? 'STABLE' : 'UNSTABLE'}
+                                                      </span>
+                                                   </div>
+                                                </div>
+                                             ))}
+                                          </div>
+                                       )}
+                                    </div>
+                                 </>
+                              )}
                            </div>
                         </div>
                      </div>
@@ -990,12 +1146,12 @@ export default function App() {
                                     </div>
                                     <div className="flex-1 min-w-0">
                                        <div className="flex items-center justify-between mb-0.5">
-                                          <h5 className="font-bold text-[#E0E0E0] truncate text-sm">{pack.name}</h5>
-                                          <span className="text-[10px] font-mono text-neutral-500 bg-[#111] px-1.5 py-0.5 rounded italic">By {pack.author}</span>
+                                          <h5 className="font-bold text-[#E0E0E0] truncate text-sm">{pack.name || 'Unknown'}</h5>
+                                          <span className="text-[10px] font-mono text-neutral-500 bg-[#111] px-1.5 py-0.5 rounded italic">By {pack.author || 'Unknown'}</span>
                                        </div>
-                                       <p className="text-[11px] text-neutral-400 line-clamp-1 leading-relaxed">{pack.summary}</p>
+                                       <p className="text-[11px] text-neutral-400 line-clamp-1 leading-relaxed">{pack.summary || 'No description provided.'}</p>
                                        <div className="flex items-center gap-4 mt-1">
-                                          <span className="text-[9px] font-bold text-neutral-500 uppercase flex items-center gap-1"><RefreshCw className="w-2.5 h-2.5" /> {pack.downloads.toLocaleString()} DL</span>
+                                          <span className="text-[9px] font-bold text-neutral-500 uppercase flex items-center gap-1"><RefreshCw className="w-2.5 h-2.5" /> {(pack.downloads || 0).toLocaleString()} DL</span>
                                        </div>
                                     </div>
                                  </div>
