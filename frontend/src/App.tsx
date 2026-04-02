@@ -444,20 +444,36 @@ export default function App() {
 
   const fetchInstalledModsMeta = async () => {
     if (!config || !config.environment) return;
-    const mIds = config.environment["MODRINTH_PROJECTS"] || "";
-    const cIds = config.environment["CF_PROJECTS"] || "";
-    if (!mIds && !cIds) {
+    const mIdsEnv = config.environment["MODRINTH_PROJECTS"] || "";
+    const cIdsEnv = config.environment["CF_PROJECTS"] || "";
+    if (!mIdsEnv && !cIdsEnv) {
       setInstalledModsMeta([]);
       return;
     }
     
     setIsMetaLoading(true);
     try {
-      const res = await fetch(`/api/mods/metadata?modrinth_ids=${mIds}&cf_ids=${cIds}`);
+      const res = await fetch(`/api/mods/metadata?modrinth_ids=${mIdsEnv}&cf_ids=${cIdsEnv}`);
       const data = await res.json();
       setInstalledModsMeta(data);
+      
+      // Auto-normalize Modrinth IDs (resolve UUIDs to slugs)
+      const currentListM = (config.environment["MODRINTH_PROJECTS"] || "").split(',').map(s => s.trim()).filter(Boolean);
+      if (currentListM.length > 0) {
+        const normalizedM = currentListM.map(id => {
+            const match = data.find((m: any) => m.provider === 'modrinth' && (m.id === id || m.requested_id === id));
+            return match && !match.unknown ? match.id : id;
+        });
+        const uniqM = [...new Set(normalizedM)];
+        if (uniqM.join(',') !== currentListM.join(',')) {
+          setConfig(prev => ({
+            ...prev,
+            environment: { ...prev.environment, MODRINTH_PROJECTS: uniqM.join(',') }
+          }));
+        }
+      }
     } catch (e) {
-      console.error("Failed to fetch installed mods meta", e);
+      console.error("Failed to fetch mod metadata", e);
     } finally {
       setIsMetaLoading(false);
     }
@@ -1330,7 +1346,7 @@ export default function App() {
                                                         <button 
                                                            onClick={() => {
                                                               const envKey = mod.provider === 'modrinth' ? 'MODRINTH_PROJECTS' : 'CF_PROJECTS';
-                                                              const current = (config.environment[envKey] || "").split(',').filter(Boolean);
+                                                              const current = (config.environment[envKey] || "").split(',').map(s => s.trim()).filter(Boolean);
                                                               const newList = current.filter(x => x !== mod.id).join(',');
                                                               setConfig(prev => ({
                                                                  ...prev,
@@ -1483,10 +1499,12 @@ export default function App() {
                                                         <div className="flex gap-2">
                                                            <button 
                                                               onClick={() => {
-                                                                 const newList = currentList ? `${currentList},${res.id}` : res.id;
+                                                                 const currentList: string = config.environment[envKey] || "";
+                                                                 const currentItems = currentList.split(',').map(s => s.trim()).filter(Boolean);
+                                                                 const newListSet = new Set([...currentItems, res.id]);
                                                                  setConfig(prev => ({
                                                                     ...prev,
-                                                                    environment: { ...prev.environment, [envKey]: newList }
+                                                                    environment: { ...prev.environment, [envKey]: Array.from(newListSet).join(',') }
                                                                  }));
                                                               }}
                                                               className="flex items-center gap-1.5 px-3 py-1 bg-[#222] hover:bg-[#333] text-neutral-400 hover:text-white rounded border border-[#333] transition-all text-[11px] font-bold"

@@ -488,15 +488,19 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
             
             for mid in m_ids:
                 if mid in mod_metadata_cache:
-                    results.append(mod_metadata_cache[mid])
+                    meta = mod_metadata_cache[mid].copy()
+                    meta["requested_id"] = mid
+                    results.append(meta)
                 else:
-                    results.append({"id": mid, "name": mid, "provider": "modrinth", "unknown": True})
+                    results.append({"id": mid, "name": mid, "provider": "modrinth", "unknown": True, "requested_id": mid})
 
         # CurseForge lookup (One by one since proxy doesn't support bulk well)
         if c_ids:
             for cid in c_ids:
                 if cid in mod_metadata_cache:
-                    results.append(mod_metadata_cache[cid])
+                    meta = mod_metadata_cache[cid].copy()
+                    meta["requested_id"] = cid
+                    results.append(meta)
                     continue
                 try:
                     res = await client.get(f"https://api.curse.tools/v1/cf/mods/{cid}")
@@ -513,9 +517,11 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
                             "provider": "curseforge"
                         }
                         mod_metadata_cache[cid] = meta
-                        results.append(meta)
+                        meta_copy = meta.copy()
+                        meta_copy["requested_id"] = cid
+                        results.append(meta_copy)
                 except:
-                    results.append({"id": cid, "name": cid, "provider": "curseforge", "unknown": True})
+                    results.append({"id": cid, "name": cid, "provider": "curseforge", "unknown": True, "requested_id": cid})
 
     return results
 
@@ -592,9 +598,18 @@ async def get_mod_dependencies(provider: str, project_id: str):
                 if res.status_code == 200:
                     versions = res.json()
                     if versions:
-                        # Return IDs/Slugs of required mod dependencies
-                        return [d["project_id"] for d in versions[0].get("dependencies", []) if d.get("dependency_type") == "required"]
-        except: pass
+                        # Modrinth returns UUIDs in project_id. We want slugs for consistency with search hits.
+                        dep_ids = [d["project_id"] for d in versions[0].get("dependencies", []) if d.get("dependency_type") == "required"]
+                        if not dep_ids:
+                            return []
+                        
+                        # Bulk lookup slugs
+                        res_p = await client.get(f"https://api.modrinth.com/v2/projects", params={"ids": json.dumps(dep_ids)})
+                        if res_p.status_code == 200:
+                            return [p["slug"] for p in res_p.json()]
+                        return dep_ids # Fallback
+        except Exception as e:
+            print(f"Modrinth dependency error: {e}")
     elif provider == "curseforge":
         try:
             async with httpx.AsyncClient() as client:
@@ -603,9 +618,12 @@ async def get_mod_dependencies(provider: str, project_id: str):
                 if res.status_code == 200:
                     data = res.json()["data"]
                     # CF dependencies are objects in 'latestFiles'
-                    latest_file = data.get("latestFiles", [{}])[0]
-                    return [str(d["modId"]) for d in latest_file.get("dependencies", []) if d.get("relationType") == 3] # 3 = Required
-        except: pass
+                    # We use the first file for simplicity
+                    latest_files = data.get("latestFiles", [])
+                    if latest_files:
+                        return [str(d["modId"]) for d in latest_files[0].get("dependencies", []) if d.get("relationType") == 3] # 3 = Required
+        except Exception as e:
+            print(f"CurseForge dependency error: {e}")
     return []
 
 @app.get("/api/mods/conflicts")
