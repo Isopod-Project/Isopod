@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users } from "lucide-react";
 
 interface Instance {
   id: string;
@@ -103,8 +103,11 @@ export default function App() {
      defaultPort: '25565',
      defaultLoader: 'VANILLA',
      autoRefresh: true,
-     showSnapshots: false
+     showSnapshots: false,
+     defaultWhitelistEnabled: false,
+     defaultWhitelistUsers: [] as string[]
   });
+  const [newWhitelistUser, setNewWhitelistUser] = useState("");
 
   const fetchInstances = async () => {
     try {
@@ -2157,6 +2160,87 @@ export default function App() {
                                     </button>
                                  ))}
                               </div>
+                           </div>
+
+                           <div className="pt-4 border-t border-[#333] space-y-4">
+                              <div className="flex items-center justify-between">
+                                 <div className="flex flex-col">
+                                    <span className="font-bold text-sm text-neutral-200">Default Whitelist</span>
+                                    <span className="text-xs text-neutral-500">Enable whitelist by default for new servers.</span>
+                                 </div>
+                                 <button 
+                                    onClick={() => setGlobalSettings({...globalSettings, defaultWhitelistEnabled: !globalSettings.defaultWhitelistEnabled})}
+                                    className={`w-12 h-6 rounded-full transition-all relative ${globalSettings.defaultWhitelistEnabled ? 'bg-amber-500' : 'bg-[#333]'}`}
+                                 >
+                                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${globalSettings.defaultWhitelistEnabled ? 'left-7' : 'left-1'}`} />
+                                 </button>
+                              </div>
+
+                              {globalSettings.defaultWhitelistEnabled && (
+                                 <div className="space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
+                                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest block">Default Whitelisted Players</label>
+                                    <div className="flex gap-2">
+                                       <div className="relative flex-1">
+                                          <Users className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
+                                          <input 
+                                             type="text"
+                                             value={newWhitelistUser}
+                                             onChange={(e) => setNewWhitelistUser(e.target.value)}
+                                             onKeyDown={(e) => {
+                                                if (e.key === 'Enter' && newWhitelistUser) {
+                                                   if (!globalSettings.defaultWhitelistUsers.includes(newWhitelistUser.trim())) {
+                                                      setGlobalSettings({
+                                                         ...globalSettings,
+                                                         defaultWhitelistUsers: [...globalSettings.defaultWhitelistUsers, newWhitelistUser.trim()]
+                                                      });
+                                                   }
+                                                   setNewWhitelistUser("");
+                                                }
+                                             }}
+                                             placeholder="Add username..."
+                                             className="w-full bg-[#141414] border border-[#333] pl-10 pr-4 py-2.5 rounded-lg focus:outline-none focus:border-amber-500 text-sm placeholder:text-neutral-700"
+                                          />
+                                       </div>
+                                       <button 
+                                          onClick={() => {
+                                             if (newWhitelistUser.trim() && !globalSettings.defaultWhitelistUsers.includes(newWhitelistUser.trim())) {
+                                                setGlobalSettings({
+                                                   ...globalSettings,
+                                                   defaultWhitelistUsers: [...globalSettings.defaultWhitelistUsers, newWhitelistUser.trim()]
+                                                });
+                                                setNewWhitelistUser("");
+                                             }
+                                          }}
+                                          className="px-4 py-2 bg-[#333] hover:bg-[#444] rounded-lg text-sm font-bold transition-all border border-[#444]"
+                                       >
+                                          Add
+                                       </button>
+                                    </div>
+                                    
+                                    <div className="flex flex-wrap gap-2 min-h-[40px] p-3 bg-[#141414] rounded-lg border border-[#333]">
+                                       {globalSettings.defaultWhitelistUsers.length === 0 ? (
+                                          <span className="text-xs text-neutral-600 italic text-center w-full py-2">No default users added.</span>
+                                       ) : (
+                                          globalSettings.defaultWhitelistUsers.map(user => (
+                                             <div key={user} className="flex items-center gap-2 px-2.5 py-1 bg-[#242424] border border-[#333] rounded-md text-xs group hover:border-amber-500/30 transition-colors">
+                                                <span className="text-neutral-300 font-medium">{user}</span>
+                                                <button 
+                                                   onClick={() => {
+                                                      setGlobalSettings({
+                                                         ...globalSettings,
+                                                         defaultWhitelistUsers: globalSettings.defaultWhitelistUsers.filter(u => u !== user)
+                                                      });
+                                                   }}
+                                                   className="text-neutral-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+                                                >
+                                                   <X className="w-3 h-3 text-red-400" />
+                                                </button>
+                                             </div>
+                                          ))
+                                       )}
+                                    </div>
+                                 </div>
+                              )}
                            </div>
                         </div>
                      </div>
