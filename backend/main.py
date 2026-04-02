@@ -444,17 +444,32 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
         raise HTTPException(status_code=502, detail=f"CurseForge proxy error: {str(e)}")
         
     results = []
-    for item in data.get("data", []):
-        results.append({
-            "id": str(item["id"]),
-            "name": item["name"],
-            "summary": item["summary"],
-            "icon_url": item.get("logo", {}).get("thumbnailUrl"),
-            "author": item.get("authors", [{}])[0].get("name", "Unknown"),
-            "downloads": int(item.get("downloadCount", 0)),
-            "url": item.get("links", {}).get("websiteUrl", ""),
-            "categories": [c["name"].lower() for c in item.get("categories", [])]
-        })
+    try:
+        # CurseForge API is notoriously flaky with its data structure
+        mod_list = data.get("data", [])
+        if not isinstance(mod_list, list):
+            mod_list = []
+            
+        for item in mod_list:
+            authors = item.get("authors", [])
+            author_name = authors[0].get("name", "Unknown") if authors and len(authors) > 0 else "Unknown"
+            
+            logo = item.get("logo", {})
+            icon_url = logo.get("thumbnailUrl") if logo else None
+            
+            results.append({
+                "id": str(item.get("id", "")),
+                "name": item.get("name", "Unknown Modpack"),
+                "summary": item.get("summary", ""),
+                "icon_url": icon_url,
+                "author": author_name,
+                "downloads": int(item.get("downloadCount", 0)) if item.get("downloadCount") is not None else 0,
+                "url": item.get("links", {}).get("websiteUrl", "") if item.get("links") else "",
+                "categories": [c.get("name", "").lower() for c in item.get("categories", [])] if item.get("categories") else []
+            })
+    except Exception as e:
+        print(f"DEBUG: Error parsing CurseForge data: {e}")
+        
     return results
 
 def generate_slug(text: str) -> str:

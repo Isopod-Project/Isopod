@@ -298,10 +298,11 @@ export default function App() {
     setIsModpackLoading(true);
     try {
       const res = await fetch(`/api/mods/search/${provider}?q=${encodeURIComponent(query)}&class_type=modpack`);
+      if (!res.ok) throw new Error(`${provider} search failed`);
       const data = await res.json();
-      setModpackResults(data);
+      setModpackResults(Array.isArray(data) ? data : []);
     } catch (e) {
-      console.error(e);
+      console.error("Search error:", e);
       setModpackResults([]);
     } finally {
       setIsModpackLoading(false);
@@ -1129,12 +1130,12 @@ export default function App() {
                                     </div>
                                     <div className="flex-1 min-w-0">
                                        <div className="flex items-center justify-between mb-0.5">
-                                          <h5 className="font-bold text-[#E0E0E0] truncate text-sm">{pack.name}</h5>
-                                          <span className="text-[10px] font-mono text-neutral-500 bg-[#111] px-1.5 py-0.5 rounded italic">By {pack.author}</span>
+                                          <h5 className="font-bold text-[#E0E0E0] truncate text-sm">{pack.name || 'Unknown'}</h5>
+                                          <span className="text-[10px] font-mono text-neutral-500 bg-[#111] px-1.5 py-0.5 rounded italic">By {pack.author || 'Unknown'}</span>
                                        </div>
-                                       <p className="text-[11px] text-neutral-400 line-clamp-1 leading-relaxed">{pack.summary}</p>
+                                       <p className="text-[11px] text-neutral-400 line-clamp-1 leading-relaxed">{pack.summary || 'No description provided.'}</p>
                                        <div className="flex items-center gap-4 mt-1">
-                                          <span className="text-[9px] font-bold text-neutral-500 uppercase flex items-center gap-1"><RefreshCw className="w-2.5 h-2.5" /> {pack.downloads.toLocaleString()} DL</span>
+                                          <span className="text-[9px] font-bold text-neutral-500 uppercase flex items-center gap-1"><RefreshCw className="w-2.5 h-2.5" /> {(pack.downloads || 0).toLocaleString()} DL</span>
                                        </div>
                                     </div>
                                  </div>
