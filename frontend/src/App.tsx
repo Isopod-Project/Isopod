@@ -549,8 +549,14 @@ export default function App() {
 
    const handleChangeGroup = async (id: string) => {
       const currentGroups = groups.filter(g => g !== "No group");
-      const options = [...currentGroups, "+ New Group..."];
-      const selection = await showSelect("Select a group for this instance:", options, "Change Group");
+      
+      let selection;
+      if (currentGroups.length === 0) {
+         selection = "+ New Group...";
+      } else {
+         const options = [...currentGroups, "+ New Group..."];
+         selection = await showSelect("Select a group for this instance:", options, "Change Group");
+      }
       
       if (!selection) return;
       
@@ -3107,6 +3113,7 @@ export default function App() {
                      {dialog.type === 'alert' && <AlertCircle className="w-5 h-5 text-amber-500" />}
                      {dialog.type === 'confirm' && <HelpCircle className="w-5 h-5 text-[#3E8ED0]" />}
                      {dialog.type === 'prompt' && <Edit className="w-5 h-5 text-[#3E8ED0]" />}
+                     {dialog.type === 'select' && <Tag className="w-5 h-5 text-[#3E8ED0]" />}
                      <h3 className="font-bold text-white tracking-wide uppercase text-[10px]">{dialog.title}</h3>
                   </div>
                   <div className="p-6">
@@ -3124,9 +3131,21 @@ export default function App() {
                            className="w-full bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-2 rounded text-white focus:outline-none focus:border-[#3E8ED0] text-sm"
                         />
                      )}
+                     {dialog.type === 'select' && (
+                        <select
+                           autoFocus
+                           id="dialog-select"
+                           defaultValue={dialog.options?.[0]}
+                           className="w-full bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-2 rounded text-white focus:outline-none focus:border-[#3E8ED0] text-sm"
+                        >
+                           {dialog.options?.map((opt: string) => (
+                              <option key={opt} value={opt}>{opt}</option>
+                           ))}
+                        </select>
+                     )}
                   </div>
                   <div className="px-6 py-4 bg-[#242424] border-t border-[#323232] flex justify-end gap-3">
-                     {(dialog.type === 'confirm' || dialog.type === 'prompt') && (
+                     {(dialog.type === 'confirm' || dialog.type === 'prompt' || dialog.type === 'select') && (
                         <button
                            onClick={() => dialog.onResult(null)}
                            className="px-4 py-2 text-[10px] font-bold text-neutral-400 hover:text-white transition-colors uppercase tracking-widest"
@@ -3140,6 +3159,9 @@ export default function App() {
                            if (dialog.type === 'prompt') {
                               const input = document.getElementById('dialog-input') as HTMLInputElement;
                               dialog.onResult(input?.value || "");
+                           } else if (dialog.type === 'select') {
+                              const select = document.getElementById('dialog-select') as HTMLSelectElement;
+                              dialog.onResult(select?.value || "");
                            } else {
                               dialog.onResult(true);
                            }
