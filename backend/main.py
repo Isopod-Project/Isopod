@@ -14,7 +14,7 @@ from typing import List, Optional, Dict, Any
 import httpx
 import json
 import time
-from providers import CurseForgeProvider, FTBProvider, TechnicProvider
+from backend.providers import CurseForgeProvider, FTBProvider, TechnicProvider
 
 load_dotenv()
 
