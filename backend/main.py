@@ -525,7 +525,7 @@ def generate_slug(text: str) -> str:
     return slug.strip('-')
 
 @app.post("/api/instances")
-def create_instance(req: CreateInstanceRequest):
+async def create_instance(req: CreateInstanceRequest):
     slug = generate_slug(req.name)
     path = os.path.join(SERVERS_DIR, slug)
     if os.path.exists(path):
@@ -546,7 +546,9 @@ def create_instance(req: CreateInstanceRequest):
                     f"VERSION={req.version or 'latest'}",
                     f"MOTD={req.name} Hosted by Isopod",
                     "ENABLE_RCON=true",
-                    "RCON_PASSWORD=isopod"
+                    "RCON_PASSWORD=isopod",
+                    "ENABLE_AUTOPAUSE=false", # Disable to avoid confusion with "not starting" logs
+                    "MAX_TICK_TIME=-1"       # Disable watchdog to prevent crashes during busy starts
                 ],
                 "volumes": ["./data:/data"],
                 "restart": "unless-stopped"
@@ -567,9 +569,6 @@ def create_instance(req: CreateInstanceRequest):
         elif template == "QUILT":
             env.append(f"QUILT_LOADER_VERSION={req.loader_version}")
         elif template == "PAPER":
-            # Paper uses its own version but itzg handles TYPE=PAPER
-            # If loader_version is a build number, it might not be what it expects in TYPE=PAPER
-            # But we can try setting it. Normally TYPE=PAPER handles it.
             pass
         else:
             env.append(f"LOADER_VERSION={req.loader_version}")
@@ -584,12 +583,8 @@ def create_instance(req: CreateInstanceRequest):
         if req.ftb_version:
             env.append(f"FTB_MODPACK_VERSION_ID={req.ftb_version}")
     if req.technic_slug:
-        # For Technic, we often need to provide the direct ZIP URL if it's not solder
-        # But itzg/minecraft-server has its own ways to handle it via MODPACK_URL
-        # We can fetch the manifest first
         try:
-             # This is a bit blocking for a fast endpoint, but helpful
-             manifest = asyncio.run(technic_provider.get_manifest(req.technic_slug))
+             manifest = await technic_provider.get_manifest(req.technic_slug)
              if manifest["type"] == "direct":
                  env.append(f"MODPACK_URL={manifest['url']}")
         except: pass
