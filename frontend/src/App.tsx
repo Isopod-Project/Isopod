@@ -439,7 +439,8 @@ export default function App() {
             loader_version: selectedAddLoaderVersion,
             group: selectedGroup,
             modrinth_id: addTab === 'modrinth' && selectedModpack ? selectedModpack.id : null,
-            cf_id: addTab === 'curseforge' && selectedModpack ? selectedModpack.id : null
+            cf_id: addTab === 'curseforge' && selectedModpack ? selectedModpack.id : null,
+            icon_url: selectedModpack?.icon_url || null
          };
 
          const res = await fetch("/api/instances", {

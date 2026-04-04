@@ -64,6 +64,7 @@ class CreateInstanceRequest(BaseModel):
     modrinth_id: Optional[str] = None
     cf_id: Optional[str] = None
     group: Optional[str] = "No group"
+    icon_url: Optional[str] = None
 
 class RenameInstanceRequest(BaseModel):
     name: str
@@ -617,6 +618,20 @@ def create_instance(req: CreateInstanceRequest):
     
     # Save metadata
     save_instance_meta(path, {"group": req.group or "No group"})
+
+    # Download Icon if provided
+    if req.icon_url:
+        try:
+            from PIL import Image
+            import io
+            res = httpx.get(req.icon_url)
+            if res.status_code == 200:
+                img = Image.open(io.BytesIO(res.content))
+                img = img.convert("RGBA")
+                img = img.resize((64, 64), Image.Resampling.LANCZOS)
+                img.save(os.path.join(path, "icon.png"), "PNG")
+        except Exception as e:
+            print(f"Failed to set instance icon: {e}")
         
     return {"id": slug, "message": "Instance created"}
 
