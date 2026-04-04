@@ -63,6 +63,7 @@ class CreateInstanceRequest(BaseModel):
     loader_version: Optional[str] = "latest"
     modrinth_id: Optional[str] = None
     cf_id: Optional[str] = None
+    group: Optional[str] = "No group"
 
 class RenameInstanceRequest(BaseModel):
     name: str
@@ -79,6 +80,7 @@ class Instance(BaseModel):
     path: str
     has_compose: bool
     status: str
+    group: str = "No group"
     icon_url: Optional[str] = None
 
 def get_instance_path(instance_id: str) -> str:
@@ -88,6 +90,22 @@ def get_instance_path(instance_id: str) -> str:
     if not os.path.exists(path) or not os.path.isdir(path):
         raise HTTPException(status_code=404, detail="Instance not found")
     return path
+
+def get_instance_meta(instance_path: str) -> dict:
+    meta_path = os.path.join(instance_path, "isopod-meta.json")
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, 'r') as f:
+                return json.load(f)
+        except: pass
+    return {"group": "No group"}
+
+def save_instance_meta(instance_path: str, meta: dict):
+    existing = get_instance_meta(instance_path)
+    existing.update(meta)
+    meta_path = os.path.join(instance_path, "isopod-meta.json")
+    with open(meta_path, 'w') as f:
+        json.dump(existing, f, indent=2)
 
 @app.get("/api/instances", response_model=List[Instance])
 def list_instances():
@@ -104,16 +122,38 @@ def list_instances():
             
             if has_compose:
                 icon_path = os.path.join(entry.path, "icon.png")
+                meta = get_instance_meta(entry.path)
                 instances.append(Instance(
                     id=entry.name,
                     name=entry.name.replace("-", " ").title(),
                     path=entry.path,
                     has_compose=has_compose,
                     status="Valid",
+                    group=meta.get("group", "No group"),
                     icon_url=f"/api/instances/{entry.name}/icon" if os.path.exists(icon_path) else None
                 ))
                 
     return instances
+
+@app.get("/api/groups")
+def list_groups():
+    groups = set(["No group"])
+    for entry in os.scandir(SERVERS_DIR):
+        if entry.is_dir():
+            meta = get_instance_meta(entry.path)
+            groups.add(meta.get("group", "No group"))
+    return sorted(list(groups))
+
+class SetGroupRequest(BaseModel):
+    group: str
+
+@app.post("/api/instances/{instance_id}/group")
+def set_instance_group(instance_id: str, req: SetGroupRequest):
+    path = get_instance_path(instance_id)
+    meta = get_instance_meta(path)
+    meta["group"] = req.group
+    save_instance_meta(path, meta)
+    return {"id": instance_id, "group": req.group}
 
 @app.get("/api/instances/{instance_id}/status")
 def get_instance_status(instance_id: str):
@@ -574,6 +614,9 @@ def create_instance(req: CreateInstanceRequest):
     
     with open(os.path.join(path, "docker-compose.yml"), "w") as f:
         yaml.dump(compose_content, f, default_flow_style=False)
+    
+    # Save metadata
+    save_instance_meta(path, {"group": req.group or "No group"})
         
     return {"id": slug, "message": "Instance created"}
 

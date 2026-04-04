@@ -7,6 +7,7 @@ interface Instance {
    path: string;
    has_compose: boolean;
    status: string; // "Valid"
+   group: string;
    icon_url?: string;
 }
 
@@ -22,6 +23,7 @@ interface InstanceStatus {
 
 export default function App() {
    const [instances, setInstances] = useState<Instance[]>([]);
+   const [groups, setGroups] = useState<string[]>([]);
    const [statuses, setStatuses] = useState<Record<string, InstanceStatus>>({});
    const [loading, setLoading] = useState(true);
 
@@ -37,8 +39,9 @@ export default function App() {
    const [dialog, setDialog] = useState<{
       title: string;
       message: string;
-      type: "alert" | "confirm" | "prompt";
+      type: "alert" | "confirm" | "prompt" | "select";
       defaultValue?: string;
+      options?: string[];
       onResult: (result: any) => void;
    } | null>(null);
 
@@ -60,10 +63,17 @@ export default function App() {
       });
    };
 
+   const showSelect = (message: string, options: string[], title = "Select Option", defaultValue = "") => {
+      return new Promise<string | null>((resolve) => {
+         setDialog({ title, message, type: "select", options, defaultValue, onResult: (res) => { setDialog(null); resolve(res); } });
+      });
+   };
+
    // Modal states
    const [isAddModalOpen, setIsAddModalOpen] = useState(false);
    const [newName, setNewName] = useState("");
    const [newPort, setNewPort] = useState("25565");
+   const [selectedGroup, setSelectedGroup] = useState("No group");
    const [isCreating, setIsCreating] = useState(false);
 
    // Prism-like Add Modal States
@@ -305,6 +315,14 @@ export default function App() {
       }
    };
 
+   const fetchGroups = async () => {
+      try {
+         const res = await fetch("/api/groups");
+         const data = await res.json();
+         setGroups(data);
+      } catch (err) { }
+   };
+
    const fetchStatus = async (id: string) => {
       try {
          const res = await fetch(`/api/instances/${id}/status`);
@@ -419,6 +437,7 @@ export default function App() {
             port: parseInt(newPort),
             version: selectedAddVersion === 'latest' ? '' : selectedAddVersion,
             loader_version: selectedAddLoaderVersion,
+            group: selectedGroup,
             modrinth_id: addTab === 'modrinth' && selectedModpack ? selectedModpack.id : null,
             cf_id: addTab === 'curseforge' && selectedModpack ? selectedModpack.id : null
          };
@@ -440,8 +459,10 @@ export default function App() {
          setSelectedAddVersion("latest");
          setSelectedAddLoader("VANILLA");
          setSelectedAddLoaderVersion("latest");
+         setSelectedGroup("No group");
 
          fetchInstances();
+         fetchGroups();
       } catch (e) {
          console.error(e);
          await showAlert("Failed to create instance", "Creation Failed");
@@ -523,6 +544,35 @@ export default function App() {
       } finally {
          setIsCreating(false);
          if (e.target) e.target.value = '';
+      }
+   };
+
+   const handleChangeGroup = async (id: string) => {
+      const currentGroups = groups.filter(g => g !== "No group");
+      const options = [...currentGroups, "+ New Group..."];
+      const selection = await showSelect("Select a group for this instance:", options, "Change Group");
+      
+      if (!selection) return;
+      
+      let targetGroup = selection;
+      if (selection === "+ New Group...") {
+         const newGroupName = await showPrompt("Enter a new group name:", "", "New Group");
+         if (!newGroupName) return;
+         targetGroup = newGroupName;
+      }
+      
+      try {
+         const res = await fetch(`/api/instances/${id}/group`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ group: targetGroup })
+         });
+         if (res.ok) {
+            await fetchInstances();
+            await fetchGroups();
+         }
+      } catch (err) {
+         await showAlert("Error changing group", "Error");
       }
    };
 
@@ -1065,45 +1115,59 @@ export default function App() {
                      <p>No instances found. Create folders in your servers directory.</p>
                   </div>
                ) : (
-                  <div>
-                     <div className="flex items-center gap-2 border-b border-[#404040] pb-2 mb-4 cursor-default">
-                        <Layers className="w-4 h-4 text-neutral-400" />
-                        <span className="font-semibold text-neutral-300">Ungrouped</span>
-                     </div>
-
-                     <div className="flex flex-wrap gap-4">
-                        {instances.map((inst) => {
-                           const isSelected = selectedId === inst.id;
-                           const isRunning = statuses[inst.id]?.is_running;
-
-                           return (
-                              <div
-                                 key={inst.id}
-                                 onClick={() => setSelectedId(inst.id)}
-                                 onContextMenu={(e) => handleContextMenu(e, inst.id)}
-                                 className={`flex flex-col items-center justify-center p-3 rounded cursor-pointer transition-all w-[110px] select-none ${isSelected
-                                       ? 'bg-[#3E8ED0]/20 outline outline-2 outline-[#3E8ED0] shadow-sm'
-                                       : 'hover:bg-[#404040] border border-transparent'
-                                    }`}
-                              >
-                                 <div className="relative mb-3 flex items-center justify-center w-[72px] h-[72px] bg-[#3B3B3B] rounded shadow-inner overflow-hidden">
-                                    {inst.icon_url ? (
-                                       <img src={`${inst.icon_url}?v=${Date.now()}`} alt="" className="w-full h-full object-cover" />
-                                    ) : (
-                                       <Gamepad2 className={`w-10 h-10 ${isRunning ? (statuses[inst.id]?.is_ready ? 'text-emerald-400' : 'text-amber-400') : 'text-[#878787]'}`} />
-                                    )}
-                                    <div className={`absolute bottom-1 right-1 w-3 h-3 rounded-full border-2 border-[#3B3B3B] ${isRunning
-                                          ? (statuses[inst.id]?.is_ready ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse')
-                                          : 'bg-neutral-500'
-                                       }`}></div>
-                                 </div>
-                                 <span className="text-xs text-center font-medium line-clamp-2 leading-tight">
-                                    {inst.name}
+                  <div className="space-y-12">
+                     {groups.map(groupName => {
+                        const groupInstances = instances.filter(i => i.group === groupName);
+                        if (groupInstances.length === 0) return null;
+                        
+                        return (
+                           <div key={groupName}>
+                              <div className="flex items-center gap-3 border-b border-[#404040] pb-2 mb-6 cursor-default">
+                                 <Layers className={`w-4 h-4 ${groupName === 'No group' ? 'text-neutral-500' : 'text-[#3E8ED0]'}`} />
+                                 <span className={`font-bold tracking-tight ${groupName === 'No group' ? 'text-neutral-400' : 'text-neutral-200'}`}>
+                                    {groupName}
+                                 </span>
+                                 <span className="text-[10px] font-bold text-neutral-600 bg-[#333] px-2 py-0.5 rounded-full ml-1">
+                                    {groupInstances.length}
                                  </span>
                               </div>
-                           );
-                        })}
-                     </div>
+
+                              <div className="flex flex-wrap gap-5">
+                                 {groupInstances.map((inst) => {
+                                    const isSelected = selectedId === inst.id;
+                                    const isRunning = statuses[inst.id]?.is_running;
+
+                                    return (
+                                       <div
+                                          key={inst.id}
+                                          onClick={() => setSelectedId(inst.id)}
+                                          onContextMenu={(e) => handleContextMenu(e, inst.id)}
+                                          className={`flex flex-col items-center justify-center p-3 rounded-lg cursor-pointer transition-all w-[115px] select-none group/card ${isSelected
+                                                ? 'bg-[#3E8ED0]/15 outline outline-2 outline-[#3E8ED0] shadow-lg scale-105'
+                                                : 'hover:bg-[#323232] border border-transparent transition-transform'
+                                             }`}
+                                       >
+                                          <div className="relative mb-2 flex items-center justify-center w-[78px] h-[78px] bg-[#3B3B3B] rounded-xl shadow-inner overflow-hidden border border-[#444] group-hover/card:border-[#555] transition-colors">
+                                             {inst.icon_url ? (
+                                                <img src={`${inst.icon_url}?v=${Date.now()}`} alt="" className="w-full h-full object-cover" />
+                                             ) : (
+                                                <Gamepad2 className={`w-10 h-10 ${isRunning ? (statuses[inst.id]?.is_ready ? 'text-emerald-400' : 'text-amber-400') : 'text-[#555]'}`} />
+                                             )}
+                                             <div className={`absolute bottom-1.5 right-1.5 w-3.5 h-3.5 rounded-full border-2 border-[#3B3B3B] ${isRunning
+                                                   ? (statuses[inst.id]?.is_ready ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-amber-500 animate-pulse')
+                                                   : 'bg-neutral-600'
+                                                }`}></div>
+                                          </div>
+                                          <span className="text-[11px] text-center font-bold text-neutral-300 line-clamp-2 leading-tight group-hover/card:text-white transition-colors">
+                                             {inst.name}
+                                          </span>
+                                       </div>
+                                    );
+                                 })}
+                              </div>
+                           </div>
+                        );
+                     })}
                   </div>
                )}
             </main>
@@ -1258,8 +1322,27 @@ export default function App() {
                         </div>
                         <div>
                            <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-1">Group</label>
-                           <select className="w-full bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-1 text-xs text-neutral-400 rounded focus:outline-none focus:border-[#3E8ED0]">
-                              <option>No group</option>
+                           <select 
+                              value={selectedGroup}
+                              onChange={async (e) => {
+                                 if (e.target.value === "NEW_GROUP") {
+                                    const name = await showPrompt("Enter new group name:", "", "New Group");
+                                    if (name) {
+                                       setGroups(prev => Array.from(new Set([...prev, name])));
+                                       setSelectedGroup(name);
+                                    } else {
+                                       setSelectedGroup("No group");
+                                    }
+                                 } else {
+                                    setSelectedGroup(e.target.value);
+                                 }
+                              }}
+                              className="w-full bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-1 text-xs text-neutral-400 rounded focus:outline-none focus:border-[#3E8ED0]"
+                           >
+                              {groups.map(g => (
+                                 <option key={g} value={g}>{g}</option>
+                              ))}
+                              <option value="NEW_GROUP">+ Create New...</option>
                            </select>
                         </div>
                      </div>
@@ -2975,7 +3058,10 @@ export default function App() {
                >
                   <List className="w-4 h-4" /> Edit...
                </button>
-               <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
+               <button 
+                  onClick={() => { handleChangeGroup(contextMenu.instanceId); setContextMenu(null); }}
+                  className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left"
+               >
                   <Tag className="w-4 h-4" /> Change Group...
                </button>
                <button
