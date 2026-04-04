@@ -16,8 +16,6 @@ interface InstanceStatus {
   version?: string;
   port?: number;
   public_ip?: string;
-  local_ips?: string[];
-  all_ips?: string[];
   last_online?: number;
   containers: unknown[];
 }
@@ -977,30 +975,19 @@ export default function App() {
             </div>
 
             <div className="mt-auto p-4 bg-[#2D2D2D] border-t border-[#3A3A3A] space-y-3">
-                {selectedStatus?.all_ips && selectedStatus.all_ips.length > 0 && (
-                   <div className="space-y-1">
-                      {selectedStatus?.all_ips?.map((ip, idx) => (
-                         <div 
-                            key={ip}
-                            onClick={() => {
-                               if (selectedStatus) {
-                                  copyToClipboard(`${ip}:${selectedStatus.port || 25565}`, `sidebar-${idx}`);
-                               }
-                            }}
-                            className="flex items-center justify-between text-[10px] cursor-pointer hover:bg-[#323232] p-1.5 -mx-1.5 rounded-md transition group"
-                            title={`Click to copy ${ip.startsWith('100.') ? 'Tailscale' : (ip.startsWith('192.') ? 'LAN' : 'Public')} address`}
-                         >
-                            <span className="text-neutral-500 uppercase font-bold tracking-wider">
-                               {ip.startsWith('100.') ? 'Tailscale' : (ip.startsWith('192.') ? 'LAN' : (idx === 0 && (selectedStatus?.all_ips?.length || 0) > 1 ? 'Primary' : 'Address'))}
-                            </span>
-                            <div className="flex items-center gap-1.5">
-                               <span className={`font-mono font-bold transition-colors ${copiedId === `sidebar-${idx}` ? 'text-emerald-400' : 'text-emerald-500 group-hover:underline'}`}>
-                                  {copiedId === `sidebar-${idx}` ? 'COPIED!' : `${ip}:${selectedStatus.port || 25565}`}
-                               </span>
-                               <Copy className={`w-2.5 h-2.5 transition-colors ${copiedId === `sidebar-${idx}` ? 'text-emerald-400' : 'text-neutral-600 group-hover:text-emerald-400'} mt-[-2px]`} />
-                            </div>
-                         </div>
-                      ))}
+                {selectedStatus?.public_ip && (
+                   <div 
+                      onClick={() => copyToClipboard(`${selectedStatus.public_ip}:${selectedStatus.port || 25565}`, 'sidebar')}
+                      className="flex items-center justify-between text-[11px] cursor-pointer hover:bg-[#323232] p-1.5 -mx-1.5 rounded-md transition group"
+                      title="Click to copy server address"
+                   >
+                      <span className="text-neutral-500 uppercase font-bold tracking-wider">Address</span>
+                      <div className="flex items-center gap-1.5">
+                         <span className={`font-mono font-bold transition-colors ${copiedId === 'sidebar' ? 'text-emerald-400' : 'text-emerald-500 group-hover:underline'}`}>
+                            {copiedId === 'sidebar' ? 'COPIED!' : `${selectedStatus.public_ip}:${selectedStatus.port || 25565}`}
+                         </span>
+                         <Copy className={`w-2.5 h-2.5 transition-colors ${copiedId === 'sidebar' ? 'text-emerald-400' : 'text-neutral-600 group-hover:text-emerald-400'} mt-[-2px]`} />
+                      </div>
                    </div>
                 )}
                 <div className="flex items-center justify-between text-[11px]">
@@ -1380,30 +1367,18 @@ export default function App() {
                  </div>
                  <div>
                     <h2 className="text-xl font-bold text-[#E0E0E0]">Editing: {selectedInstance.name}</h2>
-                    {statuses[selectedInstance.id]?.all_ips && (
-                       <div className="flex flex-wrap gap-2 mt-1">
-                          {statuses[selectedInstance.id]?.all_ips?.slice(0, 2).map((ip, idx) => (
-                             <button 
-                                key={ip}
-                                onClick={() => {
-                                   const s = statuses[selectedInstance.id];
-                                   if (s) {
-                                      copyToClipboard(`${ip}:${s.port || 25565}`, `modal-${idx}`);
-                                   }
-                                }}
-                                className="flex items-center gap-2 text-[9px] bg-[#050505] border border-[#3A3A3A] px-2 py-0.5 rounded hover:bg-[#1A1A1A] transition group"
-                                title={`Copy ${ip.startsWith('100.') ? 'Tailscale' : 'Address'}`}
-                             >
-                                <span className="text-neutral-500 font-bold uppercase tracking-wider">
-                                   {ip.startsWith('100.') ? 'Tailscale' : (ip.startsWith('192.') ? 'LAN' : 'IP')}:
-                                </span>
-                                <span className={`font-mono transition-colors ${copiedId === `modal-${idx}` ? 'text-emerald-400' : 'text-emerald-500'}`}>
-                                   {copiedId === `modal-${idx}` ? 'COPIED!' : `${ip}:${statuses[selectedInstance.id].port || 25565}`}
-                                </span>
-                                <Copy className={`w-2 h-2 transition-colors ${copiedId === `modal-${idx}` ? 'text-emerald-400' : 'text-neutral-600 group-hover:text-[#3E8ED0]'}`} />
-                             </button>
-                          ))}
-                       </div>
+                    {statuses[selectedInstance.id]?.public_ip && (
+                       <button 
+                          onClick={() => copyToClipboard(`${statuses[selectedInstance.id].public_ip}:${statuses[selectedInstance.id].port || 25565}`, 'modal')}
+                          className="flex items-center gap-2 mt-1 text-[10px] bg-[#050505] border border-[#3A3A3A] px-2 py-0.5 rounded hover:bg-[#1A1A1A] transition group"
+                          title="Click to copy server address"
+                       >
+                          <span className="text-neutral-500 font-bold uppercase tracking-wider">Address:</span>
+                          <span className={`font-mono transition-colors ${copiedId === 'modal' ? 'text-emerald-400' : 'text-emerald-500'}`}>
+                             {copiedId === 'modal' ? 'ADDRESS COPIED!' : `${statuses[selectedInstance.id].public_ip}:${statuses[selectedInstance.id].port || 25565}`}
+                          </span>
+                          <Copy className={`w-2.5 h-2.5 transition-colors ${copiedId === 'modal' ? 'text-emerald-400' : 'text-neutral-600 group-hover:text-[#3E8ED0]'}`} />
+                       </button>
                     )}
                  </div>
               </div>
