@@ -2,6 +2,8 @@ import os
 import subprocess
 import shutil
 import re
+import zipfile
+import tempfile
 from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -712,6 +714,110 @@ def duplicate_instance(instance_id: str, req: DuplicateInstanceRequest):
             print(f"Error updating compose after duplication: {e}")
             
     return {"id": new_slug, "message": "Instance duplicated"}
+
+@app.get("/api/instances/{instance_id}/export")
+def export_instance(instance_id: str):
+    path = get_instance_path(instance_id)
+    
+    # Create a temporary zip file
+    tmp_dir = tempfile.gettempdir()
+    zip_filename = f"{instance_id}.zip"
+    zip_path = os.path.join(tmp_dir, zip_filename)
+    
+    try:
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, path)
+                    zipf.write(file_path, arcname)
+        
+        return FileResponse(
+            zip_path, 
+            media_type='application/zip', 
+            filename=zip_filename,
+            background=None # FileResponse handles cleanup if we use a specific pattern, but here we just return
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/instances/import")
+async def import_instance(file: UploadFile = File(...)):
+    if not file.filename.endswith('.zip'):
+        raise HTTPException(status_code=400, detail="Only .zip files are supported")
+        
+    # Generate a unique slug for the new instance
+    base_name = file.filename.rsplit('.', 1)[0]
+    new_slug = generate_slug(base_name)
+    
+    # Avoid collisions
+    base_slug = new_slug
+    counter = 1
+    while os.path.exists(os.path.join(SERVERS_DIR, new_slug)):
+        new_slug = f"{base_slug}-{counter}"
+        counter += 1
+        
+    target_path = os.path.join(SERVERS_DIR, new_slug)
+    os.makedirs(target_path, exist_ok=True)
+    
+    # Save the file temporarily
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = tmp.name
+        
+    try:
+        with zipfile.ZipFile(tmp_path, 'r') as zipf:
+            zipf.extractall(target_path)
+            
+        # Update docker-compose.yml to match the new slug and avoid port conflict
+        compose_path = os.path.join(target_path, "docker-compose.yml")
+        if os.path.exists(compose_path):
+            try:
+                with open(compose_path, "r") as f:
+                    config = yaml.safe_load(f)
+                
+                services = config.get("services", {})
+                if services:
+                    # Find used ports
+                    used_ports = set()
+                    for entry in os.scandir(SERVERS_DIR):
+                        if entry.is_dir() and entry.name != new_slug:
+                            try:
+                                other_compose = os.path.join(entry.path, "docker-compose.yml")
+                                if os.path.exists(other_compose):
+                                    with open(other_compose, 'r') as of:
+                                        odata = yaml.safe_load(of)
+                                        for _, oservice in odata.get("services", {}).items():
+                                            for p in oservice.get("ports", []):
+                                                used_ports.add(int(str(p).split(':')[0]))
+                            except: pass
+
+                    service_name = "mc" if "mc" in services else list(services.keys())[0]
+                    service = services[service_name]
+                    service["container_name"] = f"isopod_{new_slug}"
+                    
+                    if "ports" in service:
+                        try:
+                            p = service["ports"][0] or "25565:25565"
+                            current_port = int(str(p).split(':')[0])
+                            new_port = current_port
+                            while new_port in used_ports or new_port < 1024:
+                                new_port += 1
+                            service["ports"] = [f"{new_port}:25565"]
+                        except: pass
+                
+                with open(compose_path, "w") as f:
+                    yaml.dump(config, f, default_flow_style=False)
+            except Exception as e:
+                print(f"Error updating compose after import: {e}")
+                
+        return {"id": new_slug, "message": "Instance imported successfully"}
+    except Exception as e:
+        shutil.rmtree(target_path, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 @app.get("/api/instances/{instance_id}/logs")
 def get_instance_logs(instance_id: str, tail: int = 200):

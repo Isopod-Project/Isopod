@@ -490,6 +490,42 @@ export default function App() {
       }
    };
 
+   const handleExport = (id: string) => {
+      window.location.href = `/api/instances/${id}/export`;
+   };
+
+   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      setIsCreating(true);
+      try {
+         const formData = new FormData();
+         formData.append("file", file);
+         
+         const res = await fetch("/api/instances/import", {
+            method: "POST",
+            body: formData
+         });
+         
+         if (res.ok) {
+            const data = await res.json();
+            await fetchInstances();
+            setSelectedId(data.id);
+            setIsAddModalOpen(false);
+            await showAlert("Instance imported successfully!", "Success");
+         } else {
+            const err = await res.json().catch(() => ({}));
+            await showAlert(`Failed to import: ${err.detail || 'Server error'}`, "Error");
+         }
+      } catch (err) {
+         await showAlert("Error uploading instance zip.", "Error");
+      } finally {
+         setIsCreating(false);
+         if (e.target) e.target.value = '';
+      }
+   };
+
    const fetchLogs = async (id: string) => {
       setIsLogsLoading(true);
       try {
@@ -1485,6 +1521,48 @@ export default function App() {
                                        </div>
                                     ))
                                  )}
+                              </div>
+                           </div>
+                        )}
+
+                        {addTab === "import" && (
+                           <div className="flex flex-col items-center justify-center h-full p-8 text-center bg-[#1E1E1E]">
+                              <div className="w-20 h-20 bg-[#242424] border border-[#3A3A3A] rounded-2xl flex items-center justify-center mb-6 shadow-2xl relative group overflow-hidden">
+                                 <div className="absolute inset-0 bg-[#3E8ED0]/5 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                 <Database className="w-10 h-10 text-[#3E8ED0]" />
+                              </div>
+                              <h3 className="text-xl font-bold text-white mb-2 tracking-tight">Import Server Instance</h3>
+                              <p className="text-neutral-400 text-sm mb-8 max-w-sm leading-relaxed">
+                                 Upload an Isopod server package (.zip) to restore or share an instance with all its settings and files.
+                              </p>
+                              
+                              <label className={`group relative cursor-pointer ${isCreating ? 'pointer-events-none opacity-50' : ''}`}>
+                                 <input 
+                                    type="file" 
+                                    accept=".zip" 
+                                    className="hidden" 
+                                    onChange={handleImport}
+                                    disabled={isCreating}
+                                 />
+                                 <div className="px-10 py-4 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white font-bold rounded-xl transition-all shadow-xl shadow-[#3E8ED0]/20 flex items-center gap-3 active:scale-95">
+                                    <Share className="w-5 h-5 rotate-180" />
+                                    {isCreating ? "Importing..." : "Choose .zip File"}
+                                 </div>
+                              </label>
+                              
+                              <div className="mt-8 flex items-center gap-6 text-[10px] font-bold text-neutral-500 uppercase tracking-widest">
+                                 <div className="flex items-center gap-2">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                    Auto-Port
+                                 </div>
+                                 <div className="flex items-center gap-2">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                    Full Restore
+                                 </div>
+                                 <div className="flex items-center gap-2">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                    Safe Import
+                                 </div>
                               </div>
                            </div>
                         )}
@@ -2912,11 +2990,13 @@ export default function App() {
                >
                   <Folder className="w-4 h-4" /> Folder
                </button>
-               <button className="w-full flex items-center justify-between px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
+               <button 
+                  onClick={() => { handleExport(contextMenu.instanceId); setContextMenu(null); }}
+                  className="w-full flex items-center justify-between px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left"
+               >
                   <div className="flex items-center gap-3">
-                     <Share className="w-4 h-4" /> Export...
+                     <Share className="w-4 h-4" /> Export
                   </div>
-                  <ChevronRight className="w-3.5 h-3.5 opacity-50" />
                </button>
                <button 
                   onClick={() => { handleDuplicate(contextMenu.instanceId); setContextMenu(null); }}
