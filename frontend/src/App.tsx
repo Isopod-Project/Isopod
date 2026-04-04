@@ -14,6 +14,8 @@ interface InstanceStatus {
   is_running: boolean;
   is_ready: boolean;
   version?: string;
+  port?: number;
+  public_ip?: string;
   last_online?: number;
   containers: unknown[];
 }
@@ -746,6 +748,14 @@ export default function App() {
     setSettingsTab("general");
   };
 
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      alert("Address copied to clipboard!");
+    }).catch(err => {
+      console.error('Failed to copy: ', err);
+    });
+  };
+
   const handleSaveGlobalSettings = async () => {
     setIsSavingGlobal(true);
     // Simulation of saving settings
@@ -936,6 +946,21 @@ export default function App() {
             </div>
 
             <div className="mt-auto p-4 bg-[#2D2D2D] border-t border-[#3A3A3A] space-y-3">
+                {selectedStatus?.public_ip && (
+                   <div 
+                      onClick={() => copyToClipboard(`${selectedStatus.public_ip}:${selectedStatus.port || 25565}`)}
+                      className="flex items-center justify-between text-[11px] cursor-pointer hover:bg-[#323232] p-1.5 -mx-1.5 rounded-md transition group"
+                      title="Click to copy server address"
+                   >
+                      <span className="text-neutral-500 uppercase font-bold tracking-wider">Address</span>
+                      <div className="flex items-center gap-1.5">
+                         <span className="text-emerald-500 font-mono font-bold group-hover:underline">
+                            {selectedStatus.public_ip}:{selectedStatus.port || 25565}
+                         </span>
+                         <ExternalLink className="w-2.5 h-2.5 text-neutral-600 group-hover:text-emerald-400 mt-[-2px]" />
+                      </div>
+                   </div>
+                )}
                 <div className="flex items-center justify-between text-[11px]">
                    <span className="text-neutral-500 uppercase font-bold tracking-wider">Version</span>
                    <span className="text-[#3E8ED0] font-mono font-bold bg-[#3E8ED0]/10 px-2 py-0.5 rounded border border-[#3E8ED0]/20">
@@ -1311,7 +1336,20 @@ export default function App() {
                  <div className="p-1.5 bg-[#3E8ED0]/10 rounded border border-[#3E8ED0]/30">
                     <Edit className="w-5 h-5 text-[#3E8ED0]" />
                  </div>
-                 <h2 className="text-xl font-bold text-[#E0E0E0]">Editing: {selectedInstance.name}</h2>
+                 <div>
+                    <h2 className="text-xl font-bold text-[#E0E0E0]">Editing: {selectedInstance.name}</h2>
+                    {statuses[selectedInstance.id]?.public_ip && (
+                       <button 
+                          onClick={() => copyToClipboard(`${statuses[selectedInstance.id].public_ip}:${statuses[selectedInstance.id].port || 25565}`)}
+                          className="flex items-center gap-2 mt-1 text-[10px] bg-[#050505] border border-[#3A3A3A] px-2 py-0.5 rounded hover:bg-[#1A1A1A] transition group"
+                          title="Click to copy server address"
+                       >
+                          <span className="text-neutral-500 font-bold uppercase tracking-wider">Address:</span>
+                          <span className="text-emerald-500 font-mono">{statuses[selectedInstance.id].public_ip}:{statuses[selectedInstance.id].port || 25565}</span>
+                          <ExternalLink className="w-2.5 h-2.5 text-neutral-600 group-hover:text-[#3E8ED0] transition-colors" />
+                       </button>
+                    )}
+                 </div>
               </div>
               <button onClick={() => setIsEditModalOpen(false)} className="p-1 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition">
                 <X className="w-6 h-6" />

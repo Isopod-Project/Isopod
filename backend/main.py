@@ -105,7 +105,7 @@ def list_instances():
     return instances
 
 @app.get("/api/instances/{instance_id}/status")
-def get_instance_status(instance_id: str):
+async def get_instance_status(instance_id: str):
     """Pull real running status of the Docker containers for an instance."""
     if not docker_client:
         raise HTTPException(status_code=500, detail="Docker client not initialized")
@@ -138,6 +138,7 @@ def get_instance_status(instance_id: str):
 
     # Get metadata like version and last active
     version = "Unknown"
+    port = 25565
     last_online = 0
     try:
         path = get_instance_path(instance_id)
@@ -151,10 +152,18 @@ def get_instance_status(instance_id: str):
                mc_config = services.get("mc") or list(services.values())[0]
                env = mc_config.get("environment", {})
                version = env.get("VERSION", "Unknown")
+               
+               # Extract port
+               ports = mc_config.get("ports", [])
+               if ports:
+                   p_str = ports[0].split(":")[0]
+                   port = int(p_str)
         
         # Last online from docker-compose.yml mod date
         last_online = os.path.getmtime(compose_path)
     except: pass
+
+    public_ip = await get_public_ip()
 
     container_info = []
     for c in containers:
@@ -170,6 +179,8 @@ def get_instance_status(instance_id: str):
         "is_running": is_running,
         "is_ready": is_ready,
         "version": version,
+        "port": port,
+        "public_ip": public_ip,
         "last_online": last_online,
         "containers": container_info
     }
@@ -249,6 +260,23 @@ VERSION_MANIFEST_URL = "https://launchermeta.mojang.com/mc/game/version_manifest
 cached_versions = {"time": 0, "data": None}
 # Cache for mod metadata to avoid hitting APIs too hard
 mod_metadata_cache = {} 
+cached_public_ip = {"time": 0, "ip": None}
+
+async def get_public_ip():
+    global cached_public_ip
+    now = time.time()
+    if cached_public_ip["ip"] and (now - cached_public_ip["time"] < 3600):
+        return cached_public_ip["ip"]
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get("https://api64.ipify.org?format=json")
+            data = res.json()
+            cached_public_ip = {"time": now, "ip": data["ip"]}
+            return data["ip"]
+    except Exception as e:
+        print(f"Error fetching public IP: {e}")
+        return "127.0.0.1" # Fallback
 
 @app.get("/api/meta/versions")
 async def get_mc_versions():
