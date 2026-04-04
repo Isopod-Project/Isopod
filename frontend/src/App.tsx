@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, RotateCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle } from "lucide-react";
 
 interface Instance {
    id: string;
@@ -2735,13 +2735,26 @@ export default function App() {
                <div className="h-px bg-[#3A3A3A] my-1"></div>
 
                <button
-                  disabled={statuses[contextMenu.instanceId]?.is_running || actionLoading.has(contextMenu.instanceId)}
-                  onClick={(e) => { handleStart(contextMenu.instanceId, e as any); setContextMenu(null); }}
-                  className={`w-full flex items-center justify-between px-3 py-2 text-sm transition-colors text-left ${(!statuses[contextMenu.instanceId]?.is_running && !actionLoading.has(contextMenu.instanceId)) ? 'text-neutral-300 hover:bg-[#3E8ED0] hover:text-white' : 'text-neutral-500 cursor-not-allowed'}`}
+                  disabled={actionLoading.has(contextMenu.instanceId)}
+                  onClick={(e) => {
+                     if (statuses[contextMenu.instanceId]?.is_running) {
+                        handleRestart(contextMenu.instanceId);
+                     } else {
+                        handleStart(contextMenu.instanceId, e as any);
+                     }
+                     setContextMenu(null);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2 text-sm transition-colors text-left ${!actionLoading.has(contextMenu.instanceId) ? 'text-neutral-300 hover:bg-[#3E8ED0] hover:text-white' : 'text-neutral-500 cursor-not-allowed'}`}
                >
                   <div className="flex items-center gap-3">
-                     {actionLoading.has(contextMenu.instanceId) ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                     {actionLoading.has(contextMenu.instanceId) ? 'Processing...' : 'Launch'}
+                     {actionLoading.has(contextMenu.instanceId) ? (
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                     ) : statuses[contextMenu.instanceId]?.is_running ? (
+                        <RotateCw className="w-4 h-4" />
+                     ) : (
+                        <Play className="w-4 h-4" />
+                     )}
+                     {actionLoading.has(contextMenu.instanceId) ? 'Processing...' : (statuses[contextMenu.instanceId]?.is_running ? 'Restart' : 'Launch')}
                   </div>
                   <ChevronRight className="w-3.5 h-3.5 opacity-50" />
                </button>
