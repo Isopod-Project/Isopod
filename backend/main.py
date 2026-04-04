@@ -595,10 +595,10 @@ async def create_instance(req: CreateInstanceRequest):
     if req.technic_slug:
         # Technic requires MODPACK_URL as per itzg's GENERIC_PACK
         try:
-             manifest = await technic_provider.get_manifest(req.technic_slug)
-             env.append(f"TYPE=GENERIC_PACK")
-             if manifest["type"] == "direct":
-                 env.append(f"MODPACK_URL={manifest['url']}")
+            manifest = await technic_provider.get_manifest(req.technic_slug)
+            env.append(f"TYPE=GENERIC_PACK")
+            if manifest["type"] == "direct":
+                env.append(f"MODPACK_URL={manifest['url']}")
         except: pass
     
     with open(os.path.join(path, "docker-compose.yml"), "w") as f:
