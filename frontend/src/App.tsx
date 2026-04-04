@@ -464,11 +464,17 @@ export default function App() {
    };
 
    const handleDuplicate = async (id: string) => {
+      const inst = instances.find(i => i.id === id);
+      const defaultName = `Copy of ${inst?.name || id.replace(/-/g, ' ')}`;
+      const newName = await showPrompt("Enter name for the duplicate instance:", defaultName, "Duplicate Instance");
+      
+      if (!newName) return;
+
       try {
          const res = await fetch(`/api/instances/${id}/duplicate`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({})
+            body: JSON.stringify({ name: newName })
          });
          if (res.ok) {
             const data = await res.json();
