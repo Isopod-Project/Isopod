@@ -208,6 +208,32 @@ export default function App() {
       const file = e.target.files?.[0];
       if (!file || !contextMenu?.instanceId) return;
 
+      // Check image dimensions
+      const img = new Image();
+      img.src = URL.createObjectURL(file);
+      const dimensions: { w: number, h: number } = await new Promise((resolve) => {
+         img.onload = () => {
+            const result = { w: img.width, h: img.height };
+            URL.revokeObjectURL(img.src);
+            resolve(result);
+         };
+         img.onerror = () => {
+            URL.revokeObjectURL(img.src);
+            resolve({ w: 0, h: 0 });
+         };
+      });
+
+      if (dimensions.w !== 0 && (dimensions.w !== 64 || dimensions.h !== 64)) {
+         const proceed = await showConfirm(
+            `Important: Minecraft requires exactly 64x64 images for the Multiplayer menu. Your image is ${dimensions.w}x${dimensions.h}. Continue anyway?`,
+            "Icon Resolution Warning"
+         );
+         if (!proceed) {
+            e.target.value = "";
+            return;
+         }
+      }
+
       const formData = new FormData();
       formData.append('file', file);
 
