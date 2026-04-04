@@ -6,3 +6,4 @@ pyyaml
 python-dotenv
 httpx
 aiofiles
+python-multipart
