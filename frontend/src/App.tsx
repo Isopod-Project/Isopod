@@ -30,6 +30,7 @@ export default function App() {
 
    // Context Menu state
    const [contextMenu, setContextMenu] = useState<{ x: number; y: number; instanceId: string } | null>(null);
+   const [pendingIconId, setPendingIconId] = useState<string | null>(null);
    const iconInputRef = useRef<HTMLInputElement>(null);
 
    // Dialog state
@@ -206,9 +207,9 @@ export default function App() {
 
    const handleIconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
-      if (!file || !contextMenu?.instanceId) return;
+      if (!file || !pendingIconId) return;
 
-      const instanceId = contextMenu.instanceId;
+      const instanceId = pendingIconId;
 
       const proceed = await showConfirm("Resize image to 64x64 and upload as the server icon?", "Change Icon");
       if (!proceed) {
@@ -261,17 +262,20 @@ export default function App() {
          });
          
          if (res.ok) {
-            // Close context menu first
+            // Close context menu and clear pending ID
             setContextMenu(null);
+            setPendingIconId(null);
             // Refresh instances to update icon_url in state
             await fetchInstances();
             // Clear input
             e.target.value = '';
          } else {
+            setPendingIconId(null);
             const errData = await res.json().catch(() => ({}));
             await showAlert(`Server error: ${errData.detail || 'Failed to upload icon'}`, "Upload Error");
          }
       } catch (err) {
+         setPendingIconId(null);
          await showAlert("Network error while uploading icon.", "Error");
       }
    };
@@ -2810,12 +2814,16 @@ export default function App() {
                >
                   <Pencil className="w-4 h-4" /> Rename
                </button>
-               <button 
-                  onClick={() => { iconInputRef.current?.click(); }}
-                  className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left"
-               >
-                  <Gamepad2 className="w-4 h-4" /> Change Icon
-               </button>
+                <button 
+                   onClick={(e) => { 
+                      e.stopPropagation();
+                      setPendingIconId(contextMenu.instanceId);
+                      iconInputRef.current?.click(); 
+                   }}
+                   className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left"
+                >
+                   <Gamepad2 className="w-4 h-4" /> Change Icon
+                </button>
 
                <div className="h-px bg-[#3A3A3A] my-1"></div>
 
