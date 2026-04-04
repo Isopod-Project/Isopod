@@ -54,6 +54,7 @@ class CurseForgeProvider(ModpackProvider):
         for item in data:
             results.append({
                 "id": str(item["id"]),
+                "slug": item.get("slug"),
                 "name": item["name"],
                 "summary": item["summary"],
                 "icon_url": item.get("logo", {}).get("thumbnailUrl"),

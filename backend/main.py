@@ -66,7 +66,9 @@ class CreateInstanceRequest(BaseModel):
     port: int
     version: Optional[str] = "latest"
     loader_version: Optional[str] = "latest"
+    modrinth_id: Optional[str] = None
     cf_id: Optional[str] = None
+    cf_slug: Optional[str] = None
     ftb_id: Optional[str] = None
     ftb_version: Optional[str] = None
     technic_slug: Optional[str] = None
@@ -574,17 +576,27 @@ async def create_instance(req: CreateInstanceRequest):
             env.append(f"LOADER_VERSION={req.loader_version}")
 
     if req.modrinth_id:
-        env.append(f"MODRINTH_PROJECTS={req.modrinth_id}")
-    if req.cf_id:
-        env.append(f"CF_PROJECTS={req.cf_id}")
+        # Use TYPE=MODRINTH for Modrinth modpacks
+        env.append(f"TYPE=MODRINTH")
+        env.append(f"MODRINTH_MODPACK={req.modrinth_id}")
+    if req.cf_slug:
+        # Use TYPE=AUTO_CURSEFORGE for automated pack handling
+        env.append("TYPE=AUTO_CURSEFORGE")
+        env.append(f"CF_SLUG={req.cf_slug}")
+        if req.cf_id:
+            # Optionally provide the ID if needed for disambiguation
+            env.append(f"CF_MODPACK_ID={req.cf_id}")
     if req.ftb_id:
-        env.append(f"TYPE=FTB")
+        # TYPE=FTBA is the correct one for the FTB App platform!
+        env.append(f"TYPE=FTBA")
         env.append(f"FTB_MODPACK_ID={req.ftb_id}")
         if req.ftb_version:
             env.append(f"FTB_MODPACK_VERSION_ID={req.ftb_version}")
     if req.technic_slug:
+        # Technic requires MODPACK_URL as per itzg's GENERIC_PACK
         try:
              manifest = await technic_provider.get_manifest(req.technic_slug)
+             env.append(f"TYPE=GENERIC_PACK")
              if manifest["type"] == "direct":
                  env.append(f"MODPACK_URL={manifest['url']}")
         except: pass

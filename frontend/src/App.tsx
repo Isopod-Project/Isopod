@@ -312,6 +312,7 @@ export default function App() {
         loader_version: selectedAddLoaderVersion,
         modrinth_id: addTab === 'modrinth' && selectedModpack ? selectedModpack.id : null,
         cf_id: addTab === 'curseforge' && selectedModpack ? selectedModpack.id : null,
+        cf_slug: addTab === 'curseforge' && selectedModpack ? selectedModpack.slug : null,
         ftb_id: addTab === 'ftb' && selectedModpack ? selectedModpack.id : null,
         technic_slug: addTab === 'technic' && selectedModpack ? selectedModpack.id : null
       };
