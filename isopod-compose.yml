@@ -14,3 +14,4 @@ services:
       - /DATA/AppData/isopod/servers:/DATA/AppData/isopod/servers
     environment:
       - SERVERS_DIR=/DATA/AppData/isopod/servers
+      - CURSEFORGE_API_KEY=${CURSEFORGE_API_KEY}

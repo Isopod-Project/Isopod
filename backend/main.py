@@ -583,6 +583,8 @@ async def create_instance(req: CreateInstanceRequest):
         # Use TYPE=AUTO_CURSEFORGE for automated pack handling
         env.append("TYPE=AUTO_CURSEFORGE")
         env.append(f"CF_SLUG={req.cf_slug}")
+        if cf_api_key:
+            env.append(f"CF_API_KEY={cf_api_key}")
         if req.cf_id:
             # Optionally provide the ID if needed for disambiguation
             env.append(f"CF_MODPACK_ID={req.cf_id}")
