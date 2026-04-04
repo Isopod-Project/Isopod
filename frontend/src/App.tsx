@@ -23,7 +23,7 @@ interface InstanceStatus {
 
 export default function App() {
    const [instances, setInstances] = useState<Instance[]>([]);
-   const [groups, setGroups] = useState<string[]>([]);
+   const [groups, setGroups] = useState<string[]>(["No group"]);
    const [statuses, setStatuses] = useState<Record<string, InstanceStatus>>({});
    const [loading, setLoading] = useState(true);
 
@@ -926,6 +926,7 @@ export default function App() {
 
    useEffect(() => {
       fetchInstances();
+      fetchGroups();
       fetchMcVersions();
 
       const interval = setInterval(() => {
@@ -933,6 +934,7 @@ export default function App() {
             prevInstances.forEach((inst: Instance) => fetchStatus(inst.id));
             return prevInstances;
          });
+         fetchGroups();
       }, 5000);
 
       return () => clearInterval(interval);
