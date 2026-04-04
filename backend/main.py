@@ -624,14 +624,24 @@ def create_instance(req: CreateInstanceRequest):
         try:
             from PIL import Image
             import io
-            res = httpx.get(req.icon_url)
+            print(f"DEBUG: Attempting to download icon from {req.icon_url}")
+            # Use headers to avoid being blocked by CDNs
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+            res = httpx.get(req.icon_url, headers=headers, timeout=15.0, follow_redirects=True)
             if res.status_code == 200:
+                print(f"DEBUG: Got response: {len(res.content)} bytes, Content-Type: {res.headers.get('Content-Type')}")
                 img = Image.open(io.BytesIO(res.content))
                 img = img.convert("RGBA")
                 img = img.resize((64, 64), Image.Resampling.LANCZOS)
-                img.save(os.path.join(path, "icon.png"), "PNG")
+                icon_save_path = os.path.join(path, "icon.png")
+                img.save(icon_save_path, "PNG")
+                print(f"DEBUG: Saved icon to {icon_save_path}")
+            else:
+                print(f"DEBUG: Icon download failed with status {res.status_code}")
         except Exception as e:
-            print(f"Failed to set instance icon: {e}")
+            print(f"DEBUG: Failed to set instance icon: {e}")
+            import traceback
+            traceback.print_exc()
         
     return {"id": slug, "message": "Instance created"}
 

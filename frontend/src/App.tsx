@@ -440,7 +440,7 @@ export default function App() {
             group: selectedGroup,
             modrinth_id: addTab === 'modrinth' && selectedModpack ? selectedModpack.id : null,
             cf_id: addTab === 'curseforge' && selectedModpack ? selectedModpack.id : null,
-            icon_url: selectedModpack?.icon_url || null
+            icon_url: (addTab === 'modrinth' || addTab === 'curseforge') ? (selectedModpack?.icon_url || null) : null
          };
 
          const res = await fetch("/api/instances", {

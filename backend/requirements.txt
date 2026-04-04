@@ -7,3 +7,4 @@ python-dotenv
 httpx
 aiofiles
 python-multipart
+Pillow
