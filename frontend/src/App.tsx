@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Copy } from "lucide-react";
 
 interface Instance {
   id: string;
@@ -119,6 +119,7 @@ export default function App() {
   // Instance Whitelist States
   const [instanceWhitelistUser, setInstanceWhitelistUser] = useState("");
   const [instanceWhitelistPreview, setInstanceWhitelistPreview] = useState<{name: string, uuid: string} | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Bootstrap seenPlayers with defaults and common entries
   useEffect(() => {
@@ -748,9 +749,37 @@ export default function App() {
     setSettingsTab("general");
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text).then(() => {
-      alert("Address copied to clipboard!");
+  const copyToClipboard = (text: string, id?: string) => {
+    // Robust copy to clipboard
+    const performCopy = () => {
+      if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(text);
+      } else {
+        // Fallback for non-secure contexts
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-9999px";
+        textArea.style.top = "0";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        try {
+          document.execCommand('copy');
+          return Promise.resolve();
+        } catch (err) {
+          return Promise.reject(err);
+        } finally {
+          document.body.removeChild(textArea);
+        }
+      }
+    };
+
+    performCopy().then(() => {
+      if (id) {
+        setCopiedId(id);
+        setTimeout(() => setCopiedId(null), 1500);
+      }
     }).catch(err => {
       console.error('Failed to copy: ', err);
     });
@@ -948,16 +977,16 @@ export default function App() {
             <div className="mt-auto p-4 bg-[#2D2D2D] border-t border-[#3A3A3A] space-y-3">
                 {selectedStatus?.public_ip && (
                    <div 
-                      onClick={() => copyToClipboard(`${selectedStatus.public_ip}:${selectedStatus.port || 25565}`)}
+                      onClick={() => copyToClipboard(`${selectedStatus.public_ip}:${selectedStatus.port || 25565}`, 'sidebar')}
                       className="flex items-center justify-between text-[11px] cursor-pointer hover:bg-[#323232] p-1.5 -mx-1.5 rounded-md transition group"
                       title="Click to copy server address"
                    >
                       <span className="text-neutral-500 uppercase font-bold tracking-wider">Address</span>
                       <div className="flex items-center gap-1.5">
-                         <span className="text-emerald-500 font-mono font-bold group-hover:underline">
-                            {selectedStatus.public_ip}:{selectedStatus.port || 25565}
+                         <span className={`font-mono font-bold transition-colors ${copiedId === 'sidebar' ? 'text-emerald-400' : 'text-emerald-500 group-hover:underline'}`}>
+                            {copiedId === 'sidebar' ? 'COPIED!' : `${selectedStatus.public_ip}:${selectedStatus.port || 25565}`}
                          </span>
-                         <ExternalLink className="w-2.5 h-2.5 text-neutral-600 group-hover:text-emerald-400 mt-[-2px]" />
+                         <Copy className={`w-2.5 h-2.5 transition-colors ${copiedId === 'sidebar' ? 'text-emerald-400' : 'text-neutral-600 group-hover:text-emerald-400'} mt-[-2px]`} />
                       </div>
                    </div>
                 )}
@@ -1340,13 +1369,15 @@ export default function App() {
                     <h2 className="text-xl font-bold text-[#E0E0E0]">Editing: {selectedInstance.name}</h2>
                     {statuses[selectedInstance.id]?.public_ip && (
                        <button 
-                          onClick={() => copyToClipboard(`${statuses[selectedInstance.id].public_ip}:${statuses[selectedInstance.id].port || 25565}`)}
+                          onClick={() => copyToClipboard(`${statuses[selectedInstance.id].public_ip}:${statuses[selectedInstance.id].port || 25565}`, 'modal')}
                           className="flex items-center gap-2 mt-1 text-[10px] bg-[#050505] border border-[#3A3A3A] px-2 py-0.5 rounded hover:bg-[#1A1A1A] transition group"
                           title="Click to copy server address"
                        >
                           <span className="text-neutral-500 font-bold uppercase tracking-wider">Address:</span>
-                          <span className="text-emerald-500 font-mono">{statuses[selectedInstance.id].public_ip}:{statuses[selectedInstance.id].port || 25565}</span>
-                          <ExternalLink className="w-2.5 h-2.5 text-neutral-600 group-hover:text-[#3E8ED0] transition-colors" />
+                          <span className={`font-mono transition-colors ${copiedId === 'modal' ? 'text-emerald-400' : 'text-emerald-500'}`}>
+                             {copiedId === 'modal' ? 'ADDRESS COPIED!' : `${statuses[selectedInstance.id].public_ip}:${statuses[selectedInstance.id].port || 25565}`}
+                          </span>
+                          <Copy className={`w-2.5 h-2.5 transition-colors ${copiedId === 'modal' ? 'text-emerald-400' : 'text-neutral-600 group-hover:text-[#3E8ED0]'}`} />
                        </button>
                     )}
                  </div>
