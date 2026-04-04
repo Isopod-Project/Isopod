@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Zap } from "lucide-react";
 
 interface Instance {
   id: string;
@@ -64,7 +64,7 @@ export default function App() {
   const [isCreating, setIsCreating] = useState(false);
   
   // Prism-like Add Modal States
-  const [addTab, setAddTab] = useState<"custom" | "import" | "modrinth" | "curseforge">("custom");
+  const [addTab, setAddTab] = useState<"custom" | "import" | "modrinth" | "curseforge" | "ftb" | "technic">("custom");
   const [selectedAddVersion, setSelectedAddVersion] = useState("latest");
   const [selectedAddLoader, setSelectedAddLoader] = useState("VANILLA");
   const [searchModpacks, setSearchModpacks] = useState("");
@@ -311,7 +311,9 @@ export default function App() {
         version: selectedAddVersion === 'latest' ? '' : selectedAddVersion,
         loader_version: selectedAddLoaderVersion,
         modrinth_id: addTab === 'modrinth' && selectedModpack ? selectedModpack.id : null,
-        cf_id: addTab === 'curseforge' && selectedModpack ? selectedModpack.id : null
+        cf_id: addTab === 'curseforge' && selectedModpack ? selectedModpack.id : null,
+        ftb_id: addTab === 'ftb' && selectedModpack ? selectedModpack.id : null,
+        technic_slug: addTab === 'technic' && selectedModpack ? selectedModpack.id : null
       };
 
       const res = await fetch("/api/instances", {
@@ -1094,13 +1096,14 @@ export default function App() {
                      { id: "atlauncher", name: "ATLauncher", icon: Box },
                      { id: "curseforge", name: "CurseForge", icon: Settings },
                      { id: "modrinth", name: "Modrinth", icon: RefreshCw },
+                     { id: "ftb", name: "Feed The Beast", icon: Zap },
                      { id: "technic", name: "Technic", icon: Layers }
                   ].map((tab) => (
                      <button 
                         key={tab.id}
                         onClick={() => {
                            setAddTab(tab.id as any);
-                           if (tab.id === 'modrinth' || tab.id === 'curseforge') {
+                           if (['modrinth', 'curseforge', 'ftb', 'technic'].includes(tab.id)) {
                               handleModpackSearch("", tab.id);
                            }
                         }}
@@ -1283,14 +1286,14 @@ export default function App() {
                      </div>
                   )}
 
-                  {(addTab === "modrinth" || addTab === "curseforge") && (
+                  {['modrinth', 'curseforge', 'ftb', 'technic'].includes(addTab) && (
                      <div className="flex flex-col h-full bg-[#1E1E1E]/50">
                         <div className="p-4 bg-[#242424] border-b border-[#323232] flex gap-3">
                            <div className="flex-1 relative">
                               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
                               <input 
                                  type="text" 
-                                 placeholder={`Search ${addTab === 'modrinth' ? 'Modrinth' : 'CurseForge'} modpacks...`}
+                                 placeholder={`Search ${addTab.toUpperCase()} modpacks...`}
                                  value={searchModpacks}
                                  onChange={(e) => setSearchModpacks(e.target.value)}
                                  onKeyDown={(e) => e.key === 'Enter' && handleModpackSearch(searchModpacks, addTab)}

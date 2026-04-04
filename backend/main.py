@@ -14,6 +14,7 @@ from typing import List, Optional, Dict, Any
 import httpx
 import json
 import time
+from providers import CurseForgeProvider, FTBProvider, TechnicProvider
 
 load_dotenv()
 
@@ -34,6 +35,12 @@ try:
 except docker.errors.DockerException:
     print("Warning: Could not connect to Docker daemon.")
     docker_client = None
+
+# Modpack Providers Initialization
+cf_api_key = os.getenv("CURSEFORGE_API_KEY", "")
+cf_provider = CurseForgeProvider(cf_api_key) if cf_api_key else None
+ftb_provider = FTBProvider(cf_provider)
+technic_provider = TechnicProvider()
 
 class InstanceConfig(BaseModel):
     image: str
@@ -59,8 +66,10 @@ class CreateInstanceRequest(BaseModel):
     port: int
     version: Optional[str] = "latest"
     loader_version: Optional[str] = "latest"
-    modrinth_id: Optional[str] = None
     cf_id: Optional[str] = None
+    ftb_id: Optional[str] = None
+    ftb_version: Optional[str] = None
+    technic_slug: Optional[str] = None
 
 class RenameInstanceRequest(BaseModel):
     name: str
@@ -408,14 +417,15 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
     mc_version = None if mc_version == "undefined" or not mc_version else mc_version
     loader = None if loader == "undefined" or not loader else loader
     
-    # Using '6' for mods, '4471' for modpacks
+    # Use official provider if API key is present
+    if cf_provider:
+        try:
+            return await cf_provider.search(q or "", mc_version, loader)
+        except Exception as e:
+            print(f"CurseForge official API error: {e}")
+            
+    # Existing fallback logic
     class_id = 4471 if class_type == "modpack" else 6
-    
-    # If query is empty, we browse via parameters
-    query_str = q if q else ""
-        
-    # Using a known public proxy for CurseForge searches
-    # itzg/minecraft-server uses the CurseForge ID (int)
     url = "https://api.curse.tools/v1/cf/mods/search"
     
     mod_loader_type = 0 # Any
@@ -474,6 +484,40 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
         print(f"DEBUG: Error parsing CurseForge data: {e}")
         
     return results
+
+@app.get("/api/mods/search/ftb")
+async def search_ftb(q: Optional[str] = None):
+    # Handle "undefined" literals from frontend
+    q = None if q == "undefined" or not q else q
+    try:
+        return await ftb_provider.search(q or "")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"FTB API error: {str(e)}")
+
+@app.get("/api/mods/search/technic")
+async def search_technic(q: Optional[str] = None):
+    # Technic search is limited, usually by slug
+    return []
+
+@app.get("/api/mods/manifest/{provider}")
+async def get_mod_manifest(provider: str, pack_id: str, version_id: Optional[str] = None):
+    """Fetch manifest for a specific modpack version."""
+    try:
+        if provider == "curseforge":
+            if not cf_provider:
+                raise HTTPException(status_code=400, detail="CurseForge API key not configured")
+            manifest = await cf_provider.get_manifest(pack_id, version_id)
+            if "error" in manifest:
+                return manifest # Return the Manual Action Required flag
+            return manifest
+        elif provider == "ftb":
+            return await ftb_provider.get_manifest(pack_id, version_id)
+        elif provider == "technic":
+            return await technic_provider.get_manifest(pack_id, version_id)
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 def generate_slug(text: str) -> str:
     slug = text.lower()
@@ -534,6 +578,21 @@ def create_instance(req: CreateInstanceRequest):
         env.append(f"MODRINTH_PROJECTS={req.modrinth_id}")
     if req.cf_id:
         env.append(f"CF_PROJECTS={req.cf_id}")
+    if req.ftb_id:
+        env.append(f"TYPE=FTB")
+        env.append(f"FTB_MODPACK_ID={req.ftb_id}")
+        if req.ftb_version:
+            env.append(f"FTB_MODPACK_VERSION_ID={req.ftb_version}")
+    if req.technic_slug:
+        # For Technic, we often need to provide the direct ZIP URL if it's not solder
+        # But itzg/minecraft-server has its own ways to handle it via MODPACK_URL
+        # We can fetch the manifest first
+        try:
+             # This is a bit blocking for a fast endpoint, but helpful
+             manifest = asyncio.run(technic_provider.get_manifest(req.technic_slug))
+             if manifest["type"] == "direct":
+                 env.append(f"MODPACK_URL={manifest['url']}")
+        except: pass
     
     with open(os.path.join(path, "docker-compose.yml"), "w") as f:
         yaml.dump(compose_content, f, default_flow_style=False)
