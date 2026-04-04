@@ -208,50 +208,71 @@ export default function App() {
       const file = e.target.files?.[0];
       if (!file || !contextMenu?.instanceId) return;
 
-      // Check image dimensions
+      const instanceId = contextMenu.instanceId;
+
+      const proceed = await showConfirm("Resize image to 64x64 and upload as the server icon?", "Change Icon");
+      if (!proceed) {
+         e.target.value = '';
+         return;
+      }
+
+      // Create an image to resize
       const img = new Image();
       img.src = URL.createObjectURL(file);
-      const dimensions: { w: number, h: number } = await new Promise((resolve) => {
+      
+      const resizedBlob: Blob | null = await new Promise((resolve) => {
          img.onload = () => {
-            const result = { w: img.width, h: img.height };
-            URL.revokeObjectURL(img.src);
-            resolve(result);
+            const canvas = document.createElement('canvas');
+            canvas.width = 64;
+            canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+               // Draw with smoothing for better quality
+               ctx.imageSmoothingEnabled = true;
+               ctx.imageSmoothingQuality = 'high';
+               ctx.drawImage(img, 0, 0, 64, 64);
+               canvas.toBlob((blob) => {
+                  URL.revokeObjectURL(img.src);
+                  resolve(blob);
+               }, 'image/png');
+            } else {
+               URL.revokeObjectURL(img.src);
+               resolve(null);
+            }
          };
          img.onerror = () => {
             URL.revokeObjectURL(img.src);
-            resolve({ w: 0, h: 0 });
+            resolve(null);
          };
       });
 
-      if (dimensions.w !== 0 && (dimensions.w !== 64 || dimensions.h !== 64)) {
-         const proceed = await showConfirm(
-            `Important: Minecraft requires exactly 64x64 images for the Multiplayer menu. Your image is ${dimensions.w}x${dimensions.h}. Continue anyway?`,
-            "Icon Resolution Warning"
-         );
-         if (!proceed) {
-            e.target.value = "";
-            return;
-         }
+      if (!resizedBlob) {
+         await showAlert("Failed to process image. Please try another file.", "Processing Error");
+         return;
       }
 
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', resizedBlob, 'icon.png');
 
       try {
-         const res = await fetch(`/api/instances/${contextMenu.instanceId}/icon`, {
+         const res = await fetch(`/api/instances/${instanceId}/icon`, {
             method: 'POST',
             body: formData
          });
+         
          if (res.ok) {
-            await fetchInstances();
+            // Close context menu first
             setContextMenu(null);
-            // Reset input so it can be used again for same file?
+            // Refresh instances to update icon_url in state
+            await fetchInstances();
+            // Clear input
             e.target.value = '';
          } else {
-            await showAlert("Failed to upload icon. Ensure it is a valid image.", "Upload Error");
+            const errData = await res.json().catch(() => ({}));
+            await showAlert(`Server error: ${errData.detail || 'Failed to upload icon'}`, "Upload Error");
          }
       } catch (err) {
-         await showAlert("Error uploading icon to server.", "Network Error");
+         await showAlert("Network error while uploading icon.", "Error");
       }
    };
 
