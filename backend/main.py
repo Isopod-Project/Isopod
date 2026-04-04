@@ -174,6 +174,11 @@ async def get_instance_status(instance_id: str):
             "image": c.image.tags[0] if c.image.tags else c.image.id,    
         })
 
+    # Gather all connection addresses
+    public_ip = await get_public_ip()
+    local_ips = get_local_ips()
+    all_ips = list(dict.fromkeys(local_ips + ([public_ip] if public_ip else [])))
+
     return {
         "instance_id": instance_id,
         "is_running": is_running,
@@ -181,6 +186,7 @@ async def get_instance_status(instance_id: str):
         "version": version,
         "port": port,
         "public_ip": public_ip,
+        "all_ips": all_ips,
         "last_online": last_online,
         "containers": container_info
     }
@@ -260,6 +266,12 @@ VERSION_MANIFEST_URL = "https://launchermeta.mojang.com/mc/game/version_manifest
 cached_versions = {"time": 0, "data": None}
 # Cache for mod metadata to avoid hitting APIs too hard
 mod_metadata_cache = {} 
+import socket
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
 cached_public_ip = {"time": 0, "ip": None}
 
 async def get_public_ip():
@@ -270,13 +282,44 @@ async def get_public_ip():
     
     try:
         async with httpx.AsyncClient() as client:
-            res = await client.get("https://api64.ipify.org?format=json")
+            res = await client.get("https://api64.ipify.org?format=json", timeout=5)
             data = res.json()
             cached_public_ip = {"time": now, "ip": data["ip"]}
             return data["ip"]
     except Exception as e:
         print(f"Error fetching public IP: {e}")
-        return "127.0.0.1" # Fallback
+        return None
+
+def get_local_ips():
+    """Returns a list of all non-loopback IPv4 addresses (LAN, VPN, Tailscale, etc.)"""
+    ips = []
+    try:
+        # 1. Best guess for primary local IP
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
+        try:
+            s.connect(('1.1.1.1', 1))
+            best_local = s.getsockname()[0]
+            if best_local not in ips:
+                ips.append(best_local)
+        finally:
+            s.close()
+
+        # 2. Add other interfaces (Tailscale, other networks)
+        if psutil:
+            for interface, addrs in psutil.net_if_addrs().items():
+                for addr in addrs:
+                    if addr.family == socket.AF_INET:
+                        ip = addr.address
+                        if not ip.startswith("127.") and ip not in ips:
+                            # Prioritize Tailscale (100.) or common LAN
+                            if ip.startswith("100.") or ip.startswith("192.") or ip.startswith("10."):
+                                ips.insert(0, ip) 
+                            else:
+                                ips.append(ip)
+    except Exception:
+        pass
+    return ips
 
 @app.get("/api/meta/versions")
 async def get_mc_versions():
