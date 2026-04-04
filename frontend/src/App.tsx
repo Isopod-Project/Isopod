@@ -7,6 +7,7 @@ interface Instance {
    path: string;
    has_compose: boolean;
    status: string; // "Valid"
+   icon_url?: string;
 }
 
 interface InstanceStatus {
@@ -29,6 +30,7 @@ export default function App() {
 
    // Context Menu state
    const [contextMenu, setContextMenu] = useState<{ x: number; y: number; instanceId: string } | null>(null);
+   const iconInputRef = useRef<HTMLInputElement>(null);
 
    // Dialog state
    const [dialog, setDialog] = useState<{
@@ -199,6 +201,31 @@ export default function App() {
          } catch (e) {
             await showAlert("Error renaming instance", "Error");
          }
+      }
+   };
+
+   const handleIconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file || !contextMenu?.instanceId) return;
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+         const res = await fetch(`/api/instances/${contextMenu.instanceId}/icon`, {
+            method: 'POST',
+            body: formData
+         });
+         if (res.ok) {
+            await fetchInstances();
+            setContextMenu(null);
+            // Reset input so it can be used again for same file?
+            e.target.value = '';
+         } else {
+            await showAlert("Failed to upload icon. Ensure it is a valid image.", "Upload Error");
+         }
+      } catch (err) {
+         await showAlert("Error uploading icon to server.", "Network Error");
       }
    };
 
@@ -945,8 +972,12 @@ export default function App() {
                                        : 'hover:bg-[#404040] border border-transparent'
                                     }`}
                               >
-                                 <div className="relative mb-3 flex items-center justify-center w-[72px] h-[72px] bg-[#3B3B3B] rounded shadow-inner">
-                                    <Gamepad2 className={`w-10 h-10 ${isRunning ? (statuses[inst.id]?.is_ready ? 'text-emerald-400' : 'text-amber-400') : 'text-[#878787]'}`} />
+                                 <div className="relative mb-3 flex items-center justify-center w-[72px] h-[72px] bg-[#3B3B3B] rounded shadow-inner overflow-hidden">
+                                    {inst.icon_url ? (
+                                       <img src={`${inst.icon_url}?v=${Date.now()}`} alt="" className="w-full h-full object-cover" />
+                                    ) : (
+                                       <Gamepad2 className={`w-10 h-10 ${isRunning ? (statuses[inst.id]?.is_ready ? 'text-emerald-400' : 'text-amber-400') : 'text-[#878787]'}`} />
+                                    )}
                                     <div className={`absolute bottom-1 right-1 w-3 h-3 rounded-full border-2 border-[#3B3B3B] ${isRunning
                                           ? (statuses[inst.id]?.is_ready ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse')
                                           : 'bg-neutral-500'
@@ -974,8 +1005,12 @@ export default function App() {
                      >
                         <X className="w-3.5 h-3.5" />
                      </button>
-                     <div className="w-24 h-24 bg-[#3B3B3B] rounded-lg shadow-inner flex flex-col items-center justify-center mb-4 relative">
-                        <Gamepad2 className="w-12 h-12 text-[#878787]" />
+                     <div className="w-24 h-24 bg-[#3B3B3B] rounded-lg shadow-inner flex flex-col items-center justify-center mb-4 relative overflow-hidden">
+                        {selectedInstance.icon_url ? (
+                           <img src={`${selectedInstance.icon_url}?v=${Date.now()}`} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                           <Gamepad2 className="w-12 h-12 text-[#878787]" />
+                        )}
                         {selectedStatus?.is_running && (
                            <span className="absolute top-2 right-2 flex h-3 w-3">
                               <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${selectedStatus?.is_ready ? 'bg-emerald-400' : 'bg-amber-400'} opacity-75`}></span>
@@ -2728,8 +2763,11 @@ export default function App() {
                >
                   <Pencil className="w-4 h-4" /> Rename
                </button>
-               <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
-                  <span className="w-4 h-4 bg-neutral-700 rounded-sm flex items-center justify-center text-[8px] font-bold">F0</span> Change Icon
+               <button 
+                  onClick={() => { iconInputRef.current?.click(); }}
+                  className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left"
+               >
+                  <Gamepad2 className="w-4 h-4" /> Change Icon
                </button>
 
                <div className="h-px bg-[#3A3A3A] my-1"></div>
@@ -2861,6 +2899,13 @@ export default function App() {
                </div>
             </div>
          )}
+         <input 
+            type="file" 
+            ref={iconInputRef} 
+            className="hidden" 
+            accept="image/*" 
+            onChange={handleIconUpload} 
+         />
       </div>
 
    );

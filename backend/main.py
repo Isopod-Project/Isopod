@@ -2,10 +2,10 @@ import os
 import subprocess
 import shutil
 import re
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import docker
@@ -74,6 +74,7 @@ class Instance(BaseModel):
     path: str
     has_compose: bool
     status: str
+    icon_url: Optional[str] = None
 
 def get_instance_path(instance_id: str) -> str:
     # Basic sanitize
@@ -97,12 +98,14 @@ def list_instances():
             has_compose = os.path.exists(compose_path)
             
             if has_compose:
+                icon_path = os.path.join(entry.path, "icon.png")
                 instances.append(Instance(
                     id=entry.name,
                     name=entry.name.replace("-", " ").title(),
                     path=entry.path,
                     has_compose=has_compose,
-                    status="Valid"
+                    status="Valid",
+                    icon_url=f"/api/instances/{entry.name}/icon" if os.path.exists(icon_path) else None
                 ))
                 
     return instances
@@ -246,6 +249,35 @@ def update_config(instance_id: str, new_config: InstanceConfig):
         yaml.dump(config, f, default_flow_style=False)
         
     return {"message": "Config updated"}
+
+@app.post("/api/instances/{instance_id}/icon")
+async def upload_icon(instance_id: str, file: UploadFile = File(...)):
+    """Upload an icon for the instance. Saves for Isopod UI and server-icon.png for Minecraft."""
+    path = get_instance_path(instance_id)
+    # Save as icon.png in root (for Isopod)
+    icon_path = os.path.join(path, "icon.png")
+    with open(icon_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    # Save as server-icon.png in data/ if it exists (for Minecraft)
+    data_dir = os.path.join(path, "data")
+    if os.path.exists(data_dir):
+        # We need to seek back to start of file to copy again
+        file.file.seek(0)
+        mc_icon_path = os.path.join(data_dir, "server-icon.png")
+        with open(mc_icon_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+    return {"message": "Icon updated", "icon_url": f"/api/instances/{instance_id}/icon"}
+
+@app.get("/api/instances/{instance_id}/icon")
+def get_icon(instance_id: str):
+    """Get the instance icon."""
+    path = get_instance_path(instance_id)
+    icon_path = os.path.join(path, "icon.png")
+    if os.path.exists(icon_path):
+        return FileResponse(icon_path)
+    raise HTTPException(status_code=404, detail="Icon not found")
 
 # Meta & Mod Proxy Endpoints
 VERSION_MANIFEST_URL = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
