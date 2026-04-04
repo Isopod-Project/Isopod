@@ -463,6 +463,27 @@ export default function App() {
       }
    };
 
+   const handleDuplicate = async (id: string) => {
+      try {
+         const res = await fetch(`/api/instances/${id}/duplicate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({})
+         });
+         if (res.ok) {
+            const data = await res.json();
+            await fetchInstances();
+            setSelectedId(data.id);
+            await showAlert("Instance duplicated successfully.", "Success");
+         } else {
+            const err = await res.json().catch(() => ({}));
+            await showAlert(`Failed to duplicate: ${err.detail || 'Server error'}`, "Error");
+         }
+      } catch (err) {
+         await showAlert("Error duplicating instance", "Error");
+      }
+   };
+
    const fetchLogs = async (id: string) => {
       setIsLogsLoading(true);
       try {
@@ -2891,8 +2912,11 @@ export default function App() {
                   </div>
                   <ChevronRight className="w-3.5 h-3.5 opacity-50" />
                </button>
-               <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
-                  <Copy className="w-4 h-4" /> Copy...
+               <button 
+                  onClick={() => { handleDuplicate(contextMenu.instanceId); setContextMenu(null); }}
+                  className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left"
+               >
+                  <Copy className="w-4 h-4" /> Copy
                </button>
                <button
                   onClick={() => { handleDelete(contextMenu.instanceId); setContextMenu(null); }}

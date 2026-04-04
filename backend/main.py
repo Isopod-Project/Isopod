@@ -65,6 +65,9 @@ class CreateInstanceRequest(BaseModel):
 class RenameInstanceRequest(BaseModel):
     name: str
 
+class DuplicateInstanceRequest(BaseModel):
+    name: Optional[str] = None
+
 class CommandRequest(BaseModel):
     command: str
 
@@ -628,6 +631,87 @@ def rename_instance(instance_id: str, req: RenameInstanceRequest):
             print(f"Error updating compose after rename: {e}")
             
     return {"id": new_slug, "message": "Instance renamed"}
+
+@app.post("/api/instances/{instance_id}/duplicate")
+def duplicate_instance(instance_id: str, req: DuplicateInstanceRequest):
+    old_path = get_instance_path(instance_id)
+    
+    # Use provided name or default to "Copy of <original>"
+    original_display_name = instance_id.replace('-', ' ').title()
+    new_display_name = req.name or f"Copy of {original_display_name}"
+    
+    new_slug = generate_slug(new_display_name)
+    base_slug = new_slug
+    counter = 1
+    while os.path.exists(os.path.join(SERVERS_DIR, new_slug)):
+        new_slug = f"{base_slug}-{counter}"
+        counter += 1
+        
+    new_path = os.path.join(SERVERS_DIR, new_slug)
+    
+    # Clone the entire directory
+    try:
+        shutil.copytree(old_path, new_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to copy directory: {str(e)}")
+        
+    # Update docker-compose.yml to avoid conflicts
+    compose_path = os.path.join(new_path, "docker-compose.yml")
+    if os.path.exists(compose_path):
+        try:
+            with open(compose_path, "r") as f:
+                config = yaml.safe_load(f)
+            
+            services = config.get("services", {})
+            if services:
+                # Find all currently used host ports to pick a new one
+                used_ports = set()
+                for entry in os.scandir(SERVERS_DIR):
+                    if entry.is_dir() and entry.name != new_slug:
+                        try:
+                            other_compose = os.path.join(entry.path, "docker-compose.yml")
+                            if os.path.exists(other_compose):
+                                with open(other_compose, 'r') as of:
+                                    odata = yaml.safe_load(of)
+                                    for _, oservice in odata.get("services", {}).items():
+                                        for p in oservice.get("ports", []):
+                                            used_ports.add(int(str(p).split(':')[0]))
+                        except: pass
+
+                # Pick the first service for container rename
+                service_name = "mc" if "mc" in services else list(services.keys())[0]
+                service = services[service_name]
+                service["container_name"] = f"isopod_{new_slug}"
+                
+                # Update ports
+                if "ports" in service:
+                    try:
+                        p = service["ports"][0] or "25565:25565"
+                        current_port = int(str(p).split(':')[0])
+                        new_port = current_port
+                        # Try to find a new free port
+                        while new_port in used_ports or new_port < 1024:
+                            new_port += 1
+                        service["ports"] = [f"{new_port}:25565"]
+                    except: pass
+                
+                # Update MOTD in environment
+                env = service.get("environment", [])
+                if isinstance(env, list):
+                    for i, item in enumerate(env):
+                        if item.startswith("MOTD="):
+                            env[i] = f"MOTD={new_display_name} Hosted by Isopod"
+                            break
+                elif isinstance(env, dict):
+                    if "MOTD" in env:
+                        env["MOTD"] = f"{new_display_name} Hosted by Isopod"
+            
+            with open(compose_path, "w") as f:
+                yaml.dump(config, f, default_flow_style=False)
+        except Exception as e:
+            print(f"Error updating compose after duplication: {e}")
+            
+    return {"id": new_slug, "message": "Instance duplicated"}
 
 @app.get("/api/instances/{instance_id}/logs")
 def get_instance_logs(instance_id: str, tail: int = 200):
