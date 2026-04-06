@@ -61,6 +61,12 @@ class CreateInstanceRequest(BaseModel):
     loader_version: Optional[str] = "latest"
     modrinth_id: Optional[str] = None
     cf_id: Optional[str] = None
+    # World settings
+    seed: Optional[str] = None
+    level_type: Optional[str] = "DEFAULT"
+    difficulty: Optional[str] = "easy"
+    gamemode: Optional[str] = "survival"
+    generate_structures: Optional[bool] = True
 
 class RenameInstanceRequest(BaseModel):
     name: str
@@ -502,7 +508,12 @@ def create_instance(req: CreateInstanceRequest):
                     f"VERSION={req.version or 'latest'}",
                     f"MOTD={req.name} Hosted by Isopod",
                     "ENABLE_RCON=true",
-                    "RCON_PASSWORD=isopod"
+                    "RCON_PASSWORD=isopod",
+                    f"SEED={req.seed or ''}",
+                    f"LEVEL_TYPE={req.level_type or 'DEFAULT'}",
+                    f"DIFFICULTY={req.difficulty or 'easy'}",
+                    f"MODE={req.gamemode or 'survival'}",
+                    f"GENERATE_STRUCTURES={'true' if req.generate_structures else 'false'}"
                 ],
                 "volumes": ["./data:/data"],
                 "restart": "unless-stopped"

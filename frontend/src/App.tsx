@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe } from "lucide-react";
 
 interface Instance {
   id: string;
@@ -64,7 +64,7 @@ export default function App() {
   const [isCreating, setIsCreating] = useState(false);
   
   // Prism-like Add Modal States
-  const [addTab, setAddTab] = useState<"custom" | "import" | "modrinth" | "curseforge">("custom");
+  const [addTab, setAddTab] = useState<"custom" | "import" | "modrinth" | "curseforge" | "world">("custom");
   const [selectedAddVersion, setSelectedAddVersion] = useState("latest");
   const [selectedAddLoader, setSelectedAddLoader] = useState("VANILLA");
   const [searchModpacks, setSearchModpacks] = useState("");
@@ -81,6 +81,12 @@ export default function App() {
   const [loaderVersions, setLoaderVersions] = useState<any[]>([]);
   const [isLoaderLoading, setIsLoaderLoading] = useState(false);
   const [selectedAddLoaderVersion, setSelectedAddLoaderVersion] = useState("latest");
+  // World Settings
+  const [newSeed, setNewSeed] = useState("");
+  const [newLevelType, setNewLevelType] = useState("DEFAULT");
+  const [newDifficulty, setNewDifficulty] = useState("easy");
+  const [newGamemode, setNewGamemode] = useState("survival");
+  const [newGenerateStructures, setNewGenerateStructures] = useState(true);
   
   // Edit Modal states
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -311,7 +317,12 @@ export default function App() {
         version: selectedAddVersion === 'latest' ? '' : selectedAddVersion,
         loader_version: selectedAddLoaderVersion,
         modrinth_id: addTab === 'modrinth' && selectedModpack ? selectedModpack.id : null,
-        cf_id: addTab === 'curseforge' && selectedModpack ? selectedModpack.id : null
+        cf_id: addTab === 'curseforge' && selectedModpack ? selectedModpack.id : null,
+        seed: newSeed,
+        level_type: newLevelType,
+        difficulty: newDifficulty,
+        gamemode: newGamemode,
+        generate_structures: newGenerateStructures
       };
 
       const res = await fetch("/api/instances", {
@@ -331,6 +342,11 @@ export default function App() {
       setSelectedAddVersion("latest");
       setSelectedAddLoader("VANILLA");
       setSelectedAddLoaderVersion("latest");
+      setNewSeed("");
+      setNewLevelType("DEFAULT");
+      setNewDifficulty("easy");
+      setNewGamemode("survival");
+      setNewGenerateStructures(true);
       
       fetchInstances();
     } catch (e) {
@@ -1090,6 +1106,7 @@ export default function App() {
                <div className="w-48 bg-[#1E1E1E] border-r border-[#323232] p-2 flex flex-col gap-1">
                   {[
                      { id: "custom", name: "Custom", icon: Gamepad2 },
+                     { id: "world", name: "World", icon: Globe },
                      { id: "import", name: "Import", icon: Database },
                      { id: "atlauncher", name: "ATLauncher", icon: Box },
                      { id: "curseforge", name: "CurseForge", icon: Settings },
@@ -1283,6 +1300,96 @@ export default function App() {
                      </div>
                   )}
 
+                  {addTab === "world" && (
+                     <div className="flex flex-col h-full p-8 overflow-auto animate-in fade-in slide-in-from-right-4 duration-300">
+                        <div className="max-w-xl mx-auto w-full space-y-8">
+                           <div>
+                              <h3 className="text-xl font-bold mb-2 flex items-center gap-2">
+                                 <Globe className="text-[#3E8ED0]" /> World Configuration
+                              </h3>
+                              <p className="text-neutral-500 text-sm">Fine-tune your world generation and gameplay rules.</p>
+                           </div>
+
+                           <div className="space-y-6">
+                              <div className="space-y-2">
+                                 <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">World Seed</label>
+                                 <input 
+                                    type="text" 
+                                    value={newSeed}
+                                    onChange={(e) => setNewSeed(e.target.value)}
+                                    placeholder="Leave empty for random seed..."
+                                    className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-[#3E8ED0] text-sm font-mono text-white"
+                                 />
+                                 <p className="text-[10px] text-neutral-600 italic">Supports text and numbers. Minecraft will hash text seeds.</p>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-6">
+                                 <div className="space-y-2">
+                                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Level Type</label>
+                                    <select 
+                                       value={newLevelType}
+                                       onChange={(e) => setNewLevelType(e.target.value)}
+                                       className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-[#3E8ED0] text-sm text-neutral-300"
+                                    >
+                                       <option value="DEFAULT">Default</option>
+                                       <option value="FLAT">Flat</option>
+                                       <option value="LARGEBIOMES">Large Biomes</option>
+                                       <option value="AMPLIFIED">Amplified</option>
+                                       <option value="BUFFET">Buffet</option>
+                                    </select>
+                                 </div>
+                                 <div className="space-y-2">
+                                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Difficulty</label>
+                                    <select 
+                                       value={newDifficulty}
+                                       onChange={(e) => setNewDifficulty(e.target.value)}
+                                       className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-[#3E8ED0] text-sm text-neutral-300"
+                                    >
+                                       <option value="peaceful">Peaceful</option>
+                                       <option value="easy">Easy</option>
+                                       <option value="normal">Normal</option>
+                                       <option value="hard">Hard</option>
+                                    </select>
+                                 </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-6">
+                                 <div className="space-y-2">
+                                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Game Mode</label>
+                                    <select 
+                                       value={newGamemode}
+                                       onChange={(e) => setNewGamemode(e.target.value)}
+                                       className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-[#3E8ED0] text-sm text-neutral-300"
+                                    >
+                                       <option value="survival">Survival</option>
+                                       <option value="creative">Creative</option>
+                                       <option value="adventure">Adventure</option>
+                                       <option value="spectator">Spectator</option>
+                                    </select>
+                                 </div>
+                                 <div className="space-y-2">
+                                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Structures</label>
+                                    <button 
+                                       onClick={() => setNewGenerateStructures(!newGenerateStructures)}
+                                       className={`w-full flex items-center justify-between p-3 rounded-lg border transition-all ${newGenerateStructures ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-red-500/10 border-red-500/30 text-red-400'}`}
+                                    >
+                                       <span className="text-sm font-bold">{newGenerateStructures ? 'Generate' : 'None'}</span>
+                                       {newGenerateStructures ? <Check className="w-4 h-4" /> : <X className="w-4 h-4" />}
+                                    </button>
+                                 </div>
+                              </div>
+                           </div>
+
+                           <div className="bg-[#3E8ED0]/5 border border-[#3E8ED0]/20 p-5 rounded-xl flex gap-4 items-start shadow-sm">
+                              <AlertCircle className="w-5 h-5 text-[#3E8ED0] flex-shrink-0 mt-0.5" />
+                              <p className="text-xs text-neutral-400 leading-relaxed">
+                                 These settings apply to the world created when the server first starts. If you change them later, they may only affect newly generated chunks or require a world reset.
+                              </p>
+                           </div>
+                        </div>
+                     </div>
+                  )}
+
                   {(addTab === "modrinth" || addTab === "curseforge") && (
                      <div className="flex flex-col h-full bg-[#1E1E1E]/50">
                         <div className="p-4 bg-[#242424] border-b border-[#323232] flex gap-3">
@@ -1427,6 +1534,13 @@ export default function App() {
                   >
                     <Folder className="w-4 h-4" />
                     Files
+                  </button>
+                  <button 
+                    onClick={() => setEditTab("world")}
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "world" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                  >
+                    <Globe className="w-4 h-4" />
+                    World
                   </button>
                   <button 
                     onClick={() => setEditTab("mods")}
@@ -1620,6 +1734,121 @@ export default function App() {
                     </div>
                 )}
 
+                {editTab === "world" && (
+                   <div className="flex flex-col h-full p-10 overflow-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
+                      <div className="max-w-2xl mx-auto w-full space-y-10">
+                         <div>
+                            <div className="flex items-center gap-3 mb-2">
+                               <Globe className="w-8 h-8 text-[#3E8ED0]" />
+                               <h3 className="text-2xl font-bold text-white">World Settings</h3>
+                            </div>
+                            <p className="text-neutral-500 text-sm">Configure your world generation and core gameplay settings. 
+                            <span className="text-amber-500/80 ml-1 font-medium">Note: Most changes require a server restart.</span></p>
+                         </div>
+
+                         <div className="grid grid-cols-1 gap-8">
+                            <div className="space-y-3">
+                               <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">World Seed</label>
+                               <div className="relative group">
+                                  <input 
+                                     type="text" 
+                                     value={config.environment["SEED"] || ""}
+                                     onChange={(e) => setConfig(prev => ({
+                                        ...prev,
+                                        environment: { ...prev.environment, SEED: e.target.value }
+                                     }))}
+                                     placeholder="Random Seed"
+                                     className="w-full bg-[#0F0F0F] border border-[#333] p-4 rounded-xl focus:outline-none focus:border-[#3E8ED0] text-sm font-mono text-white transition-all group-hover:border-[#444]"
+                                  />
+                               </div>
+                               <p className="text-[10px] text-neutral-600 pl-1 italic">Used for terrain generation. Changing this won't alter already generated terrain.</p>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-8">
+                               <div className="space-y-3">
+                                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">Level Type</label>
+                                  <select 
+                                     value={config.environment["LEVEL_TYPE"] || "DEFAULT"}
+                                     onChange={(e) => setConfig(prev => ({
+                                        ...prev,
+                                        environment: { ...prev.environment, LEVEL_TYPE: e.target.value }
+                                     }))}
+                                     className="w-full bg-[#0F0F0F] border border-[#333] p-4 rounded-xl focus:outline-none focus:border-[#3E8ED0] text-sm text-neutral-300 appearance-none transition-all hover:border-[#444]"
+                                  >
+                                     <option value="DEFAULT">Default</option>
+                                     <option value="FLAT">Flat</option>
+                                     <option value="LARGEBIOMES">Large Biomes</option>
+                                     <option value="AMPLIFIED">Amplified</option>
+                                     <option value="BUFFET">Buffet</option>
+                                  </select>
+                               </div>
+                               <div className="space-y-3">
+                                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">Difficulty</label>
+                                  <select 
+                                     value={config.environment["DIFFICULTY"] || "easy"}
+                                     onChange={(e) => setConfig(prev => ({
+                                        ...prev,
+                                        environment: { ...prev.environment, DIFFICULTY: e.target.value }
+                                     }))}
+                                     className="w-full bg-[#0F0F0F] border border-[#333] p-4 rounded-xl focus:outline-none focus:border-[#3E8ED0] text-sm text-neutral-300 appearance-none transition-all hover:border-[#444]"
+                                  >
+                                     <option value="peaceful">Peaceful</option>
+                                     <option value="easy">Easy</option>
+                                     <option value="normal">Normal</option>
+                                     <option value="hard">Hard</option>
+                                  </select>
+                               </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-8">
+                               <div className="space-y-3">
+                                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">Game Mode</label>
+                                  <select 
+                                     value={config.environment["MODE"] || "survival"}
+                                     onChange={(e) => setConfig(prev => ({
+                                        ...prev,
+                                        environment: { ...prev.environment, MODE: e.target.value }
+                                     }))}
+                                     className="w-full bg-[#0F0F0F] border border-[#333] p-4 rounded-xl focus:outline-none focus:border-[#3E8ED0] text-sm text-neutral-300 appearance-none transition-all hover:border-[#444]"
+                                  >
+                                     <option value="survival">Survival</option>
+                                     <option value="creative">Creative</option>
+                                     <option value="adventure">Adventure</option>
+                                     <option value="spectator">Spectator</option>
+                                  </select>
+                               </div>
+                               <div className="space-y-3">
+                                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">Structures</label>
+                                  <button 
+                                     onClick={() => setConfig(prev => ({
+                                        ...prev,
+                                        environment: { ...prev.environment, GENERATE_STRUCTURES: prev.environment["GENERATE_STRUCTURES"] === "false" ? "true" : "false" }
+                                     }))}
+                                     className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${config.environment["GENERATE_STRUCTURES"] !== "false" ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-400' : 'bg-red-500/5 border-red-500/20 text-red-400'}`}
+                                  >
+                                     <span className="text-sm font-bold uppercase tracking-wider">{config.environment["GENERATE_STRUCTURES"] !== "false" ? 'Enabled' : 'Disabled'}</span>
+                                     {config.environment["GENERATE_STRUCTURES"] !== "false" ? <Check className="w-5 h-5" /> : <X className="w-5 h-5" />}
+                                  </button>
+                               </div>
+                            </div>
+                         </div>
+
+                         <div className="bg-[#2D2D2D] border border-[#3A3A3A] p-6 rounded-2xl flex gap-5 items-start shadow-xl">
+                            <div className="p-2 bg-amber-500/10 rounded-lg text-amber-500">
+                               <AlertCircle className="w-6 h-6" />
+                            </div>
+                            <div className="space-y-2">
+                               <h4 className="font-bold text-neutral-200">World Management Info</h4>
+                               <p className="text-xs text-neutral-500 leading-relaxed">
+                                  Seed and Level Type only take effect during initial world creation. To generate a completely 
+                                  new world with these settings, you may need to delete the <span className="font-mono text-neutral-400 bg-black/30 px-1 rounded">world</span> folder 
+                                  in the instance files.
+                               </p>
+                            </div>
+                         </div>
+                      </div>
+                   </div>
+                )}
                  {editTab === "mods" && (
                     <div className="flex flex-col h-full overflow-hidden bg-[#1E1E1E]">
                        {modListView === "list" ? (
