@@ -64,7 +64,8 @@ export default function App() {
   const [isCreating, setIsCreating] = useState(false);
   
   // Prism-like Add Modal States
-  const [addTab, setAddTab] = useState<"custom" | "import" | "modrinth" | "curseforge" | "world">("custom");
+  const [addStep, setAddStep] = useState<number>(1);
+  const [addTab, setAddTab] = useState<"custom" | "import" | "modrinth" | "curseforge" | "atlauncher" | "technic" | "world">("custom");
   const [selectedAddVersion, setSelectedAddVersion] = useState("latest");
   const [selectedAddLoader, setSelectedAddLoader] = useState("VANILLA");
   const [searchModpacks, setSearchModpacks] = useState("");
@@ -858,13 +859,14 @@ export default function App() {
           </div>
           <button 
             onClick={() => {
-               setIsAddModalOpen(true);
-               setAddTab("custom");
-               setNewName("");
-               setSelectedAddVersion("latest");
-               setSelectedAddLoader("VANILLA");
-               setSelectedModpack(null);
-            }}
+                setIsAddModalOpen(true);
+                setAddStep(1);
+                setAddTab("custom");
+                setNewName("");
+                setSelectedAddVersion("latest");
+                setSelectedAddLoader("VANILLA");
+                setSelectedModpack(null);
+             }}
             className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium"
           >
             <Plus className="w-4 h-4 text-emerald-400" />
@@ -1102,234 +1104,331 @@ export default function App() {
             </div>
 
             <div className="flex-1 flex overflow-hidden">
-               {/* Sidebar */}
-               <div className="w-48 bg-[#1E1E1E] border-r border-[#323232] p-2 flex flex-col gap-1">
-                  {[
-                     { id: "custom", name: "Custom", icon: Gamepad2 },
-                     { id: "world", name: "World", icon: Globe },
-                     { id: "import", name: "Import", icon: Database },
-                     { id: "atlauncher", name: "ATLauncher", icon: Box },
-                     { id: "curseforge", name: "CurseForge", icon: Settings },
-                     { id: "modrinth", name: "Modrinth", icon: RefreshCw },
-                     { id: "technic", name: "Technic", icon: Layers }
-                  ].map((tab) => (
-                     <button 
-                        key={tab.id}
-                        onClick={() => {
-                           setAddTab(tab.id as any);
-                           if (tab.id === 'modrinth' || tab.id === 'curseforge') {
-                              handleModpackSearch("", tab.id);
-                           }
-                        }}
-                        className={`flex items-center gap-3 px-3 py-2 rounded text-sm font-medium transition-all ${addTab === tab.id ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
-                     >
-                        <tab.icon className="w-4 h-4" />
-                        {tab.name}
-                     </button>
-                  ))}
-               </div>
+               {/* Sidebar - Only show in Step 1 */}
+               {addStep === 1 && (
+                  <div className="w-48 bg-[#1E1E1E] border-r border-[#323232] p-2 flex flex-col gap-1">
+                     <div className="px-3 py-2 text-[10px] font-bold text-neutral-600 uppercase tracking-widest mb-1">Server Type</div>
+                     {[
+                        { id: "custom", name: "Custom", icon: Gamepad2 },
+                        { id: "import", name: "Import", icon: Database },
+                        { id: "atlauncher", name: "ATLauncher", icon: Box },
+                        { id: "curseforge", name: "CurseForge", icon: Settings },
+                        { id: "modrinth", name: "Modrinth", icon: RefreshCw },
+                        { id: "technic", name: "Technic", icon: Layers }
+                     ].map((tab) => (
+                        <button 
+                           key={tab.id}
+                           onClick={() => {
+                              setAddTab(tab.id as any);
+                              if (tab.id === 'modrinth' || tab.id === 'curseforge') {
+                                 handleModpackSearch("", tab.id);
+                              }
+                           }}
+                           className={`flex items-center gap-3 px-3 py-2 rounded text-sm font-medium transition-all ${addTab === tab.id ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                        >
+                           <tab.icon className="w-4 h-4" />
+                           {tab.name}
+                        </button>
+                     ))}
+                  </div>
+               )}
+
+               {/* Step Indicator Sidebar for Step 2 */}
+               {addStep === 2 && (
+                  <div className="w-48 bg-[#1E1E1E] border-r border-[#323232] p-2 flex flex-col gap-1">
+                     <div className="px-3 py-2 text-[10px] font-bold text-neutral-600 uppercase tracking-widest mb-1">Configuration</div>
+                     <div className="flex items-center gap-3 px-3 py-2 rounded text-sm font-medium text-neutral-500 opacity-60">
+                        <Check className="w-4 h-4 text-emerald-500" />
+                        Server Type
+                     </div>
+                     <div className="flex items-center gap-3 px-3 py-2 rounded text-sm font-medium bg-[#3E8ED0] text-white shadow-lg">
+                        <Globe className="w-4 h-4" />
+                        World Settings
+                     </div>
+                  </div>
+               )}
 
                {/* Content Area */}
                <div className="flex-1 bg-[#1A1A1A] flex flex-col overflow-hidden">
-                  {addTab === "custom" && (
-                     <div className="flex flex-col h-full overflow-hidden">
-                        {/* Top Half: Minecraft Version Selection */}
-                        <div className="flex-1 flex flex-col p-4 overflow-hidden border-b border-[#323232]">
-                           <div className="flex items-center justify-between mb-3">
-                              <h4 className="text-sm font-bold text-neutral-300 flex items-center gap-2">
-                                 <Layers className="w-4 h-4 text-[#3E8ED0]" />
-                                 Minecraft Version
-                              </h4>
-                              <div className="flex items-center gap-4">
-                                 <div className="flex items-center gap-4 mr-2">
-                                    {(['Releases', 'Snapshots', 'Betas', 'Alphas'] as const).map(f => (
-                                       <label key={f} className="flex items-center gap-2 text-xs text-neutral-400 hover:text-white cursor-pointer">
+                  {addStep === 1 ? (
+                     <>
+                        {addTab === "custom" && (
+                           <div className="flex flex-col h-full overflow-hidden">
+                              {/* Top Half: Minecraft Version Selection */}
+                              <div className="flex-1 flex flex-col p-4 overflow-hidden border-b border-[#323232]">
+                                 <div className="flex items-center justify-between mb-3">
+                                    <h4 className="text-sm font-bold text-neutral-300 flex items-center gap-2">
+                                       <Layers className="w-4 h-4 text-[#3E8ED0]" />
+                                       Minecraft Version
+                                    </h4>
+                                    <div className="flex items-center gap-4">
+                                       <div className="flex items-center gap-4 mr-2">
+                                          {(['Releases', 'Snapshots', 'Betas', 'Alphas'] as const).map(f => (
+                                             <label key={f} className="flex items-center gap-2 text-xs text-neutral-400 hover:text-white cursor-pointer">
+                                                <input 
+                                                   type="checkbox" 
+                                                   checked={versionFilters[f]} 
+                                                   onChange={(e) => setVersionFilters(prev => ({ ...prev, [f]: e.target.checked }))}
+                                                   className="rounded bg-[#141414] border-[#333] accent-[#3E8ED0]" 
+                                                />
+                                                {f}
+                                             </label>
+                                          ))}
+                                       </div>
+                                       <div className="relative w-48">
+                                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-neutral-600" />
                                           <input 
-                                             type="checkbox" 
-                                             checked={versionFilters[f]} 
-                                             onChange={(e) => setVersionFilters(prev => ({ ...prev, [f]: e.target.checked }))}
-                                             className="rounded bg-[#141414] border-[#333] accent-[#3E8ED0]" 
+                                             type="text" 
+                                             placeholder="Search..." 
+                                             className="w-full bg-[#141414] border border-[#333] pl-9 pr-4 py-1.5 rounded text-xs focus:outline-none focus:border-[#3E8ED0]" 
+                                             value={versionSearch}
+                                             onChange={(e) => setVersionSearch(e.target.value)}
                                           />
-                                          {f}
-                                       </label>
-                                    ))}
-                                 </div>
-                                 <div className="relative w-48">
-                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-neutral-600" />
-                                    <input 
-                                       type="text" 
-                                       placeholder="Search..." 
-                                       className="w-full bg-[#141414] border border-[#333] pl-9 pr-4 py-1.5 rounded text-xs focus:outline-none focus:border-[#3E8ED0]" 
-                                       value={versionSearch}
-                                       onChange={(e) => setVersionSearch(e.target.value)}
-                                    />
-                                 </div>
-                                 <button onClick={fetchMcVersions} className="p-1.5 bg-[#323232] hover:bg-[#404040] rounded text-neutral-400 transition-colors">
-                                    <RefreshCw className={`w-3.5 h-3.5 ${isVersionsLoading ? 'animate-spin' : ''}`} />
-                                 </button>
-                              </div>
-                           </div>
-
-                           <div className="flex-1 border border-[#333] bg-[#0F0F0F] rounded overflow-hidden flex flex-col shadow-inner">
-                              <div className="grid grid-cols-3 px-4 py-2 border-b border-[#333] bg-[#242424] text-[10px] font-bold text-neutral-500 uppercase tracking-widest">
-                                 <div>Version</div>
-                                 <div className="text-right">Released</div>
-                                 <div className="text-right">Type</div>
-                              </div>
-                              <div className="flex-1 overflow-auto relative">
-                                 {isVersionsLoading ? (
-                                    <div className="absolute inset-0 flex items-center justify-center bg-[#0F0F0F]/50">
-                                       <div className="flex flex-col items-center gap-3">
-                                          <RefreshCw className="w-8 h-8 text-[#3E8ED0] animate-spin" />
-                                          <span className="text-xs font-medium text-neutral-500 tracking-wide">Fetching versions...</span>
                                        </div>
+                                       <button onClick={fetchMcVersions} className="p-1.5 bg-[#323232] hover:bg-[#404040] rounded text-neutral-400 transition-colors">
+                                          <RefreshCw className={`w-3.5 h-3.5 ${isVersionsLoading ? 'animate-spin' : ''}`} />
+                                       </button>
                                     </div>
-                                 ) : mcVersions.filter(v => {
-                                       if (versionSearch && !v.id.includes(versionSearch)) return false;
-                                       if (v.type === 'release' && versionFilters.Releases) return true;
-                                       if (v.type === 'snapshot' && versionFilters.Snapshots) return true;
-                                       if (v.type === 'old_beta' && versionFilters.Betas) return true;
-                                       if (v.type === 'old_alpha' && versionFilters.Alphas) return true;
-                                       return false;
-                                    }).length === 0 ? (
-                                       <div className="flex flex-col items-center justify-center h-full gap-2 text-neutral-600 opacity-50">
-                                          <Search className="w-6 h-6" />
-                                          <p className="text-xs">No versions match your filters</p>
-                                       </div>
-                                    ) : (
-                                       mcVersions
-                                          .filter(v => {
+                                 </div>
+
+                                 <div className="flex-1 border border-[#333] bg-[#0F0F0F] rounded overflow-hidden flex flex-col shadow-inner">
+                                    <div className="grid grid-cols-3 px-4 py-2 border-b border-[#333] bg-[#242424] text-[10px] font-bold text-neutral-500 uppercase tracking-widest">
+                                       <div>Version</div>
+                                       <div className="text-right">Released</div>
+                                       <div className="text-right">Type</div>
+                                    </div>
+                                    <div className="flex-1 overflow-auto relative">
+                                       {isVersionsLoading ? (
+                                          <div className="absolute inset-0 flex items-center justify-center bg-[#0F0F0F]/50">
+                                             <div className="flex flex-col items-center gap-3">
+                                                <RefreshCw className="w-8 h-8 text-[#3E8ED0] animate-spin" />
+                                                <span className="text-xs font-medium text-neutral-500 tracking-wide">Fetching versions...</span>
+                                             </div>
+                                          </div>
+                                       ) : mcVersions.filter(v => {
                                              if (versionSearch && !v.id.includes(versionSearch)) return false;
                                              if (v.type === 'release' && versionFilters.Releases) return true;
                                              if (v.type === 'snapshot' && versionFilters.Snapshots) return true;
                                              if (v.type === 'old_beta' && versionFilters.Betas) return true;
                                              if (v.type === 'old_alpha' && versionFilters.Alphas) return true;
                                              return false;
-                                          })
-                                          .map((v: any) => (
-                                             <div 
-                                                key={v.id}
-                                                onClick={() => setSelectedAddVersion(v.id)}
-                                                className={`grid grid-cols-3 px-4 py-2 text-sm font-mono cursor-pointer border-b border-[#1A1A1A] last:border-0 transition-all ${selectedAddVersion === v.id ? 'bg-[#3E8ED0]/20 text-[#3E8ED0] border-l-2 border-l-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
-                                             >
-                                                <div className="flex items-center gap-2">
-                                                   {v.type === 'release' && <Check className={`w-3 h-3 ${selectedAddVersion === v.id ? 'text-[#3E8ED0]' : 'text-emerald-500'}`} />}
-                                                   <span>{v.id}</span>
-                                                </div>
-                                                <div className="text-right opacity-50">{new Date(v.releaseTime).toLocaleDateString()}</div>
-                                                <div className="text-right capitalize text-[10px] font-bold opacity-60">{v.type}</div>
+                                          }).length === 0 ? (
+                                             <div className="flex flex-col items-center justify-center h-full gap-2 text-neutral-600 opacity-50">
+                                                <Search className="w-6 h-6" />
+                                                <p className="text-xs">No versions match your filters</p>
                                              </div>
-                                          ))
-                                    )}
-                              </div>
-                           </div>
-                        </div>
-
-                        {/* Bottom Half: Mod Loader selection */}
-                        <div className="flex-1 flex flex-col p-4 bg-[#141414] overflow-hidden">
-                           <div className="flex items-center justify-between mb-3">
-                              <h4 className="text-sm font-bold text-neutral-300 flex items-center gap-2">
-                                 <Cpu className="w-4 h-4 text-[#3E8ED0]" />
-                                 Mod Loader
-                              </h4>
-                              <div className="flex bg-[#1E1E1E] rounded p-1 border border-[#323232] overflow-x-auto max-w-full">
-                                 {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT', 'PAPER', 'SPIGOT'].map(l => (
-                                    <button 
-                                       key={l}
-                                       onClick={() => setSelectedAddLoader(l)}
-                                       className={`px-3 py-1 rounded text-[10px] font-bold transition-all flex-shrink-0 ${selectedAddLoader === l ? 'bg-[#3E8ED0] text-white shadow-md' : 'text-neutral-500 hover:text-white'}`}
-                                    >
-                                       {l}
-                                    </button>
-                                 ))}
-                              </div>
-                           </div>
-
-                           <div className="flex-1 border border-[#333] bg-[#0F0F0F] rounded overflow-hidden flex flex-col shadow-inner">
-                              {selectedAddLoader === 'VANILLA' ? (
-                                 <div className="flex flex-col items-center justify-center h-full text-neutral-500 italic text-xs gap-3 p-8 text-center bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] opacity-20">
-                                    <div className="w-12 h-12 rounded-full border border-neutral-700 flex items-center justify-center">
-                                       <Box className="w-6 h-6" />
+                                          ) : (
+                                             mcVersions
+                                                .filter(v => {
+                                                   if (versionSearch && !v.id.includes(versionSearch)) return false;
+                                                   if (v.type === 'release' && versionFilters.Releases) return true;
+                                                   if (v.type === 'snapshot' && versionFilters.Snapshots) return true;
+                                                   if (v.type === 'old_beta' && versionFilters.Betas) return true;
+                                                   if (v.type === 'old_alpha' && versionFilters.Alphas) return true;
+                                                   return false;
+                                                })
+                                                .map((v: any) => (
+                                                   <div 
+                                                      key={v.id}
+                                                      onClick={() => setSelectedAddVersion(v.id)}
+                                                      className={`grid grid-cols-3 px-4 py-2 text-sm font-mono cursor-pointer border-b border-[#1A1A1A] last:border-0 transition-all ${selectedAddVersion === v.id ? 'bg-[#3E8ED0]/20 text-[#3E8ED0] border-l-2 border-l-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
+                                                   >
+                                                      <div className="flex items-center gap-2">
+                                                         {v.type === 'release' && <Check className={`w-3 h-3 ${selectedAddVersion === v.id ? 'text-[#3E8ED0]' : 'text-emerald-500'}`} />}
+                                                         <span>{v.id}</span>
+                                                      </div>
+                                                      <div className="text-right opacity-50">{new Date(v.releaseTime).toLocaleDateString()}</div>
+                                                      <div className="text-right capitalize text-[10px] font-bold opacity-60">{v.type}</div>
+                                                   </div>
+                                                ))
+                                          )}
                                     </div>
-                                    Vanilla does not require a mod loader.
                                  </div>
-                              ) : (
-                                 <>
-                                    <div className="grid grid-cols-2 px-4 py-2 border-b border-[#333] bg-[#242424] text-[10px] font-bold text-neutral-500 uppercase tracking-widest">
-                                       <div>Loader Version</div>
-                                       <div className="text-right">Status</div>
+                              </div>
+
+                              {/* Bottom Half: Mod Loader selection */}
+                              <div className="flex-1 flex flex-col p-4 bg-[#141414] overflow-hidden">
+                                 <div className="flex items-center justify-between mb-3">
+                                    <h4 className="text-sm font-bold text-neutral-300 flex items-center gap-2">
+                                       <Cpu className="w-4 h-4 text-[#3E8ED0]" />
+                                       Mod Loader
+                                    </h4>
+                                    <div className="flex bg-[#1E1E1E] rounded p-1 border border-[#323232] overflow-x-auto max-w-full">
+                                       {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT', 'PAPER', 'SPIGOT'].map(l => (
+                                          <button 
+                                             key={l}
+                                             onClick={() => setSelectedAddLoader(l)}
+                                             className={`px-3 py-1 rounded text-[10px] font-bold transition-all flex-shrink-0 ${selectedAddLoader === l ? 'bg-[#3E8ED0] text-white shadow-md' : 'text-neutral-500 hover:text-white'}`}
+                                          >
+                                             {l}
+                                          </button>
+                                       ))}
                                     </div>
-                                    <div className="flex-1 overflow-auto relative">
-                                       {isLoaderLoading ? (
-                                          <div className="absolute inset-0 flex items-center justify-center bg-[#0F0F0F]/50">
-                                             <div className="flex flex-col items-center gap-3">
-                                                <RefreshCw className="w-6 h-6 text-[#3E8ED0] animate-spin" />
-                                                <span className="text-[10px] text-neutral-500">Scanning versions...</span>
-                                             </div>
+                                 </div>
+
+                                 <div className="flex-1 border border-[#333] bg-[#0F0F0F] rounded overflow-hidden flex flex-col shadow-inner">
+                                    {selectedAddLoader === 'VANILLA' ? (
+                                       <div className="flex flex-col items-center justify-center h-full text-neutral-500 italic text-xs gap-3 p-8 text-center bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] opacity-20">
+                                          <div className="w-12 h-12 rounded-full border border-neutral-700 flex items-center justify-center">
+                                             <Box className="w-6 h-6" />
                                           </div>
-                                       ) : (
-                                          <div className="divide-y divide-[#1A1A1A]">
-                                             <div 
-                                                onClick={() => setSelectedAddLoaderVersion("latest")}
-                                                className={`grid grid-cols-2 px-4 py-2 text-sm cursor-pointer transition-all ${selectedAddLoaderVersion === 'latest' ? 'bg-[#3E8ED0]/20 text-[#3E8ED0] border-l-2 border-l-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
-                                             >
-                                                <div className="font-bold italic">Latest Recommended</div>
-                                                <div className="text-right text-[10px] opacity-60">AUTO</div>
-                                             </div>
-                                             {loaderVersions.map((lv) => (
-                                                <div 
-                                                   key={lv.id}
-                                                   onClick={() => setSelectedAddLoaderVersion(lv.id)}
-                                                   className={`grid grid-cols-2 px-4 py-2 text-sm font-mono cursor-pointer transition-all ${selectedAddLoaderVersion === lv.id ? 'bg-[#3E8ED0]/20 text-[#3E8ED0] border-l-2 border-l-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
-                                                >
-                                                   <div>{lv.id}</div>
-                                                   <div className="text-right">
-                                                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${lv.stable ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'}`}>
-                                                         {lv.stable ? 'STABLE' : 'UNSTABLE'}
-                                                      </span>
+                                          Vanilla does not require a mod loader.
+                                       </div>
+                                    ) : (
+                                       <>
+                                          <div className="grid grid-cols-2 px-4 py-2 border-b border-[#333] bg-[#242424] text-[10px] font-bold text-neutral-500 uppercase tracking-widest">
+                                             <div>Loader Version</div>
+                                             <div className="text-right">Status</div>
+                                          </div>
+                                          <div className="flex-1 overflow-auto relative">
+                                             {isLoaderLoading ? (
+                                                <div className="absolute inset-0 flex items-center justify-center bg-[#0F0F0F]/50">
+                                                   <div className="flex flex-col items-center gap-3">
+                                                      <RefreshCw className="w-6 h-6 text-[#3E8ED0] animate-spin" />
+                                                      <span className="text-[10px] text-neutral-500">Scanning versions...</span>
                                                    </div>
                                                 </div>
-                                             ))}
+                                             ) : (
+                                                <div className="divide-y divide-[#1A1A1A]">
+                                                   <div 
+                                                      onClick={() => setSelectedAddLoaderVersion("latest")}
+                                                      className={`grid grid-cols-2 px-4 py-2 text-sm cursor-pointer transition-all ${selectedAddLoaderVersion === 'latest' ? 'bg-[#3E8ED0]/20 text-[#3E8ED0] border-l-2 border-l-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
+                                                   >
+                                                      <div className="font-bold italic">Latest Recommended</div>
+                                                      <div className="text-right text-[10px] opacity-60">AUTO</div>
+                                                   </div>
+                                                   {loaderVersions.map((lv) => (
+                                                      <div 
+                                                         key={lv.id}
+                                                         onClick={() => setSelectedAddLoaderVersion(lv.id)}
+                                                         className={`grid grid-cols-2 px-4 py-2 text-sm font-mono cursor-pointer transition-all ${selectedAddLoaderVersion === lv.id ? 'bg-[#3E8ED0]/20 text-[#3E8ED0] border-l-2 border-l-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
+                                                      >
+                                                         <div>{lv.id}</div>
+                                                         <div className="text-right">
+                                                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${lv.stable ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'}`}>
+                                                               {lv.stable ? 'STABLE' : 'UNSTABLE'}
+                                                            </span>
+                                                         </div>
+                                                      </div>
+                                                   ))}
+                                                </div>
+                                             )}
                                           </div>
-                                       )}
-                                    </div>
-                                 </>
-                              )}
+                                       </>
+                                    )}
+                                 </div>
+                              </div>
                            </div>
-                        </div>
-                     </div>
-                  )}
+                        )}
 
-                  {addTab === "world" && (
+                        {addTab === "import" && (
+                           <div className="flex flex-col items-center justify-center h-full text-neutral-500 p-20 text-center space-y-6">
+                              <div className="w-20 h-20 bg-[#3E8ED0]/10 rounded-full flex items-center justify-center border border-[#3E8ED0]/20">
+                                 <Database className="w-10 h-10 text-[#3E8ED0]" />
+                              </div>
+                              <div className="space-y-2">
+                                 <h3 className="text-xl font-bold text-white">Import Existing Server</h3>
+                                 <p className="text-sm text-neutral-400 max-w-sm">Place your server files in a folder within your servers directory, then select it here to begin configuration.</p>
+                              </div>
+                              <button className="px-8 py-3 bg-[#333] hover:bg-[#444] rounded-lg font-bold text-white transition-all">Browse Folders</button>
+                           </div>
+                        )}
+
+                        {(addTab === "modrinth" || addTab === "curseforge" || addTab === "atlauncher" || addTab === "technic") && (
+                           <div className="flex flex-col h-full bg-[#1E1E1E]/50">
+                              <div className="p-4 bg-[#242424] border-b border-[#323232] flex gap-3">
+                                 <div className="flex-1 relative">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
+                                    <input 
+                                       type="text" 
+                                       placeholder={`Search ${addTab} modpacks...`}
+                                       value={searchModpacks}
+                                       onChange={(e) => setSearchModpacks(e.target.value)}
+                                       onKeyDown={(e) => e.key === 'Enter' && handleModpackSearch(searchModpacks, addTab)}
+                                       className="w-full bg-[#141414] border border-[#3A3A3A] pl-10 pr-4 py-2 rounded focus:outline-none focus:border-[#3E8ED0] text-sm"
+                                    />
+                                 </div>
+                                 <button 
+                                    onClick={() => handleModpackSearch(searchModpacks, addTab)}
+                                    className="px-6 py-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white font-bold rounded text-sm transition-all shadow-lg shadow-[#3E8ED0]/15"
+                                 >
+                                    Search
+                                 </button>
+                              </div>
+                              <div className="flex-1 overflow-auto p-4 grid grid-cols-1 gap-2">
+                                 {isModpackLoading ? (
+                                    <div className="flex flex-col items-center justify-center h-64 text-neutral-600 gap-3">
+                                       <RefreshCw className="w-8 h-8 animate-spin" />
+                                       <span className="text-sm font-medium">Fetching modpacks...</span>
+                                    </div>
+                                 ) : modpackResults.length === 0 ? (
+                                    <div className="flex flex-col items-center justify-center h-64 text-neutral-600 opacity-40">
+                                       <Box className="w-12 h-12 mb-3" />
+                                       <p className="text-sm">Enter keywords to find modpacks</p>
+                                    </div>
+                                 ) : (
+                                    modpackResults.map((pack) => (
+                                       <div 
+                                          key={pack.id} 
+                                          onClick={() => {
+                                             setSelectedModpack(pack);
+                                             if (!newName) setNewName(pack.name);
+                                          }}
+                                          className={`flex items-center gap-4 p-3 rounded-lg border cursor-pointer transition-all ${selectedModpack?.id === pack.id ? 'bg-[#3E8ED0]/20 border-[#3E8ED0] shadow-lg shadow-[#3E8ED0]/5' : 'bg-[#222] border-[#333] hover:bg-[#282828] hover:border-[#444]'}`}
+                                       >
+                                          <div className="w-12 h-12 bg-[#333] rounded overflow-hidden flex-shrink-0 shadow-inner">
+                                             {pack.icon_url ? <img src={pack.icon_url} className="w-full h-full object-cover" /> : <Box className="w-full h-full p-2 text-neutral-600" />}
+                                          </div>
+                                          <div className="flex-1 min-w-0">
+                                             <div className="flex items-center justify-between mb-0.5">
+                                                <h5 className="font-bold text-[#E0E0E0] truncate text-sm">{pack.name || 'Unknown'}</h5>
+                                                <span className="text-[10px] font-mono text-neutral-500 bg-[#111] px-1.5 py-0.5 rounded italic">By {pack.author || 'Unknown'}</span>
+                                             </div>
+                                             <p className="text-[11px] text-neutral-400 line-clamp-1 leading-relaxed">{pack.summary || 'No description provided.'}</p>
+                                             <div className="flex items-center gap-4 mt-1">
+                                                <span className="text-[9px] font-bold text-neutral-500 uppercase flex items-center gap-1"><RefreshCw className="w-2.5 h-2.5" /> {(pack.downloads || 0).toLocaleString()} DL</span>
+                                             </div>
+                                          </div>
+                                       </div>
+                                    ))
+                                 )}
+                              </div>
+                           </div>
+                        )}
+                     </>
+                  ) : (
                      <div className="flex flex-col h-full p-8 overflow-auto animate-in fade-in slide-in-from-right-4 duration-300">
                         <div className="max-w-xl mx-auto w-full space-y-8">
-                           <div>
-                              <h3 className="text-xl font-bold mb-2 flex items-center gap-2">
-                                 <Globe className="text-[#3E8ED0]" /> World Configuration
-                              </h3>
-                              <p className="text-neutral-500 text-sm">Fine-tune your world generation and gameplay rules.</p>
+                           <div className="flex items-center gap-4 mb-2">
+                              <div className="p-3 bg-[#3E8ED0]/10 rounded-xl border border-[#3E8ED0]/20 text-[#3E8ED0]">
+                                 <Globe className="w-8 h-8" />
+                              </div>
+                              <div>
+                                 <h3 className="text-2xl font-bold text-white">World configuration</h3>
+                                 <p className="text-neutral-500 text-sm">Fine-tune your world generation and gameplay rules.</p>
+                              </div>
                            </div>
 
                            <div className="space-y-6">
-                              <div className="space-y-2">
-                                 <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">World Seed</label>
+                              <div className="space-y-3">
+                                 <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">World Seed</label>
                                  <input 
                                     type="text" 
                                     value={newSeed}
                                     onChange={(e) => setNewSeed(e.target.value)}
                                     placeholder="Leave empty for random seed..."
-                                    className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-[#3E8ED0] text-sm font-mono text-white"
+                                    className="w-full bg-[#0F0F0F] border border-[#333] p-4 rounded-xl focus:outline-none focus:border-[#3E8ED0] text-sm font-mono text-white transition-all hover:border-[#444]"
                                  />
-                                 <p className="text-[10px] text-neutral-600 italic">Supports text and numbers. Minecraft will hash text seeds.</p>
+                                 <p className="text-[10px] text-neutral-600 italic px-1">Supports text and numbers. Minecraft will hash text seeds.</p>
                               </div>
 
-                              <div className="grid grid-cols-2 gap-6">
-                                 <div className="space-y-2">
-                                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Level Type</label>
+                              <div className="grid grid-cols-2 gap-8">
+                                 <div className="space-y-3">
+                                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">Level Type</label>
                                     <select 
                                        value={newLevelType}
                                        onChange={(e) => setNewLevelType(e.target.value)}
-                                       className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-[#3E8ED0] text-sm text-neutral-300"
+                                       className="w-full bg-[#0F0F0F] border border-[#333] p-4 rounded-xl focus:outline-none focus:border-[#3E8ED0] text-sm text-neutral-300 appearance-none transition-all hover:border-[#444]"
                                     >
                                        <option value="DEFAULT">Default</option>
                                        <option value="FLAT">Flat</option>
@@ -1338,12 +1437,12 @@ export default function App() {
                                        <option value="BUFFET">Buffet</option>
                                     </select>
                                  </div>
-                                 <div className="space-y-2">
-                                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Difficulty</label>
+                                 <div className="space-y-3">
+                                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">Difficulty</label>
                                     <select 
                                        value={newDifficulty}
                                        onChange={(e) => setNewDifficulty(e.target.value)}
-                                       className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-[#3E8ED0] text-sm text-neutral-300"
+                                       className="w-full bg-[#0F0F0F] border border-[#333] p-4 rounded-xl focus:outline-none focus:border-[#3E8ED0] text-sm text-neutral-300 appearance-none transition-all hover:border-[#444]"
                                     >
                                        <option value="peaceful">Peaceful</option>
                                        <option value="easy">Easy</option>
@@ -1353,13 +1452,13 @@ export default function App() {
                                  </div>
                               </div>
 
-                              <div className="grid grid-cols-2 gap-6">
-                                 <div className="space-y-2">
-                                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Game Mode</label>
+                              <div className="grid grid-cols-2 gap-8">
+                                 <div className="space-y-3">
+                                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">Game Mode</label>
                                     <select 
                                        value={newGamemode}
                                        onChange={(e) => setNewGamemode(e.target.value)}
-                                       className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-[#3E8ED0] text-sm text-neutral-300"
+                                       className="w-full bg-[#0F0F0F] border border-[#333] p-4 rounded-xl focus:outline-none focus:border-[#3E8ED0] text-sm text-neutral-300 appearance-none transition-all hover:border-[#444]"
                                     >
                                        <option value="survival">Survival</option>
                                        <option value="creative">Creative</option>
@@ -1367,116 +1466,81 @@ export default function App() {
                                        <option value="spectator">Spectator</option>
                                     </select>
                                  </div>
-                                 <div className="space-y-2">
-                                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Structures</label>
+                                 <div className="space-y-3">
+                                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">Structures</label>
                                     <button 
                                        onClick={() => setNewGenerateStructures(!newGenerateStructures)}
-                                       className={`w-full flex items-center justify-between p-3 rounded-lg border transition-all ${newGenerateStructures ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-red-500/10 border-red-500/30 text-red-400'}`}
+                                       className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${newGenerateStructures ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-400' : 'bg-red-500/5 border-red-500/20 text-red-400'}`}
                                     >
-                                       <span className="text-sm font-bold">{newGenerateStructures ? 'Generate' : 'None'}</span>
-                                       {newGenerateStructures ? <Check className="w-4 h-4" /> : <X className="w-4 h-4" />}
+                                       <span className="text-sm font-bold uppercase tracking-wider">{newGenerateStructures ? 'Enabled' : 'Disabled'}</span>
+                                       {newGenerateStructures ? <Check className="w-5 h-5" /> : <X className="w-5 h-5" />}
                                     </button>
                                  </div>
                               </div>
                            </div>
 
-                           <div className="bg-[#3E8ED0]/5 border border-[#3E8ED0]/20 p-5 rounded-xl flex gap-4 items-start shadow-sm">
-                              <AlertCircle className="w-5 h-5 text-[#3E8ED0] flex-shrink-0 mt-0.5" />
-                              <p className="text-xs text-neutral-400 leading-relaxed">
-                                 These settings apply to the world created when the server first starts. If you change them later, they may only affect newly generated chunks or require a world reset.
-                              </p>
+                           <div className="bg-[#2D2D2D] border border-[#3A3A3A] p-6 rounded-2xl flex gap-5 items-start shadow-xl">
+                              <div className="p-2 bg-amber-500/10 rounded-lg text-amber-500">
+                                 <AlertCircle className="w-6 h-6" />
+                              </div>
+                              <div className="space-y-2">
+                                 <h4 className="font-bold text-neutral-200">World Management Info</h4>
+                                 <p className="text-xs text-neutral-500 leading-relaxed">
+                                    These settings apply to the world created when the server first starts. 
+                                    If you change them later, they may only affect newly generated chunks or require a world reset.
+                                 </p>
+                              </div>
                            </div>
                         </div>
                      </div>
                   )}
 
-                  {(addTab === "modrinth" || addTab === "curseforge") && (
-                     <div className="flex flex-col h-full bg-[#1E1E1E]/50">
-                        <div className="p-4 bg-[#242424] border-b border-[#323232] flex gap-3">
-                           <div className="flex-1 relative">
-                              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
-                              <input 
-                                 type="text" 
-                                 placeholder={`Search ${addTab === 'modrinth' ? 'Modrinth' : 'CurseForge'} modpacks...`}
-                                 value={searchModpacks}
-                                 onChange={(e) => setSearchModpacks(e.target.value)}
-                                 onKeyDown={(e) => e.key === 'Enter' && handleModpackSearch(searchModpacks, addTab)}
-                                 className="w-full bg-[#141414] border border-[#3A3A3A] pl-10 pr-4 py-2 rounded focus:outline-none focus:border-[#3E8ED0] text-sm"
-                              />
-                           </div>
-                           <button 
-                              onClick={() => handleModpackSearch(searchModpacks, addTab)}
-                              className="px-6 py-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white font-bold rounded text-sm transition-all shadow-lg shadow-[#3E8ED0]/15"
-                           >
-                              Search
-                           </button>
-                        </div>
-                        <div className="flex-1 overflow-auto p-4 grid grid-cols-1 gap-2">
-                           {isModpackLoading ? (
-                              <div className="flex flex-col items-center justify-center h-64 text-neutral-600 gap-3">
-                                 <RefreshCw className="w-8 h-8 animate-spin" />
-                                 <span className="text-sm font-medium">Fetching modpacks...</span>
-                              </div>
-                           ) : modpackResults.length === 0 ? (
-                              <div className="flex flex-col items-center justify-center h-64 text-neutral-600 opacity-40">
-                                 <Box className="w-12 h-12 mb-3" />
-                                 <p className="text-sm">Enter keywords to find modpacks</p>
-                              </div>
-                           ) : (
-                              modpackResults.map((pack) => (
-                                 <div 
-                                    key={pack.id} 
-                                    onClick={() => {
-                                       setSelectedModpack(pack);
-                                       if (!newName) setNewName(pack.name);
-                                    }}
-                                    className={`flex items-center gap-4 p-3 rounded-lg border cursor-pointer transition-all ${selectedModpack?.id === pack.id ? 'bg-[#3E8ED0]/20 border-[#3E8ED0] shadow-lg shadow-[#3E8ED0]/5' : 'bg-[#222] border-[#333] hover:bg-[#282828] hover:border-[#444]'}`}
-                                 >
-                                    <div className="w-12 h-12 bg-[#333] rounded overflow-hidden flex-shrink-0 shadow-inner">
-                                       {pack.icon_url ? <img src={pack.icon_url} className="w-full h-full object-cover" /> : <Box className="w-full h-full p-2 text-neutral-600" />}
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                       <div className="flex items-center justify-between mb-0.5">
-                                          <h5 className="font-bold text-[#E0E0E0] truncate text-sm">{pack.name || 'Unknown'}</h5>
-                                          <span className="text-[10px] font-mono text-neutral-500 bg-[#111] px-1.5 py-0.5 rounded italic">By {pack.author || 'Unknown'}</span>
-                                       </div>
-                                       <p className="text-[11px] text-neutral-400 line-clamp-1 leading-relaxed">{pack.summary || 'No description provided.'}</p>
-                                       <div className="flex items-center gap-4 mt-1">
-                                          <span className="text-[9px] font-bold text-neutral-500 uppercase flex items-center gap-1"><RefreshCw className="w-2.5 h-2.5" /> {(pack.downloads || 0).toLocaleString()} DL</span>
-                                       </div>
-                                    </div>
-                                 </div>
-                              ))
-                           )}
-                        </div>
-                     </div>
-                  )}
                </div>
             </div>
 
-            {/* Bottom Actions */}
-            <div className="p-4 bg-[#2D2D2D] border-t border-[#3A3A3A] flex justify-between items-center px-6">
-               <button className="flex items-center gap-2 text-neutral-500 hover:text-white transition-colors text-xs font-medium">
-                  <AlertCircle className="w-4 h-4" /> Help
-               </button>
-               <div className="flex gap-2">
-                  <button 
-                    onClick={() => setIsAddModalOpen(false)}
-                    className="px-6 py-2 rounded bg-transparent hover:bg-[#3A3A3A] text-neutral-400 hover:text-white font-bold transition-all text-sm border border-transparent hover:border-[#444]"
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    onClick={handleAddInstance}
-                    disabled={isCreating || !newName}
-                    className={`px-8 py-2 rounded font-bold text-sm shadow-xl transition-all ${
-                      isCreating || !newName ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed border border-[#333]' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-500/10'
-                    }`}
-                  >
-                    {isCreating ? "Creating..." : "OK"}
-                  </button>
-               </div>
-            </div>
+             {/* Bottom Actions */}
+             <div className="p-4 bg-[#2D2D2D] border-t border-[#3A3A3A] flex justify-between items-center px-6">
+                <button className="flex items-center gap-2 text-neutral-500 hover:text-white transition-colors text-xs font-medium">
+                   <AlertCircle className="w-4 h-4" /> Help
+                </button>
+                <div className="flex gap-2">
+                   {addStep === 2 && (
+                      <button 
+                        onClick={() => setAddStep(1)}
+                        className="px-6 py-2 rounded bg-transparent hover:bg-[#3A3A3A] text-neutral-400 hover:text-white font-bold transition-all text-sm border border-[#444]"
+                      >
+                        Back
+                      </button>
+                   )}
+                   <button 
+                     onClick={() => setIsAddModalOpen(false)}
+                     className="px-6 py-2 rounded bg-transparent hover:bg-[#3A3A3A] text-neutral-400 hover:text-white font-bold transition-all text-sm"
+                   >
+                     Cancel
+                   </button>
+                   {addStep === 1 ? (
+                      <button 
+                        onClick={() => setAddStep(2)}
+                        disabled={!newName || (addTab !== 'custom' && addTab !== 'import' && !selectedModpack)}
+                        className={`flex items-center gap-2 px-8 py-2 rounded font-bold text-sm shadow-xl transition-all ${
+                          !newName || (addTab !== 'custom' && addTab !== 'import' && !selectedModpack) ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed border border-[#333]' : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white shadow-[#3E8ED0]/10'
+                        }`}
+                      >
+                        Next <ChevronRight className="w-4 h-4" />
+                      </button>
+                   ) : (
+                      <button 
+                        onClick={handleAddInstance}
+                        disabled={isCreating || !newName}
+                        className={`px-8 py-2 rounded font-bold text-sm shadow-xl transition-all ${
+                          isCreating || !newName ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed border border-[#333]' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-500/10'
+                        }`}
+                      >
+                        {isCreating ? "Creating..." : "Create Instance"}
+                      </button>
+                   )}
+                </div>
+             </div>
 
           </div>
         </div>
