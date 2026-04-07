@@ -167,14 +167,30 @@ async def upload_to_mcpacks(zip_path: str):
     print(f"  Uploading bundle to MCPacks...")
     async with httpx.AsyncClient(timeout=60.0) as client:
         with open(zip_path, "rb") as f:
-            files = {"file": ("bundle.zip", f, "application/zip")}
+            files = {"pack": ("bundle.zip", f, "application/zip")}
             res = await client.post(MCPACKS_API_URL, files=files)
+
+            print(f"  MCPacks response status: {res.status_code}")
+            print(f"  MCPacks response body: {res.text[:500]}")
 
             if res.status_code in (200, 201):
                 data = res.json()
-                url = data.get("url")
-                sha = data.get("hash")
-                print(f"  Upload OK: {url}")
+                # Try multiple possible field names
+                url = (data.get("url") or data.get("download") or 
+                       data.get("download_url") or data.get("link") or
+                       data.get("pack_url"))
+                sha = (data.get("hash") or data.get("sha1") or 
+                       data.get("sha") or data.get("sha1_hash"))
+                
+                # Check nested "data" key
+                if not url and "data" in data:
+                    nested = data["data"]
+                    url = (nested.get("url") or nested.get("download") or 
+                           nested.get("download_url"))
+                    sha = sha or nested.get("hash") or nested.get("sha1")
+                
+                print(f"  Parsed URL: {url}")
+                print(f"  Parsed SHA1: {sha}")
                 return url, sha
             else:
                 print(f"  MCPacks upload FAILED: {res.status_code} - {res.text}")
