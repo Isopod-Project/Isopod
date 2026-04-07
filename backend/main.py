@@ -245,27 +245,38 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
     c_ids = [i.strip() for i in env.get("RESOURCE_PACKS_CF", "").split(",") if i.strip()]
     
     if m_ids or c_ids:
-        print(f"Bundling resource packs for {instance_id}...")
+        print(f"=== Bundling resource packs for {instance_id} ===")
+        print(f"  Modrinth IDs: {m_ids}")
+        print(f"  CurseForge IDs: {c_ids}")
+        print(f"  MC Version: {mc_version}")
         try:
             cache_dir = os.path.join(SERVERS_DIR, ".cache", "resource_packs")
             os.makedirs(cache_dir, exist_ok=True)
             
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
                 downloaded_zips = []
                 # Resolve & download each pack
                 for mid in m_ids:
                     url = await rp.get_latest_version_url(client, "modrinth", mid, mc_version)
                     if url:
                         zip_path = os.path.join(cache_dir, f"{mid}.zip")
-                        await rp.download_file(client, url, zip_path)
-                        downloaded_zips.append(zip_path)
+                        success = await rp.download_file(client, url, zip_path)
+                        if success:
+                            downloaded_zips.append(zip_path)
+                    else:
+                        print(f"  WARNING: No download URL found for modrinth/{mid}")
                 
                 for cid in c_ids:
                     url = await rp.get_latest_version_url(client, "curseforge", cid, mc_version)
                     if url:
                         zip_path = os.path.join(cache_dir, f"{cid}.zip")
-                        await rp.download_file(client, url, zip_path)
-                        downloaded_zips.append(zip_path)
+                        success = await rp.download_file(client, url, zip_path)
+                        if success:
+                            downloaded_zips.append(zip_path)
+                    else:
+                        print(f"  WARNING: No download URL found for curseforge/{cid}")
+                
+                print(f"  Downloaded {len(downloaded_zips)} of {len(m_ids) + len(c_ids)} packs")
                 
                 if downloaded_zips:
                     bundle_path = os.path.join(cache_dir, f"bundle_{instance_id}.zip")
@@ -274,13 +285,19 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
                     # Upload and get URL
                     public_url, sha1 = await rp.upload_to_mcpacks(bundle_path)
                     if public_url and sha1:
-                        print(f"New bundle uploaded: {public_url} ({sha1})")
+                        print(f"  SUCCESS: Bundle uploaded: {public_url}")
                         env["RESOURCE_PACK"] = public_url
                         env["RESOURCE_PACK_SHA1"] = sha1
                         # Clear any stale manual ID
                         env["RESOURCE_PACK_ID"] = ""
+                    else:
+                        print(f"  ERROR: MCPacks upload returned no URL/hash")
+                else:
+                    print(f"  WARNING: No packs were successfully downloaded, skipping bundle")
         except Exception as e:
+            import traceback
             print(f"FAILED to bundle resource packs: {e}")
+            traceback.print_exc()
             # Non-critical, continue save with whatever we have
     
     with open(compose_path, "r") as f:
