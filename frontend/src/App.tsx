@@ -583,6 +583,54 @@ export default function App() {
       }
    };
 
+   const handleRenameGroup = async (groupName: string) => {
+      if (groupName === "No group") return;
+      
+      const newName = await showPrompt(`Enter new name for group "${groupName}":`, groupName, "Rename Group");
+      if (newName && newName !== groupName) {
+         try {
+            const res = await fetch(`/api/groups/${encodeURIComponent(groupName)}/rename`, {
+               method: "POST",
+               headers: { "Content-Type": "application/json" },
+               body: JSON.stringify({ new_name: newName })
+            });
+            if (res.ok) {
+               await fetchInstances();
+               await fetchGroups();
+            } else {
+               await showAlert("Failed to rename group", "Error");
+            }
+         } catch (e) {
+            await showAlert("Error renaming group", "Error");
+         }
+      }
+   };
+
+   const handleDeleteGroup = async (groupName: string) => {
+      if (groupName === "No group") return;
+
+      const confirmed = await showConfirm(
+         `Are you sure you want to remove the group "${groupName}"? All instances inside will be moved to "No group".`,
+         "Remove Group"
+      );
+      
+      if (!confirmed) return;
+
+      try {
+         const res = await fetch(`/api/groups/${encodeURIComponent(groupName)}`, {
+            method: "DELETE"
+         });
+         if (res.ok) {
+            await fetchInstances();
+            await fetchGroups();
+         } else {
+            await showAlert("Failed to remove group", "Error");
+         }
+      } catch (e) {
+         await showAlert("Error removing group", "Error");
+      }
+   };
+
    const fetchLogs = async (id: string) => {
       setIsLogsLoading(true);
       try {
@@ -1131,14 +1179,32 @@ export default function App() {
                         
                         return (
                            <div key={groupName}>
-                              <div className="flex items-center gap-3 border-b border-[#404040] pb-2 mb-6 cursor-default">
+                              <div className="flex items-center gap-3 border-b border-[#404040] pb-2 mb-6 group/grouphead cursor-default">
                                  <Layers className={`w-4 h-4 ${groupName === 'No group' ? 'text-neutral-500' : 'text-[#3E8ED0]'}`} />
                                  <span className={`font-bold tracking-tight ${groupName === 'No group' ? 'text-neutral-400' : 'text-neutral-200'}`}>
                                     {groupName}
                                  </span>
-                                 <span className="text-[10px] font-bold text-neutral-600 bg-[#333] px-2 py-0.5 rounded-full ml-1">
+                                 <span className="text-[10px] font-bold text-neutral-600 bg-[#333] px-2 py-0.5 rounded-full ml-1 mr-2">
                                     {groupInstances.length}
                                  </span>
+                                 {groupName !== 'No group' && (
+                                    <div className="flex items-center gap-1.5 opacity-0 group-hover/grouphead:opacity-100 transition-opacity">
+                                       <button 
+                                          onClick={() => handleRenameGroup(groupName)}
+                                          className="p-1 hover:bg-[#404040] rounded text-neutral-500 hover:text-white transition-colors"
+                                          title="Rename Group"
+                                       >
+                                          <Pencil className="w-3.5 h-3.5" />
+                                       </button>
+                                       <button 
+                                          onClick={() => handleDeleteGroup(groupName)}
+                                          className="p-1 hover:bg-red-900/30 rounded text-neutral-500 hover:text-red-400 transition-colors"
+                                          title="Remove Group"
+                                       >
+                                          <X className="w-3.5 h-3.5" />
+                                       </button>
+                                    </div>
+                                 )}
                               </div>
 
                               <div className="flex flex-wrap gap-5">

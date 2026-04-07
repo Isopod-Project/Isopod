@@ -148,6 +148,9 @@ def list_groups():
 class SetGroupRequest(BaseModel):
     group: str
 
+class RenameGroupRequest(BaseModel):
+    new_name: str
+
 @app.post("/api/instances/{instance_id}/group")
 def set_instance_group(instance_id: str, req: SetGroupRequest):
     path = get_instance_path(instance_id)
@@ -155,6 +158,44 @@ def set_instance_group(instance_id: str, req: SetGroupRequest):
     meta["group"] = req.group
     save_instance_meta(path, meta)
     return {"id": instance_id, "group": req.group}
+
+@app.delete("/api/groups/{group_name}")
+def delete_group(group_name: str):
+    """Dissolve a group, moving all instances in it to 'No group'."""
+    if group_name == "No group":
+        raise HTTPException(status_code=400, detail="Cannot delete default group")
+    
+    count = 0
+    if not os.path.exists(SERVERS_DIR):
+        return {"message": "Groups cleared", "count": 0}
+
+    for entry in os.scandir(SERVERS_DIR):
+        if entry.is_dir():
+            meta = get_instance_meta(entry.path)
+            if meta.get("group") == group_name:
+                meta["group"] = "No group"
+                save_instance_meta(entry.path, meta)
+                count += 1
+    return {"message": f"Group dissolved. {count} instances moved to 'No group'.", "count": count}
+
+@app.post("/api/groups/{group_name}/rename")
+def rename_group(group_name: str, req: RenameGroupRequest):
+    """Rename a group for all instances in it."""
+    if group_name == "No group":
+        raise HTTPException(status_code=400, detail="Cannot rename default group")
+    
+    count = 0
+    if not os.path.exists(SERVERS_DIR):
+        return {"message": "Groups updated", "count": 0}
+
+    for entry in os.scandir(SERVERS_DIR):
+        if entry.is_dir():
+            meta = get_instance_meta(entry.path)
+            if meta.get("group") == group_name:
+                meta["group"] = req.new_name
+                save_instance_meta(entry.path, meta)
+                count += 1
+    return {"message": f"Group renamed. {count} instances updated.", "count": count}
 
 @app.get("/api/instances/{instance_id}/status")
 def get_instance_status(instance_id: str):
