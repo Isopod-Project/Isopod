@@ -15,7 +15,7 @@ from typing import List, Optional, Dict, Any
 import httpx
 import json
 import time
-import resource_packs as rp
+from . import resource_packs as rp
 
 load_dotenv()
 
