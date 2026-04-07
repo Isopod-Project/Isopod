@@ -11,35 +11,33 @@ from typing import List, Dict, Optional
 # Constants
 MCPACKS_API_URL = "https://mcpacks.dev/api/v1/packs"
 
-async def get_latest_version_url(client: httpx.AsyncClient, provider: str, project_id: str, mc_version: str):
-    """Fetch the direct download URL for the latest compatible version of a pack."""
-    try:
-        if provider == "modrinth":
-            # Modrinth API
-            params = {
-                "game_versions": json.dumps([mc_version]),
-            }
-            res = await client.get(f"https://api.modrinth.com/v2/project/{project_id}/version", params=params)
-            if res.status_code == 200:
-                data = res.json()
-                if data and len(data) > 0:
-                    # Find primary file or first file
-                    files = data[0].get("files", [])
-                    primary = next((f for f in files if f.get("primary")), files[0] if files else None)
-                    if primary:
-                        return primary["url"]
-        
-        elif provider == "curseforge":
-            # CurseForge API (via proxy)
-            res = await client.get(f"https://api.curse.tools/v1/cf/mods/{project_id}")
-            if res.status_code == 200:
-                data = res.json().get("data", {})
-                for file in data.get("latestFiles", []):
-                    if mc_version in file.get("gameVersions", []):
-                        return file["downloadUrl"]
-                        
-    except Exception as e:
-        print(f"Error resolving version for {project_id}: {e}")
+
+
+async def _fetch_pack_url(pack_id, provider, mc_version):
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        if provider == 'modrinth':
+            try:
+                res = await client.get(
+                    f"https://api.modrinth.com/v2/project/{pack_id}/version",
+                    params={"game_versions": f'["{mc_version}"]', "loaders": '["canvas","iris","optifine"]'}
+                )
+                if res.status_code == 200:
+                    data = res.json()
+                    if data: return data[0]['files'][0]['url']
+            except: pass
+        return None
+
+async def get_latest_version_url(pack_id, provider, mc_version):
+    # Try current version first
+    url = await _fetch_pack_url(pack_id, provider, mc_version)
+    if url: return url
+    
+    # Fallback list for unusual versions (like 1.21 snapshots)
+    fallbacks = ["1.21.1", "1.21", "1.20.4", "1.20.1"]
+    for v in fallbacks:
+        if v == mc_version: continue
+        url = await _fetch_pack_url(pack_id, provider, v)
+        if url: return url
     return None
 
 async def download_file(client: httpx.AsyncClient, url: str, dest_path: str):
@@ -52,18 +50,36 @@ async def download_file(client: httpx.AsyncClient, url: str, dest_path: str):
             return True
     return False
 
-def merge_resource_packs(zip_paths: List[str], output_path: str):
-    """Merge multiple ZIP files into one, resolving conflicts by priority (first wins)."""
+def merge_resource_packs(zip_paths, output_path):
     with tempfile.TemporaryDirectory() as temp_dir:
-        # Unpack in REVERSE order so the first pack in the list has the final word (top priority)
-        # However, usually we want the LATEST to overwrite the oldest. 
-        # But for resource packs, the TOP one in the list is usually the highest priority.
+        # Process from BACK to FRONT (lowest priority packs first, so high priority can overwrite)
         for path in reversed(zip_paths):
-            if not os.path.exists(path):
-                continue
+            if not os.path.exists(path): continue
             try:
                 with zipfile.ZipFile(path, 'r') as zip_ref:
-                    zip_ref.extractall(temp_dir)
+                    # Look for the 'assets' directory. If it's nested (e.g. inside a subfolder), 
+                    # we need to lift it.
+                    names = zip_ref.namelist()
+                    assets_root = ""
+                    for name in names:
+                        if "assets/" in name and not name.startswith("assets/"):
+                            # This pack is nested! e.g. "PackName/assets/..."
+                            assets_root = name.split("assets/")[0]
+                            break
+                    
+                    if assets_root:
+                        for member in zip_ref.infolist():
+                            if member.filename.startswith(assets_root):
+                                rel_path = member.filename[len(assets_root):]
+                                if not rel_path: continue
+                                target = os.path.join(temp_dir, rel_path)
+                                if member.is_dir():
+                                    os.makedirs(target, exist_ok=True)
+                                else:
+                                    with open(target, 'wb') as f:
+                                        f.write(zip_ref.read(member))
+                    else:
+                        zip_ref.extractall(temp_dir)
             except Exception as e:
                 print(f"Error unpacking {path}: {e}")
 

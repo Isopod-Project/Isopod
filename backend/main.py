@@ -132,7 +132,7 @@ def get_instance_status(instance_id: str):
         try:
             # Check most recent logs for Minecraft heartbeats
             log_result = subprocess.run(
-                ["docker", "compose", "logs", "--tail=100", "mc"],
+                ["docker", "compose", "logs", "--tail=200", "mc"],
                 cwd=get_instance_path(instance_id),
                 capture_output=True, text=True, timeout=5
             )
