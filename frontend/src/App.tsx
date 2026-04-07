@@ -381,6 +381,21 @@ export default function App() {
     try {
       const res = await fetch(`/api/instances/${id}/config`);
       const data = await res.json();
+      
+      // Automatic migration/cleanup of problematic environment variables
+      if (data.environment) {
+        // Renamed to avoid conflicts with itzg image's bedrock vars
+        if (data.environment["RESOURCE_PACK_ID"]) {
+          data.environment["ISOPOD_INTERNAL_PACK_REF"] = data.environment["RESOURCE_PACK_ID"];
+          delete data.environment["RESOURCE_PACK_ID"];
+        }
+        
+        // Ensure prompt is JSON-wrapped if it is plain text
+        if (data.environment["RESOURCE_PACK_PROMPT"] && !data.environment["RESOURCE_PACK_PROMPT"].trim().startsWith('{')) {
+          data.environment["RESOURCE_PACK_PROMPT"] = JSON.stringify({ text: data.environment["RESOURCE_PACK_PROMPT"] });
+        }
+      }
+      
       setConfig(data);
       setOriginalConfig(JSON.stringify(data));
     } catch (e) {
@@ -429,7 +444,23 @@ export default function App() {
 
    const handleSaveConfig = async () => {
     if (!selectedId || !config) return;
-    if (JSON.stringify(config) === originalConfig) {
+
+    // Prune conflicting variables before saving
+    const { RESOURCE_PACK_ID, ISOPOD_PACK_ID, ...remainingEnv } = config.environment;
+    const finalEnv: Record<string, string> = { ...remainingEnv };
+    
+    // Safety check for uppercase policy
+    if (finalEnv["RESOURCE_PACK_ENFORCE"] === "true") finalEnv["RESOURCE_PACK_ENFORCE"] = "TRUE";
+    if (finalEnv["REQUIRE_RESOURCE_PACK"] === "true") finalEnv["REQUIRE_RESOURCE_PACK"] = "TRUE";
+    
+    // Final prompt safety
+    if (finalEnv["RESOURCE_PACK_PROMPT"] && !finalEnv["RESOURCE_PACK_PROMPT"].trim().startsWith('{')) {
+       finalEnv["RESOURCE_PACK_PROMPT"] = JSON.stringify({ text: finalEnv["RESOURCE_PACK_PROMPT"] });
+    }
+    
+    const updatedConfig = { ...config, environment: finalEnv };
+
+    if (JSON.stringify(updatedConfig) === originalConfig) {
       await showAlert("No changes to save.", "Settings");
       return;
     }
@@ -460,10 +491,11 @@ export default function App() {
       const res = await fetch(`/api/instances/${selectedId}/config`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config)
+        body: JSON.stringify(updatedConfig)
       });
       if (!res.ok) throw new Error("Failed to save config");
-      setOriginalConfig(JSON.stringify(config));
+      setOriginalConfig(JSON.stringify(updatedConfig));
+      setConfig(updatedConfig); // Also update live state
       
       if (shouldRestartAfter) {
         setIsEditModalOpen(false); // Exit to main screen
@@ -2136,7 +2168,7 @@ export default function App() {
                                             </tr>
                                          ) : (
                                             installedResourcePacksMeta.map((pack) => {
-                                               const isActive = String(config.environment["ISOPOD_PACK_ID"]).toUpperCase() === String(pack.id).toUpperCase() || (pack.url && config.environment["RESOURCE_PACK"]?.includes(pack.id));
+                                               const isActive = String(config.environment["ISOPOD_INTERNAL_PACK_REF"]).toUpperCase() === String(pack.id).toUpperCase() || (pack.url && config.environment["RESOURCE_PACK"]?.includes(pack.id));
                                                
                                                return (
                                                   <tr key={pack.id} className="hover:bg-[#2A2A2A] transition-colors group">
@@ -2153,14 +2185,14 @@ export default function App() {
                                                                        const file = latest.files.find((f: any) => f.primary) || latest.files[0];
                                                                        if (file) {
                                                                           setConfig(prev => {
-                                                                             const { RESOURCE_PACK_ID: _, ...rest } = prev.environment;
+                                                                             const { RESOURCE_PACK_ID: _1, ISOPOD_PACK_ID: _2, ...rest } = prev.environment;
                                                                              return {
                                                                                 ...prev,
                                                                                 environment: { 
                                                                                    ...rest, 
                                                                                    RESOURCE_PACK: file.url,
                                                                                    RESOURCE_PACK_SHA1: file.hashes.sha1,
-                                                                                   ISOPOD_PACK_ID: pack.id
+                                                                                   ISOPOD_INTERNAL_PACK_REF: pack.id
                                                                                 }
                                                                              };
                                                                           });
