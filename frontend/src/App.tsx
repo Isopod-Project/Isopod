@@ -2136,7 +2136,7 @@ export default function App() {
                                             </tr>
                                          ) : (
                                             installedResourcePacksMeta.map((pack) => {
-                                               const isActive = config.environment["RESOURCE_PACK_ID"] === pack.id || (pack.url && config.environment["RESOURCE_PACK"]?.includes(pack.id));
+                                               const isActive = String(config.environment["ISOPOD_PACK_ID"]).toUpperCase() === String(pack.id).toUpperCase() || (pack.url && config.environment["RESOURCE_PACK"]?.includes(pack.id));
                                                
                                                return (
                                                   <tr key={pack.id} className="hover:bg-[#2A2A2A] transition-colors group">
@@ -2158,7 +2158,7 @@ export default function App() {
                                                                                 ...prev.environment, 
                                                                                 RESOURCE_PACK: file.url,
                                                                                 RESOURCE_PACK_SHA1: file.hashes.sha1,
-                                                                                RESOURCE_PACK_ID: pack.id
+                                                                                ISOPOD_PACK_ID: pack.id
                                                                              }
                                                                           }));
                                                                        }
@@ -2225,14 +2225,28 @@ export default function App() {
                                       <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">Requirement Policy</span>
                                       <div className="flex bg-[#141414] rounded-md p-1 border border-[#333] h-[32px]">
                                          <button 
-                                            onClick={() => setConfig(prev => ({ ...prev, environment: { ...prev.environment, RESOURCE_PACK_ENFORCE: "false" } }))}
-                                            className={`px-3 rounded text-[9px] font-bold transition-all ${config.environment["RESOURCE_PACK_ENFORCE"] !== "true" ? 'bg-[#333] text-white shadow-inner' : 'text-neutral-500 hover:text-neutral-300'}`}
+                                            onClick={() => setConfig(prev => ({ 
+                                               ...prev, 
+                                               environment: { 
+                                                 ...prev.environment, 
+                                                 RESOURCE_PACK_ENFORCE: "FALSE",
+                                                 REQUIRE_RESOURCE_PACK: "FALSE" 
+                                               } 
+                                            }))}
+                                            className={`px-3 rounded text-[9px] font-bold transition-all ${String(config.environment["RESOURCE_PACK_ENFORCE"]).toUpperCase() !== "TRUE" && String(config.environment["REQUIRE_RESOURCE_PACK"]).toUpperCase() !== "TRUE" ? 'bg-[#333] text-white shadow-inner' : 'text-neutral-500 hover:text-neutral-300'}`}
                                          >
                                             SUGGESTED
                                          </button>
                                          <button 
-                                            onClick={() => setConfig(prev => ({ ...prev, environment: { ...prev.environment, RESOURCE_PACK_ENFORCE: "true" } }))}
-                                            className={`px-3 rounded text-[9px] font-bold transition-all ${config.environment["RESOURCE_PACK_ENFORCE"] === "true" ? 'bg-amber-600/20 text-amber-500 border border-amber-600/30 shadow-inner' : 'text-neutral-500 hover:text-neutral-300'}`}
+                                            onClick={() => setConfig(prev => ({ 
+                                               ...prev, 
+                                               environment: { 
+                                                 ...prev.environment, 
+                                                 RESOURCE_PACK_ENFORCE: "TRUE",
+                                                 REQUIRE_RESOURCE_PACK: "TRUE" 
+                                               } 
+                                            }))}
+                                            className={`px-3 rounded text-[9px] font-bold transition-all ${String(config.environment["RESOURCE_PACK_ENFORCE"]).toUpperCase() === "TRUE" || String(config.environment["REQUIRE_RESOURCE_PACK"]).toUpperCase() === "TRUE" ? 'bg-amber-600/20 text-amber-500 border border-amber-600/30 shadow-inner' : 'text-neutral-500 hover:text-neutral-300'}`}
                                          >
                                             REQUIRED
                                          </button>
