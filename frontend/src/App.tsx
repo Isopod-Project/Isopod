@@ -450,9 +450,14 @@ export default function App() {
     // IMPORTANT: Do NOT delete RESOURCE_PACK_ID — set it to empty string instead.
     // The itzg image only overwrites server.properties values for env vars that are present.
     // If we delete the env var, the old stale value (e.g. "fresh-animations") persists in server.properties.
-    // Prune known problematic variables but KEEP internal tracking for the UI star
-    const { ISOPOD_PACK_ID, RESOURCE_PACK_ID, ...remainingEnv } = config.environment;
-    const finalEnv: Record<string, string> = { ...remainingEnv };
+    // Create a copy of the environment for final processing
+    const finalEnv: Record<string, string> = { ...config.environment };
+    
+    // Explicitly clear legacy problematic keys but KEEP internal tracking
+    delete finalEnv["ISOPOD_PACK_ID"];
+    
+    // Force-reset RESOURCE_PACK_ID to empty so itzg clears it from server.properties
+    finalEnv["RESOURCE_PACK_ID"] = "";
     
     // The itzg image does NOT have a built-in RESOURCE_PACK_ID env var.
     // Use CUSTOM_SERVER_PROPERTIES to explicitly clear the stale resource-pack-id 
@@ -2188,7 +2193,15 @@ export default function App() {
                                             </tr>
                                          ) : (
                                             installedResourcePacksMeta.map((pack) => {
-                                               const isActive = String(config.environment["ISOPOD_INTERNAL_PACK_REF"]).toUpperCase() === String(pack.id).toUpperCase() || (pack.url && config.environment["RESOURCE_PACK"]?.includes(pack.id));
+                                                const internalRef = (config.environment["ISOPOD_INTERNAL_PACK_REF"] || "").toUpperCase();
+                                                const packId = String(pack.id).toUpperCase();
+                                                const packRequested = String(pack.requested_id || "").toUpperCase();
+                                                const packUrl = (config.environment["RESOURCE_PACK"] || "");
+                                                
+                                                // Robust active check: matches internal ref ID, slug, OR the download URL includes the project ID
+                                                const isActive = (internalRef && (internalRef === packId || internalRef === packRequested)) || 
+                                                               (pack.id && packUrl.includes(pack.id)) ||
+                                                               (pack.requested_id && packUrl.includes(pack.requested_id));
                                                
                                                return (
                                                   <tr key={pack.id} className="hover:bg-[#2A2A2A] transition-colors group">
