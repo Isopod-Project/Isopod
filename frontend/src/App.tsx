@@ -2145,22 +2145,25 @@ export default function App() {
                                                            onClick={async () => {
                                                               // Fetch latest version for this pack to get the direct URL
                                                               if (pack.provider === 'modrinth') {
-                                                                 try {
+                                                                try {
                                                                     const res = await fetch(`https://api.modrinth.com/v2/project/${pack.id}/version`);
                                                                     const vdata = await res.json();
                                                                     if (vdata && vdata.length > 0) {
                                                                        const latest = vdata[0];
                                                                        const file = latest.files.find((f: any) => f.primary) || latest.files[0];
                                                                        if (file) {
-                                                                          setConfig(prev => ({
-                                                                             ...prev,
-                                                                             environment: { 
-                                                                                ...prev.environment, 
-                                                                                RESOURCE_PACK: file.url,
-                                                                                RESOURCE_PACK_SHA1: file.hashes.sha1,
-                                                                                ISOPOD_PACK_ID: pack.id
-                                                                             }
-                                                                          }));
+                                                                          setConfig(prev => {
+                                                                             const { RESOURCE_PACK_ID: _, ...rest } = prev.environment;
+                                                                             return {
+                                                                                ...prev,
+                                                                                environment: { 
+                                                                                   ...rest, 
+                                                                                   RESOURCE_PACK: file.url,
+                                                                                   RESOURCE_PACK_SHA1: file.hashes.sha1,
+                                                                                   ISOPOD_PACK_ID: pack.id
+                                                                                }
+                                                                             };
+                                                                          });
                                                                        }
                                                                     }
                                                                  } catch (e) {
@@ -2238,18 +2241,25 @@ export default function App() {
                                             SUGGESTED
                                          </button>
                                          <button 
-                                            onClick={() => setConfig(prev => ({ 
-                                               ...prev, 
-                                               environment: { 
-                                                 ...prev.environment, 
-                                                 RESOURCE_PACK_ENFORCE: "TRUE",
-                                                 REQUIRE_RESOURCE_PACK: "TRUE" 
-                                               } 
-                                            }))}
-                                            className={`px-3 rounded text-[9px] font-bold transition-all ${String(config.environment["RESOURCE_PACK_ENFORCE"]).toUpperCase() === "TRUE" || String(config.environment["REQUIRE_RESOURCE_PACK"]).toUpperCase() === "TRUE" ? 'bg-amber-600/20 text-amber-500 border border-amber-600/30 shadow-inner' : 'text-neutral-500 hover:text-neutral-300'}`}
-                                         >
-                                            REQUIRED
-                                         </button>
+                                             onClick={() => setConfig(prev => {
+                                                const { RESOURCE_PACK_ID: _, ...rest } = prev.environment;
+                                                const newEnv: Record<string, string> = { 
+                                                   ...rest, 
+                                                   RESOURCE_PACK_ENFORCE: "TRUE",
+                                                   REQUIRE_RESOURCE_PACK: "TRUE" 
+                                                };
+                                                
+                                                // Automatic JSON-wrapping if missing
+                                                if (newEnv["RESOURCE_PACK_PROMPT"] && !newEnv["RESOURCE_PACK_PROMPT"].trim().startsWith('{')) {
+                                                   newEnv["RESOURCE_PACK_PROMPT"] = JSON.stringify({ text: newEnv["RESOURCE_PACK_PROMPT"] });
+                                                }
+                                                
+                                                return { ...prev, environment: newEnv };
+                                             })}
+                                             className={`px-3 rounded text-[9px] font-bold transition-all ${String(config.environment["RESOURCE_PACK_ENFORCE"]).toUpperCase() === "TRUE" || String(config.environment["REQUIRE_RESOURCE_PACK"]).toUpperCase() === "TRUE" ? 'bg-amber-600/20 text-amber-500 border border-amber-600/30 shadow-inner' : 'text-neutral-500 hover:text-neutral-300'}`}
+                                          >
+                                             REQUIRED
+                                          </button>
                                       </div>
                                    </div>
                                    <span className="text-[10px] text-neutral-600 italic">Only the "Active" resource pack will be served to players.</span>
