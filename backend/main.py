@@ -380,7 +380,7 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
     params = {
         "query": q,
         "facets": json.dumps(facets),
-        "limit": 20
+        "limit": 120
     }
     
     async with httpx.AsyncClient() as client:
@@ -436,7 +436,7 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
         "searchFilter": q,
         "classId": class_id, 
         "excludeCategoryIds": "4764" if class_id == 6 else None, # Client Side only for mods
-        "pageSize": 20
+        "pageSize": 120
     }
     if mc_version:
         params["gameVersion"] = mc_version
