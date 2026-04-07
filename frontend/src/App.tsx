@@ -384,10 +384,12 @@ export default function App() {
       
       // Automatic migration/cleanup of problematic environment variables
       if (data.environment) {
-        // Renamed to avoid conflicts with itzg image's bedrock vars
-        if (data.environment["RESOURCE_PACK_ID"]) {
+        // If RESOURCE_PACK_ID has a non-empty value (like a pack slug), migrate it
+        // to our internal tracking var and set the original to empty so the itzg image
+        // will clear the stale value from server.properties on next restart
+        if (data.environment["RESOURCE_PACK_ID"] && data.environment["RESOURCE_PACK_ID"].trim()) {
           data.environment["ISOPOD_INTERNAL_PACK_REF"] = data.environment["RESOURCE_PACK_ID"];
-          delete data.environment["RESOURCE_PACK_ID"];
+          data.environment["RESOURCE_PACK_ID"] = "";
         }
         
         // Ensure prompt is JSON-wrapped if it is plain text
@@ -445,13 +447,30 @@ export default function App() {
    const handleSaveConfig = async () => {
     if (!selectedId || !config) return;
 
-    // Prune conflicting variables before saving
-    const { RESOURCE_PACK_ID, ISOPOD_PACK_ID, ...remainingEnv } = config.environment;
+    // IMPORTANT: Do NOT delete RESOURCE_PACK_ID — set it to empty string instead.
+    // The itzg image only overwrites server.properties values for env vars that are present.
+    // If we delete the env var, the old stale value (e.g. "fresh-animations") persists in server.properties.
+    const { ISOPOD_PACK_ID, RESOURCE_PACK_ID, ISOPOD_INTERNAL_PACK_REF, ...remainingEnv } = config.environment;
     const finalEnv: Record<string, string> = { ...remainingEnv };
     
-    // Safety check for uppercase policy
+    // The itzg image does NOT have a built-in RESOURCE_PACK_ID env var.
+    // Use CUSTOM_SERVER_PROPERTIES to explicitly clear the stale resource-pack-id 
+    // that was previously written to server.properties.
+    const customProps: string[] = [];
+    customProps.push("resource-pack-id=");
+    
+    // Merge with any existing custom properties
+    if (finalEnv["CUSTOM_SERVER_PROPERTIES"]) {
+       const existing = finalEnv["CUSTOM_SERVER_PROPERTIES"].split("\n")
+          .filter(l => !l.trim().startsWith("resource-pack-id"));
+       customProps.push(...existing);
+    }
+    finalEnv["CUSTOM_SERVER_PROPERTIES"] = customProps.join("\n");
+    
+    // Safety check for uppercase policy — only RESOURCE_PACK_ENFORCE is recognized by itzg image
     if (finalEnv["RESOURCE_PACK_ENFORCE"] === "true") finalEnv["RESOURCE_PACK_ENFORCE"] = "TRUE";
-    if (finalEnv["REQUIRE_RESOURCE_PACK"] === "true") finalEnv["REQUIRE_RESOURCE_PACK"] = "TRUE";
+    // Remove REQUIRE_RESOURCE_PACK — it's not a real itzg env var and may cause conflicts
+    delete finalEnv["REQUIRE_RESOURCE_PACK"];
     
     // Final prompt safety
     if (finalEnv["RESOURCE_PACK_PROMPT"] && !finalEnv["RESOURCE_PACK_PROMPT"].trim().startsWith('{')) {
@@ -2185,7 +2204,7 @@ export default function App() {
                                                                        const file = latest.files.find((f: any) => f.primary) || latest.files[0];
                                                                        if (file) {
                                                                           setConfig(prev => {
-                                                                             const { RESOURCE_PACK_ID: _1, ISOPOD_PACK_ID: _2, ...rest } = prev.environment;
+                                                                             const { ISOPOD_PACK_ID: _2, ...rest } = prev.environment;
                                                                              return {
                                                                                 ...prev,
                                                                                 environment: { 
