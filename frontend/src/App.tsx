@@ -149,6 +149,12 @@ export default function App() {
   const [instanceWhitelistUser, setInstanceWhitelistUser] = useState("");
   const [instanceWhitelistPreview, setInstanceWhitelistPreview] = useState<{name: string, uuid: string} | null>(null);
 
+  // Resource Pack States
+  const [resourcePackQuery, setResourcePackQuery] = useState("");
+  const [resourcePackProvider, setResourcePackProvider] = useState<"modrinth" | "curseforge">("modrinth");
+  const [resourcePackResults, setResourcePackResults] = useState<any[]>([]);
+  const [isResourcePackSearching, setIsResourcePackSearching] = useState(false);
+
   // Bootstrap seenPlayers with defaults and common entries
   useEffect(() => {
     const defaults = globalSettings.defaultWhitelistUsers.map(u => ({ name: u, uuid: u }));
@@ -600,6 +606,22 @@ export default function App() {
     }
   };
 
+  const handleResourcePackSearch = async (query: string, provider: string) => {
+    setIsResourcePackSearching(true);
+    try {
+      const mc_version = config?.environment ? (config.environment["VERSION"] || "") : "";
+      const res = await fetch(`/api/mods/search/${provider}?q=${encodeURIComponent(query)}&class_type=resourcepack&mc_version=${mc_version}`);
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const data = await res.json();
+      setResourcePackResults(data);
+    } catch (e: any) {
+      console.error("Resource pack search failed", e);
+      // Fallback or silent error for now to avoid interrupting user flows
+    } finally {
+      setIsResourcePackSearching(false);
+    }
+  };
+
   const fetchInstalledModsMeta = async () => {
     if (!config || !config.environment) return;
     const mIdsEnv = config.environment["MODRINTH_PROJECTS"] || "";
@@ -751,6 +773,16 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [modSearchQuery, modSearchProvider]);
+
+  // Debounced Resource Pack search
+  useEffect(() => {
+    if (editTab === "resource-pack") {
+      const timer = setTimeout(() => {
+        handleResourcePackSearch(resourcePackQuery, resourcePackProvider);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [resourcePackQuery, resourcePackProvider, editTab]);
 
   // Verify Minecraft User for Global Whitelist
   useEffect(() => {
@@ -1436,6 +1468,13 @@ export default function App() {
                     Mods
                   </button>
                   <button 
+                    onClick={() => setEditTab("resource-pack")}
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "resource-pack" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                  >
+                    <Layers className="w-4 h-4" />
+                    Resource Packs
+                  </button>
+                  <button 
                     onClick={() => setEditTab("config")}
                     className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "config" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
                   >
@@ -2008,6 +2047,156 @@ export default function App() {
                              </div>
                           </div>
                        )}
+                    </div>
+                  )}
+
+                  {editTab === "resource-pack" && (
+                    <div className="flex flex-col h-full bg-[#1E1E1E] overflow-hidden">
+                       <div className="p-6 border-b border-[#323232] bg-[#242424] flex flex-col gap-4 shadow-sm">
+                          <div className="flex items-center justify-between">
+                             <h3 className="text-xl font-bold flex items-center gap-2">
+                                <Layers className="text-[#3E8ED0]" /> Resource Packs
+                             </h3>
+                             <div className="flex bg-[#1A1A1A] border border-[#3A3A3A] p-1 rounded-lg">
+                                <button 
+                                   onClick={() => setResourcePackProvider("modrinth")}
+                                   className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${resourcePackProvider === 'modrinth' ? 'bg-[#3E8ED0] text-white shadow-sm' : 'text-neutral-500 hover:text-neutral-300'}`}
+                                >
+                                   Modrinth
+                                </button>
+                                <button 
+                                   onClick={() => setResourcePackProvider("curseforge")}
+                                   className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${resourcePackProvider === 'curseforge' ? 'bg-[#3E8ED0] text-white shadow-sm' : 'text-neutral-500 hover:text-neutral-300'}`}
+                                >
+                                   CurseForge
+                                </button>
+                             </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-3">
+                             <div className="flex-1 relative group">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500 group-focus-within:text-[#3E8ED0] transition-colors" />
+                                <input 
+                                   type="text"
+                                   className="w-full bg-[#1A1A1A] border border-[#3A3A3A] pl-10 pr-4 py-2 rounded focus:outline-none focus:border-[#3E8ED0] text-sm transition-all"
+                                   placeholder="Search for resource packs..."
+                                   value={resourcePackQuery}
+                                   onChange={(e) => setResourcePackQuery(e.target.value)}
+                                   onKeyDown={(e) => e.key === 'Enter' && handleResourcePackSearch(resourcePackQuery, resourcePackProvider)}
+                                />
+                             </div>
+                             <button 
+                                onClick={() => handleResourcePackSearch(resourcePackQuery, resourcePackProvider)}
+                                className="px-6 py-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white rounded font-bold text-sm shadow-sm transition-all whitespace-nowrap"
+                             >
+                                Search
+                             </button>
+                          </div>
+                       </div>
+
+                       <div className="flex-1 overflow-auto p-6 space-y-8 bg-[#1A1A1A]">
+                          {/* Current Settings */}
+                          <div className="max-w-3xl mx-auto space-y-6">
+                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="space-y-2">
+                                   <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">Server Resource Pack URL</label>
+                                   <input 
+                                      type="text"
+                                      value={config.environment["RESOURCE_PACK"] || ""}
+                                      onChange={(e) => setConfig(prev => ({ ...prev, environment: { ...prev.environment, RESOURCE_PACK: e.target.value } }))}
+                                      className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg font-mono text-xs text-neutral-200 focus:outline-none focus:border-[#3E8ED0] transition-all"
+                                      placeholder="https://example.com/pack.zip"
+                                   />
+                                </div>
+                                <div className="space-y-2">
+                                   <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">Requirement Policy</label>
+                                   <div className="flex bg-[#141414] rounded-lg p-1 border border-[#333] h-[42px]">
+                                      <button 
+                                         onClick={() => setConfig(prev => ({ ...prev, environment: { ...prev.environment, RESOURCE_PACK_ENFORCE: "false" } }))}
+                                         className={`flex-1 rounded-md text-[10px] font-bold transition-all ${config.environment["RESOURCE_PACK_ENFORCE"] !== "true" ? 'bg-[#333] text-white shadow-inner' : 'text-neutral-500 hover:text-neutral-300'}`}
+                                      >
+                                         SUGGESTED
+                                      </button>
+                                      <button 
+                                         onClick={() => setConfig(prev => ({ ...prev, environment: { ...prev.environment, RESOURCE_PACK_ENFORCE: "true" } }))}
+                                         className={`flex-1 rounded-md text-[10px] font-bold transition-all ${config.environment["RESOURCE_PACK_ENFORCE"] === "true" ? 'bg-amber-600/20 text-amber-500 border border-amber-600/30 shadow-inner' : 'text-neutral-500 hover:text-neutral-300'}`}
+                                      >
+                                         REQUIRED
+                                      </button>
+                                   </div>
+                                </div>
+                             </div>
+
+                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="space-y-2">
+                                   <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">SHA-1 Hash (Optional)</label>
+                                   <input 
+                                      type="text"
+                                      value={config.environment["RESOURCE_PACK_SHA1"] || ""}
+                                      onChange={(e) => setConfig(prev => ({ ...prev, environment: { ...prev.environment, RESOURCE_PACK_SHA1: e.target.value } }))}
+                                      className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg font-mono text-xs text-neutral-200 focus:outline-none focus:border-[#3E8ED0] transition-all"
+                                      placeholder="Leave empty if unsure"
+                                   />
+                                </div>
+                                <div className="space-y-2">
+                                   <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">Custom Prompt Message</label>
+                                   <input 
+                                      type="text"
+                                      value={config.environment["RESOURCE_PACK_PROMPT"] || ""}
+                                      onChange={(e) => setConfig(prev => ({ ...prev, environment: { ...prev.environment, RESOURCE_PACK_PROMPT: e.target.value } }))}
+                                      className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg text-xs text-neutral-200 focus:outline-none focus:border-[#3E8ED0] transition-all"
+                                      placeholder="Default Minecraft prompt if empty..."
+                                   />
+                                </div>
+                             </div>
+
+                             <div className="h-px bg-white/5 my-4"></div>
+
+                             <div className="space-y-4">
+                                <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-widest pl-1">Quick Select from {resourcePackProvider === 'modrinth' ? 'Modrinth' : 'CurseForge'}</h4>
+                                <div className="grid grid-cols-1 gap-2">
+                                   {isResourcePackSearching ? (
+                                      <div className="flex flex-col items-center justify-center p-8 bg-[#141414] border border-dashed border-[#333] rounded-xl gap-3">
+                                         <RefreshCw className="w-8 h-8 animate-spin text-[#3E8ED0]" />
+                                         <span className="text-xs text-neutral-500">Searching for resource packs...</span>
+                                      </div>
+                                   ) : resourcePackResults.length === 0 ? (
+                                      <div className="flex flex-col items-center justify-center p-8 bg-[#141414] border border-dashed border-[#333] rounded-xl gap-2 opacity-50 text-center">
+                                         <Layers className="w-8 h-8 text-neutral-700" />
+                                         <p className="text-[11px] text-neutral-500">Search for packs to see options here,<br/>or manually enter a URL above.</p>
+                                      </div>
+                                   ) : (
+                                      resourcePackResults.map((pack) => (
+                                         <div 
+                                            key={pack.id} 
+                                            onClick={async () => {
+                                               // We'll let the user know they should paste the link
+                                               await showAlert(`To use this pack, you need to provide a direct .zip download link. Please copy the link from the project page.`, "Pack Selected");
+                                            }}
+                                            className="flex items-center gap-4 p-3 bg-[#222] border border-[#333] rounded-lg hover:bg-[#282828] hover:border-[#444] transition-all group overflow-hidden cursor-pointer"
+                                         >
+                                            <div className="w-12 h-12 bg-[#333] rounded overflow-hidden flex-shrink-0 shadow-inner">
+                                               {pack.icon_url ? <img src={pack.icon_url} alt="" className="w-full h-full object-cover" /> : <Layers className="w-full h-full p-3 text-neutral-600" />}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                               <div className="flex items-center justify-between mb-0.5">
+                                                  <h5 className="font-bold text-[#E0E0E0] truncate text-sm">{pack.name}</h5>
+                                                  <span className="text-[9px] font-mono text-neutral-500 bg-[#111] px-1.5 py-0.5 rounded uppercase">By {pack.author}</span>
+                                               </div>
+                                               <p className="text-[11px] text-neutral-500 line-clamp-1">{pack.summary}</p>
+                                            </div>
+                                            <div className="flex flex-col items-end gap-1 group-hover:opacity-100 opacity-0 transition-opacity">
+                                               <a href={pack.url} target="_blank" className="p-1.5 hover:bg-[#333] rounded text-[#3E8ED0]" onClick={(e) => e.stopPropagation()}>
+                                                  <ExternalLink className="w-3.5 h-3.5" />
+                                               </a>
+                                            </div>
+                                         </div>
+                                      ))
+                                   )}
+                                </div>
+                             </div>
+                          </div>
+                       </div>
                     </div>
                   )}
 

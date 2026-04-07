@@ -408,8 +408,12 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
     mc_version = None if mc_version == "undefined" or not mc_version else mc_version
     loader = None if loader == "undefined" or not loader else loader
     
-    # Using '6' for mods, '4471' for modpacks
-    class_id = 4471 if class_type == "modpack" else 6
+    # Using '6' for mods, '4471' for modpacks, '12' for resource packs
+    class_id = 6
+    if class_type == "modpack":
+        class_id = 4471
+    elif class_type == "resourcepack":
+        class_id = 12
     
     # If query is empty, we browse via parameters
     query_str = q if q else ""
