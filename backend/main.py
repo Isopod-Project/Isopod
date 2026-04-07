@@ -2,7 +2,8 @@ import os
 import subprocess
 import shutil
 import re
-from fastapi import FastAPI, HTTPException
+import asyncio
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -14,6 +15,7 @@ from typing import List, Optional, Dict, Any
 import httpx
 import json
 import time
+import backend.resource_packs as rp
 
 load_dotenv()
 
@@ -227,12 +229,60 @@ def get_config(instance_id: str):
     }
 
 @app.put("/api/instances/{instance_id}/config")
-def update_config(instance_id: str, new_config: InstanceConfig):
+async def update_config(instance_id: str, new_config: InstanceConfig):
     path = get_instance_path(instance_id)
     compose_path = os.path.join(path, "docker-compose.yml")
     if not os.path.exists(compose_path):
         raise HTTPException(status_code=404, detail="docker-compose.yml not found")
         
+    env = new_config.environment
+    mc_version = env.get("VERSION", "1.20.4") # Default if missing
+    
+    # Check if we should auto-bundle resource packs
+    # Logic: If multiple packs are in RESOURCE_PACKS_MODRINTH or RESOURCE_PACKS_CF
+    # OR if the user added even 1 pack, let's bundle it to ensure public access (MCPacks).
+    m_ids = [i.strip() for i in env.get("RESOURCE_PACKS_MODRINTH", "").split(",") if i.strip()]
+    c_ids = [i.strip() for i in env.get("RESOURCE_PACKS_CF", "").split(",") if i.strip()]
+    
+    if m_ids or c_ids:
+        print(f"Bundling resource packs for {instance_id}...")
+        try:
+            cache_dir = os.path.join(SERVERS_DIR, ".cache", "resource_packs")
+            os.makedirs(cache_dir, exist_ok=True)
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                downloaded_zips = []
+                # Resolve & download each pack
+                for mid in m_ids:
+                    url = await rp.get_latest_version_url(client, "modrinth", mid, mc_version)
+                    if url:
+                        zip_path = os.path.join(cache_dir, f"{mid}.zip")
+                        await rp.download_file(client, url, zip_path)
+                        downloaded_zips.append(zip_path)
+                
+                for cid in c_ids:
+                    url = await rp.get_latest_version_url(client, "curseforge", cid, mc_version)
+                    if url:
+                        zip_path = os.path.join(cache_dir, f"{cid}.zip")
+                        await rp.download_file(client, url, zip_path)
+                        downloaded_zips.append(zip_path)
+                
+                if downloaded_zips:
+                    bundle_path = os.path.join(cache_dir, f"bundle_{instance_id}.zip")
+                    rp.merge_resource_packs(downloaded_zips, bundle_path)
+                    
+                    # Upload and get URL
+                    public_url, sha1 = await rp.upload_to_mcpacks(bundle_path)
+                    if public_url and sha1:
+                        print(f"New bundle uploaded: {public_url} ({sha1})")
+                        env["RESOURCE_PACK"] = public_url
+                        env["RESOURCE_PACK_SHA1"] = sha1
+                        # Clear any stale manual ID
+                        env["RESOURCE_PACK_ID"] = ""
+        except Exception as e:
+            print(f"FAILED to bundle resource packs: {e}")
+            # Non-critical, continue save with whatever we have
+    
     with open(compose_path, "r") as f:
         config = yaml.safe_load(f)
         
@@ -240,7 +290,7 @@ def update_config(instance_id: str, new_config: InstanceConfig):
     if services:
         first_service_name = list(services.keys())[0]
         config['services'][first_service_name]['image'] = new_config.image
-        config['services'][first_service_name]['environment'] = new_config.environment
+        config['services'][first_service_name]['environment'] = env
         
     with open(compose_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False)

@@ -2177,7 +2177,6 @@ export default function App() {
                                    <table className="w-full text-left border-collapse">
                                       <thead>
                                          <tr className="bg-[#2D2D2D] border-b border-[#323232] text-[11px] font-bold text-neutral-500 uppercase tracking-widest">
-                                            <th className="px-4 py-2 w-12 text-center text-[9px]">Server Pack</th>
                                             <th className="px-4 py-2 w-16">Image</th>
                                             <th className="px-4 py-2">Name</th>
                                             <th className="px-4 py-2">Provider</th>
@@ -2193,57 +2192,8 @@ export default function App() {
                                             </tr>
                                          ) : (
                                             installedResourcePacksMeta.map((pack) => {
-                                                const internalRef = (config.environment["ISOPOD_INTERNAL_PACK_REF"] || "").toUpperCase();
-                                                const packId = String(pack.id).toUpperCase();
-                                                const packRequested = String(pack.requested_id || "").toUpperCase();
-                                                const packUrl = (config.environment["RESOURCE_PACK"] || "");
-                                                
-                                                // Robust active check: matches internal ref ID, slug, OR the download URL includes the project ID
-                                                const isActive = (internalRef && (internalRef === packId || internalRef === packRequested)) || 
-                                                               (pack.id && packUrl.includes(pack.id)) ||
-                                                               (pack.requested_id && packUrl.includes(pack.requested_id));
-                                               
                                                return (
                                                   <tr key={pack.id} className="hover:bg-[#2A2A2A] transition-colors group">
-                                                     <td className="px-4 py-3 text-center">
-                                                        <button 
-                                                           onClick={async () => {
-                                                              // Fetch latest version for this pack to get the direct URL
-                                                              if (pack.provider === 'modrinth') {
-                                                                try {
-                                                                    const res = await fetch(`https://api.modrinth.com/v2/project/${pack.id}/version`);
-                                                                    const vdata = await res.json();
-                                                                    if (vdata && vdata.length > 0) {
-                                                                       const latest = vdata[0];
-                                                                       const file = latest.files.find((f: any) => f.primary) || latest.files[0];
-                                                                       if (file) {
-                                                                          setConfig(prev => {
-                                                                             const { ISOPOD_PACK_ID: _2, ...rest } = prev.environment;
-                                                                             return {
-                                                                                ...prev,
-                                                                                environment: { 
-                                                                                   ...rest, 
-                                                                                   RESOURCE_PACK: file.url,
-                                                                                   RESOURCE_PACK_SHA1: file.hashes.sha1,
-                                                                                   ISOPOD_INTERNAL_PACK_REF: pack.id
-                                                                                }
-                                                                             };
-                                                                          });
-                                                                       }
-                                                                    }
-                                                                 } catch (e) {
-                                                                    console.error("Failed to set active pack", e);
-                                                                 }
-                                                              } else {
-                                                                 await showAlert("Automatic link fetching for CurseForge packs is coming soon. Please manually set the URL in configuration for now.", "Coming Soon");
-                                                              }
-                                                           }}
-                                                           title={isActive ? "Currently Active Server Pack" : "Set as Active Server Pack"}
-                                                           className={`p-1.5 rounded-full transition-all ${isActive ? 'text-amber-500 bg-amber-500/10' : 'text-neutral-600 hover:text-amber-400 hover:bg-amber-400/5'}`}
-                                                        >
-                                                           <Star className={`w-4 h-4 ${isActive ? 'fill-current' : ''}`} />
-                                                        </button>
-                                                     </td>
                                                      <td className="px-4 py-3">
                                                         <div className="w-10 h-10 bg-[#333] rounded overflow-hidden shadow-inner flex items-center justify-center">
                                                            {pack.icon_url ? <img src={pack.icon_url} className="w-full h-full object-cover" /> : <Layers className="w-5 h-5 text-neutral-600" />}
@@ -2327,16 +2277,16 @@ export default function App() {
                                           </button>
                                       </div>
                                    </div>
-                                   <span className="text-[10px] text-neutral-600 italic">Only the "Active" resource pack will be served to players.</span>
+                                   <span className="text-[10px] text-neutral-600 italic">All selected packs will be automatically bundled and served to players via MCPacks.</span>
                                 </div>
                                 <div className="flex flex-col gap-2 min-w-[300px]">
-                                    <label className="text-[9px] font-bold text-neutral-500 uppercase tracking-widest px-1">Active Pack Prompt</label>
+                                    <label className="text-[9px] font-bold text-neutral-500 uppercase tracking-widest px-1">Bundle Install Message</label>
                                     <input 
                                        type="text"
                                        value={config.environment["RESOURCE_PACK_PROMPT"] || ""}
                                        onChange={(e) => setConfig(prev => ({ ...prev, environment: { ...prev.environment, RESOURCE_PACK_PROMPT: e.target.value } }))}
                                        className="bg-[#141414] border border-[#3A3A3A] px-3 py-1.5 rounded text-xs text-neutral-400 focus:outline-none focus:border-[#3E8ED0]"
-                                       placeholder="Custom message shown to players"
+                                       placeholder="Message shown when players join"
                                     />
                                 </div>
                              </div>
