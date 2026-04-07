@@ -450,7 +450,8 @@ export default function App() {
     // IMPORTANT: Do NOT delete RESOURCE_PACK_ID — set it to empty string instead.
     // The itzg image only overwrites server.properties values for env vars that are present.
     // If we delete the env var, the old stale value (e.g. "fresh-animations") persists in server.properties.
-    const { ISOPOD_PACK_ID, RESOURCE_PACK_ID, ISOPOD_INTERNAL_PACK_REF, ...remainingEnv } = config.environment;
+    // Prune known problematic variables but KEEP internal tracking for the UI star
+    const { ISOPOD_PACK_ID, RESOURCE_PACK_ID, ...remainingEnv } = config.environment;
     const finalEnv: Record<string, string> = { ...remainingEnv };
     
     // The itzg image does NOT have a built-in RESOURCE_PACK_ID env var.
