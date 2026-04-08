@@ -32,6 +32,7 @@ async def _fetch_pack_url(client: httpx.AsyncClient, pack_id: str, provider: str
             print(f"  [modrinth] Error fetching {pack_id} for {mc_version}: {e}")
 
     elif provider == 'curseforge':
+        # CurseForge API (via proxy)
         try:
             res = await client.get(f"https://api.curse.tools/v1/cf/mods/{pack_id}")
             if res.status_code == 200:
@@ -48,9 +49,8 @@ async def _fetch_pack_url(client: httpx.AsyncClient, pack_id: str, provider: str
 async def get_latest_version_url(client: httpx.AsyncClient, provider: str, pack_id: str, mc_version: str):
     """
     Fetch the download URL for a pack. Tries the exact MC version first,
-    then falls back through common stable versions.
+    then falls back to latest version.
     """
-    # Try exact version first
     print(f"  Resolving {provider}/{pack_id} for MC {mc_version}...")
     url = await _fetch_pack_url(client, pack_id, provider, mc_version)
     if url:
@@ -101,24 +101,22 @@ def merge_resource_packs(zip_paths, output_path):
             if not os.path.exists(path):
                 continue
             try:
+                base_name = os.path.basename(path)
                 with zipfile.ZipFile(path, 'r') as zip_ref:
-                    # Some packs nest their content inside a subfolder.
-                    # Detect this by looking for assets/ not at root level.
+                    # Detect nested folder structure (common in some downloads)
                     names = zip_ref.namelist()
                     assets_root = ""
                     for name in names:
                         if "assets/" in name and not name.startswith("assets/"):
-                            # Nested pack, e.g. "PackName-v1.2/assets/..."
                             assets_root = name.split("assets/")[0]
                             break
 
                     if assets_root:
-                        # Extract with path adjustment
+                        print(f"    -> Unpacking nested '{assets_root}' from {base_name}")
                         for member in zip_ref.infolist():
                             if member.filename.startswith(assets_root):
                                 rel_path = member.filename[len(assets_root):]
-                                if not rel_path:
-                                    continue
+                                if not rel_path: continue
                                 target = os.path.join(temp_dir, rel_path)
                                 if member.is_dir():
                                     os.makedirs(target, exist_ok=True)
@@ -126,16 +124,14 @@ def merge_resource_packs(zip_paths, output_path):
                                     os.makedirs(os.path.dirname(target), exist_ok=True)
                                     with open(target, 'wb') as f:
                                         f.write(zip_ref.read(member))
-                            # Also extract pack.mcmeta and pack.png from root
-                            elif member.filename.endswith("pack.mcmeta") or member.filename.endswith("pack.png"):
-                                basename = os.path.basename(member.filename)
-                                target = os.path.join(temp_dir, basename)
+                            elif any(member.filename.endswith(x) for x in ["pack.mcmeta", "pack.png"]):
+                                target = os.path.join(temp_dir, os.path.basename(member.filename))
                                 with open(target, 'wb') as f:
                                     f.write(zip_ref.read(member))
                     else:
+                        print(f"    -> Unpacking root assets from {base_name}")
                         zip_ref.extractall(temp_dir)
 
-                print(f"    -> Unpacked: {os.path.basename(path)}")
             except Exception as e:
                 print(f"    -> Error unpacking {path}: {e}")
 
@@ -163,38 +159,35 @@ def merge_resource_packs(zip_paths, output_path):
 
 
 async def upload_to_mcpacks(zip_path: str):
-    """Upload a ZIP file to MCPacks and return (url, sha1_hash)."""
-    print(f"  Uploading bundle to MCPacks...")
+    """Upload a ZIP file to MCPacks and return (public_url, sha1_hash)."""
+    print(f"  Uploading bundle to MCPacks (Global Access)...")
     async with httpx.AsyncClient(timeout=60.0) as client:
         with open(zip_path, "rb") as f:
-            files = {"pack": ("bundle.zip", f, "application/zip")}
+            # MCPacks API expects 'file' field name
+            files = {"file": ("bundle.zip", f, "application/zip")}
             res = await client.post(MCPACKS_API_URL, files=files)
 
-            print(f"  MCPacks response status: {res.status_code}")
-            print(f"  MCPacks response body: {res.text[:500]}")
-
+            print(f"  MCPacks HTTP {res.status_code}")
             if res.status_code in (200, 201):
-                data = res.json()
-                # Try multiple possible field names
-                url = (data.get("url") or data.get("download") or 
-                       data.get("download_url") or data.get("link") or
-                       data.get("pack_url"))
-                sha = (data.get("hash") or data.get("sha1") or 
-                       data.get("sha") or data.get("sha1_hash"))
-                
-                # Check nested "data" key
-                if not url and "data" in data:
-                    nested = data["data"]
-                    url = (nested.get("url") or nested.get("download") or 
-                           nested.get("download_url"))
-                    sha = sha or nested.get("hash") or nested.get("sha1")
-                
-                print(f"  Parsed URL: {url}")
-                print(f"  Parsed SHA1: {sha}")
-                return url, sha
+                try:
+                    data = res.json()
+                    # Actual MCPacks response: {"success": true, "data": {"download_url": "...", "sha1": "..."}}
+                    if data.get("success") and "data" in data:
+                        inner = data["data"]
+                        url = inner.get("download_url")
+                        sha = inner.get("sha1")
+                        if url and sha:
+                            return url, sha
+                    
+                    # Fallback for alternative response formats
+                    url = data.get("download_url") or data.get("url")
+                    sha = data.get("sha1") or data.get("hash")
+                    return url, sha
+                except Exception as e:
+                    print(f"  ERROR: Failed to parse MCPacks JSON: {e} | Body: {res.text[:200]}")
             else:
-                print(f"  MCPacks upload FAILED: {res.status_code} - {res.text}")
-                return None, None
+                print(f"  UPLOAD FAILED: {res.text[:200]}")
+            return None, None
 
 
 def get_file_sha1(path: str):
