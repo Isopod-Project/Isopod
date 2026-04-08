@@ -35,7 +35,7 @@ Write-Host "====================================================================
 
 # Run docker compose up in detached mode (-d)
 # This assumes 'docker compose' is available in the system PATH.
-docker compose up -d
+docker compose -f isopod-compose.yml up -d
 
 # 3. Final status check
 if ($LASTEXITCODE -eq 0) {
