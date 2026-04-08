@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   isopod:
@@ -9,8 +9,8 @@ services:
       - "8000:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      # Critical: Host and internal path must match perfectly 
-      # so that compose up commands resolve relative paths on the host daemon natively!
-      - /DATA/AppData/isopod/servers:/DATA/AppData/isopod/servers
+      # Updated to use relative path './servers' for cross-platform compatibility.
+      # The 'servers' directory will be created next to the isopod-compose.yml file.
+      - ./servers:/DATA/AppData/isopod/servers
     environment:
       - SERVERS_DIR=/DATA/AppData/isopod/servers

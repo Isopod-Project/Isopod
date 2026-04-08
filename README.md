@@ -16,10 +16,10 @@
 - **Status Awareness**: Distinguishes between `Offline`, `Starting`, and `Online` states using log-based heartbeat detection.
 - **Modern UI**: Dark-mode, glassmorphic design built with React, Tailwind, and Lucide icons.
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Simplified)
 1. Ensure you have **Docker** and **Docker Compose** installed.
 2. Clone this repository: `git clone https://github.com/Tacoz234/Isopod.git`
-3. Start the application: `docker compose up -d`
+3. **Run the Setup Script**: Navigate to the root directory and execute `./start.sh` (or the Windows equivalent). This handles creating the necessary data folders and starting the service in one step.
 4. Access the dashboard at `http://localhost:8000`.
 
 ## 🛠 Tech Stack
@@ -32,4 +32,5 @@
 The official mascot of Isopod is a colorful, rolling isopod (woodlouse), representing the project's focus on encapsulation, portability (rolling!), and vibrancy.
 
 ---
+*Note: Using `docker compose up` (or `docker-compose up`) is recommended as it abstracts away OS-specific launch commands.*
 *Created by [Tacoz234](https://github.com/Tacoz234)*
