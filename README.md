@@ -19,7 +19,10 @@
 ## 🚀 Quick Start (Simplified)
 1. Ensure you have **Docker** and **Docker Compose** installed.
 2. Clone this repository: `git clone https://github.com/Tacoz234/Isopod.git`
-3. **Run the Setup Script**: Navigate to the root directory and execute `./start.sh` (or the Windows equivalent). This handles creating the necessary data folders and starting the service in one step.
+3. **Run the Setup Script**: The correct script to run depends on your operating system:
+    *   **🐧 / 🍎 Linux/macOS**: Navigate to the root directory and execute `./start.sh`.
+    *   **🪟 Windows**: Open PowerShell in the root directory and execute `.\start.ps1`.
+This command handles creating the necessary data folders and starting the service in one step.
 4. Access the dashboard at `http://localhost:8000`.
 
 ## 🛠 Tech Stack
@@ -32,5 +35,5 @@
 The official mascot of Isopod is a colorful, rolling isopod (woodlouse), representing the project's focus on encapsulation, portability (rolling!), and vibrancy.
 
 ---
-*Note: Using `docker compose up` (or `docker-compose up`) is recommended as it abstracts away OS-specific launch commands.*
+*Note: Using `docker compose up` is recommended as it abstracts away OS-specific launch commands, regardless of the OS.*
 *Created by [Tacoz234](https://github.com/Tacoz234)*
