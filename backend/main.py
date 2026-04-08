@@ -61,6 +61,7 @@ class CreateInstanceRequest(BaseModel):
     loader_version: Optional[str] = "latest"
     modrinth_id: Optional[str] = None
     cf_id: Optional[str] = None
+    memory: Optional[str] = "1G"
     # World settings
     seed: Optional[str] = None
     level_type: Optional[str] = "DEFAULT"
@@ -252,6 +253,32 @@ def update_config(instance_id: str, new_config: InstanceConfig):
         yaml.dump(config, f, default_flow_style=False)
         
     return {"message": "Config updated"}
+
+@app.get("/api/settings")
+def get_settings():
+    settings_path = os.path.join(SERVERS_DIR, "isopod_settings.json")
+    if os.path.exists(settings_path):
+        with open(settings_path, "r") as f:
+            return json.load(f)
+    return {
+        "language": "English",
+        "theme": "Dark",
+        "defaultPort": "25565",
+        "defaultLoader": "VANILLA",
+        "defaultMemory": "1G",
+        "autoRefresh": True,
+        "showSnapshots": False,
+        "defaultWhitelistEnabled": False,
+        "defaultWhitelistUsers": []
+    }
+
+@app.put("/api/settings")
+def update_settings(new_settings: Dict[str, Any]):
+    settings_path = os.path.join(SERVERS_DIR, "isopod_settings.json")
+    os.makedirs(SERVERS_DIR, exist_ok=True)
+    with open(settings_path, "w") as f:
+        json.dump(new_settings, f, indent=4)
+    return {"message": "Settings updated"}
 
 # Meta & Mod Proxy Endpoints
 VERSION_MANIFEST_URL = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
@@ -506,6 +533,7 @@ def create_instance(req: CreateInstanceRequest):
                     "EULA=TRUE",
                     f"TYPE={req.template.upper()}",
                     f"VERSION={req.version or 'latest'}",
+                    f"MEMORY={req.memory or '1G'}",
                     f"MOTD={req.name} Hosted by Isopod",
                     "ENABLE_RCON=true",
                     "RCON_PASSWORD=isopod",

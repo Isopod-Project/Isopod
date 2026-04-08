@@ -88,6 +88,7 @@ export default function App() {
   const [newDifficulty, setNewDifficulty] = useState("easy");
   const [newGamemode, setNewGamemode] = useState("survival");
   const [newGenerateStructures, setNewGenerateStructures] = useState(true);
+  const [newMemory, setNewMemory] = useState("1G");
   
   // Edit Modal states
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -140,6 +141,7 @@ export default function App() {
      theme: 'Dark',
      defaultPort: '25565',
      defaultLoader: 'VANILLA',
+     defaultMemory: '1G',
      autoRefresh: true,
      showSnapshots: false,
      defaultWhitelistEnabled: false,
@@ -323,7 +325,8 @@ export default function App() {
         level_type: newLevelType,
         difficulty: newDifficulty,
         gamemode: newGamemode,
-        generate_structures: newGenerateStructures
+        generate_structures: newGenerateStructures,
+        memory: newMemory
       };
 
       const res = await fetch("/api/instances", {
@@ -348,6 +351,7 @@ export default function App() {
       setNewDifficulty("easy");
       setNewGamemode("survival");
       setNewGenerateStructures(true);
+      setNewMemory(globalSettings.defaultMemory);
       
       fetchInstances();
     } catch (e) {
@@ -722,6 +726,7 @@ export default function App() {
   useEffect(() => {
     fetchInstances();
     fetchMcVersions();
+    fetchGlobalSettings();
     
     const interval = setInterval(() => {
         setInstances((prevInstances: Instance[]) => {
@@ -732,6 +737,19 @@ export default function App() {
     
     return () => clearInterval(interval);
   }, []);
+
+  const fetchGlobalSettings = async () => {
+    try {
+      const res = await fetch("/api/settings");
+      if (res.ok) {
+        const data = await res.json();
+        setGlobalSettings(data);
+        setNewMemory(data.defaultMemory || "1G");
+      }
+    } catch (e) {
+      console.error("Failed to fetch settings", e);
+    }
+  };
 
   // Live Logs Polling
   useEffect(() => {
@@ -843,10 +861,20 @@ export default function App() {
 
   const handleSaveGlobalSettings = async () => {
     setIsSavingGlobal(true);
-    // Simulation of saving settings
-    await new Promise(r => setTimeout(r, 600));
-    setOriginalGlobalSettings(JSON.stringify(globalSettings));
-    setIsSavingGlobal(false);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(globalSettings)
+      });
+      if (!res.ok) throw new Error("Failed to save settings");
+      setOriginalGlobalSettings(JSON.stringify(globalSettings));
+    } catch (e) {
+      console.error(e);
+      await showAlert("Failed to save global settings", "Error");
+    } finally {
+      setIsSavingGlobal(false);
+    }
   };
 
   return (
@@ -1476,6 +1504,34 @@ export default function App() {
                                        {newGenerateStructures ? <Check className="w-5 h-5" /> : <X className="w-5 h-5" />}
                                     </button>
                                  </div>
+                              </div>
+
+                              <div className="space-y-3 pt-4 border-t border-[#333]">
+                                 <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1 flex items-center gap-2">
+                                    <Cpu className="w-3 h-3 text-[#3E8ED0]" /> System RAM (Memory Allocation)
+                                  </label>
+                                  <div className="flex gap-2">
+                                    <input 
+                                       type="text" 
+                                       value={newMemory}
+                                       onChange={(e) => setNewMemory(e.target.value)}
+                                       placeholder="e.g. 2G or 2048M"
+                                       className="flex-1 bg-[#0F0F0F] border border-[#333] p-4 rounded-xl focus:outline-none focus:border-[#3E8ED0] text-sm font-mono text-white transition-all hover:border-[#444]"
+                                    />
+                                    <div className="flex bg-[#1E1E1E] rounded-xl p-1 border border-[#323232] gap-1">
+                                       {['1G', '2G', '4G', '6G', '8G'].map(m => (
+                                          <button 
+                                             key={m}
+                                             type="button"
+                                             onClick={() => setNewMemory(m)}
+                                             className={`px-3 py-1 rounded-lg text-[10px] font-bold transition-all ${newMemory === m ? 'bg-[#3E8ED0] text-white' : 'text-neutral-500 hover:text-white'}`}
+                                          >
+                                             {m}
+                                          </button>
+                                       ))}
+                                    </div>
+                                 </div>
+                                 <p className="text-[10px] text-neutral-600 px-1">Amount of memory allocated to the Minecraft process. Higher values are recommended for modpacks.</p>
                               </div>
                            </div>
 
@@ -2307,10 +2363,44 @@ export default function App() {
                 {editTab === "config" && (
                   <div className="flex flex-col h-full p-8 overflow-auto">
                     <div className="max-w-4xl w-full mx-auto">
-                       <div className="flex items-center gap-3 mb-6">
-                          <Settings className="w-6 h-6 text-[#3E8ED0]" />
-                          <h3 className="text-xl font-bold">Advanced: RAW Environment</h3>
-                       </div>
+                       <div className="flex items-center justify-between mb-6">
+                           <div className="flex items-center gap-3">
+                              <Settings className="w-6 h-6 text-[#3E8ED0]" />
+                              <h3 className="text-xl font-bold">Instance Configuration</h3>
+                           </div>
+                           <div className="flex items-center gap-4 bg-[#242424] px-4 py-2 rounded-lg border border-[#3A3A3A] shadow-sm">
+                              <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest flex items-center gap-2">
+                                 <Cpu className="w-3.5 h-3.5 text-[#3E8ED0]" /> Dedicated RAM
+                              </label>
+                              <div className="flex items-center gap-2">
+                                 <input 
+                                    type="text"
+                                    value={config.environment["MEMORY"] || ""}
+                                    onChange={(e) => setConfig(prev => ({
+                                       ...prev,
+                                       environment: { ...prev.environment, MEMORY: e.target.value }
+                                    }))}
+                                    placeholder="1G"
+                                    className="w-20 bg-[#141414] border border-[#333] px-2 py-1 rounded text-xs font-mono text-[#3E8ED0] focus:outline-none focus:border-[#3E8ED0] placeholder:text-neutral-700" 
+                                 />
+                                 <div className="flex gap-1">
+                                    {['1G', '2G', '4G', '6G'].map(m => (
+                                       <button 
+                                          key={m}
+                                          type="button"
+                                          onClick={() => setConfig(prev => ({
+                                             ...prev,
+                                             environment: { ...prev.environment, MEMORY: m }
+                                          }))}
+                                          className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${config.environment["MEMORY"] === m ? 'bg-[#3E8ED0] border-[#3E8ED0] text-white' : 'bg-[#1a1a1a] border-[#333] text-neutral-500'}`}
+                                       >
+                                          {m}
+                                       </button>
+                                    ))}
+                                 </div>
+                              </div>
+                           </div>
+                        </div>
 
                        <div className="space-y-6">
                           <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg overflow-hidden">
@@ -2778,6 +2868,32 @@ export default function App() {
                                  ))}
                               </div>
                            </div>
+
+                            <div className="flex flex-col gap-3 pt-2 text-[#E0E0E0]">
+                               <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">Default RAM Allocation</label>
+                               <div className="flex gap-3">
+                                  <input 
+                                     type="text"
+                                     value={globalSettings.defaultMemory}
+                                     onChange={(e) => setGlobalSettings({...globalSettings, defaultMemory: e.target.value})}
+                                     placeholder="1G"
+                                     className="flex-1 bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-[#3E8ED0] text-sm font-mono text-[#3E8ED0]"
+                                  />
+                                  <div className="flex bg-[#242424] rounded-lg p-1 border border-[#333] gap-1">
+                                     {['1G', '2G', '4G', '6G', '8G'].map(m => (
+                                        <button 
+                                           key={m}
+                                           type="button"
+                                           onClick={() => setGlobalSettings({...globalSettings, defaultMemory: m})}
+                                           className={`px-4 py-1.5 rounded-md text-[10px] font-bold transition-all ${globalSettings.defaultMemory === m ? 'bg-[#3E8ED0] text-white' : 'text-neutral-500 hover:text-white'}`}
+                                        >
+                                           {m}
+                                        </button>
+                                     ))}
+                                  </div>
+                               </div>
+                               <p className="text-[10px] text-neutral-600 px-1">Memory allocated to new Minecraft server instances by default.</p>
+                            </div>
 
                            <div className="pt-4 border-t border-[#333] space-y-4">
                               <div className="flex items-center justify-between">
