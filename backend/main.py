@@ -191,7 +191,8 @@ def start_instance(instance_id: str):
 @app.post("/api/instances/{instance_id}/stop")
 def stop_instance(instance_id: str):
     path = get_instance_path(instance_id)
-    result = subprocess.run(["docker", "compose", "stop"], cwd=path, capture_output=True, text=True)
+    # Use 'down' instead of 'stop' to remove the container, which clears Docker logs
+    result = subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
     return {"message": "Stopped"}
@@ -228,8 +229,21 @@ def get_config(instance_id: str):
         "environment": env_vars,
     }
 
+@app.get("/api/packs/{instance_id}/bundle.zip")
+def serve_resource_pack_bundle(instance_id: str):
+    """Serve the auto-generated resource pack bundle for an instance."""
+    cache_dir = os.path.join(SERVERS_DIR, ".cache", "resource_packs")
+    bundle_path = os.path.join(cache_dir, f"bundle_{instance_id}.zip")
+    if not os.path.exists(bundle_path):
+        raise HTTPException(status_code=404, detail="No resource pack bundle found. Save your config first.")
+    return FileResponse(
+        path=bundle_path,
+        media_type="application/zip",
+        filename=f"bundle_{instance_id}.zip"
+    )
+
 @app.put("/api/instances/{instance_id}/config")
-async def update_config(instance_id: str, new_config: InstanceConfig):
+async def update_config(instance_id: str, new_config: InstanceConfig, request: Request):
     path = get_instance_path(instance_id)
     compose_path = os.path.join(path, "docker-compose.yml")
     if not os.path.exists(compose_path):
@@ -282,16 +296,18 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
                     bundle_path = os.path.join(cache_dir, f"bundle_{instance_id}.zip")
                     rp.merge_resource_packs(downloaded_zips, bundle_path)
                     
-                    # Upload and get URL
-                    public_url, sha1 = await rp.upload_to_mcpacks(bundle_path)
-                    if public_url and sha1:
-                        print(f"  SUCCESS: Bundle uploaded: {public_url}")
-                        env["RESOURCE_PACK"] = public_url
-                        env["RESOURCE_PACK_SHA1"] = sha1
-                        # Clear any stale manual ID
-                        env["RESOURCE_PACK_ID"] = ""
-                    else:
-                        print(f"  ERROR: MCPacks upload returned no URL/hash")
+                    # Self-host: serve the bundle from our own backend
+                    sha1 = rp.get_file_sha1(bundle_path)
+                    # Build the public URL from the incoming request
+                    host = request.headers.get("host", "localhost:8000")
+                    scheme = request.headers.get("x-forwarded-proto", "http")
+                    public_url = f"{scheme}://{host}/api/packs/{instance_id}/bundle.zip"
+                    
+                    print(f"  SUCCESS: Bundle ready at {public_url} (sha1: {sha1})")
+                    env["RESOURCE_PACK"] = public_url
+                    env["RESOURCE_PACK_SHA1"] = sha1
+                    # Clear any stale manual ID
+                    env["RESOURCE_PACK_ID"] = ""
                 else:
                     print(f"  WARNING: No packs were successfully downloaded, skipping bundle")
         except Exception as e:
