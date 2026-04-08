@@ -192,7 +192,34 @@ async def start_instance(instance_id: str):
         raise HTTPException(status_code=400, detail="No services found in compose file")
         
     first_service = list(services.keys())[0]
-    env = services[first_service].get("environment", {})
+    raw_env = services[first_service].get("environment", {})
+    
+    # Standardize to dict for easier manipulation
+    if isinstance(raw_env, list):
+        env = {}
+        for item in raw_env:
+            if '=' in item:
+                k, v = item.split('=', 1)
+                env[k] = v
+    else:
+        env = dict(raw_env)
+        
+    # Ensure EULA is accepted
+    changed = False
+    if env.get("EULA") != "TRUE":
+        env["EULA"] = "TRUE"
+        changed = True
+    
+    if changed:
+        # Save back in the format it was
+        if isinstance(raw_env, list):
+            services[first_service]["environment"] = [f"{k}={v}" for k, v in env.items()]
+        else:
+            services[first_service]["environment"] = env
+            
+        with open(compose_path, "w") as f:
+            yaml.dump(config, f, default_flow_style=False)
+
     mc_version = env.get("VERSION", "1.20.4")
     
     # Resource Pack Bundling Logic
@@ -300,7 +327,10 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
     if services:
         first_service_name = list(services.keys())[0]
         config['services'][first_service_name]['image'] = new_config.image
-        config['services'][first_service_name]['environment'] = new_config.environment
+        # Ensure EULA is preserved/added
+        env = new_config.environment
+        env["EULA"] = "TRUE"
+        config['services'][first_service_name]['environment'] = env
         
     with open(compose_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False)
