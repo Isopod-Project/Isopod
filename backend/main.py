@@ -180,9 +180,76 @@ def get_instance_status(instance_id: str):
     }
 
 @app.post("/api/instances/{instance_id}/start")
-def start_instance(instance_id: str):
+async def start_instance(instance_id: str):
     path = get_instance_path(instance_id)
-    # Start all services defined in the instance's compose file
+    compose_path = os.path.join(path, "docker-compose.yml")
+    
+    with open(compose_path, "r") as f:
+        config = yaml.safe_load(f)
+    
+    services = config.get("services", {})
+    if not services:
+        raise HTTPException(status_code=400, detail="No services found in compose file")
+        
+    first_service = list(services.keys())[0]
+    env = services[first_service].get("environment", {})
+    mc_version = env.get("VERSION", "1.20.4")
+    
+    # Resource Pack Bundling Logic
+    m_ids_str = env.get("RESOURCE_PACKS_MODRINTH", "")
+    c_ids_str = env.get("RESOURCE_PACKS_CF", "")
+    pack_list_key = f"{m_ids_str}|{c_ids_str}|{mc_version}"
+    
+    if m_ids_str or c_ids_str:
+        cache_dir = os.path.join(SERVERS_DIR, ".cache", "resource_packs")
+        os.makedirs(cache_dir, exist_ok=True)
+        hash_file = os.path.join(cache_dir, f"{instance_id}_key.txt")
+        
+        # Check cache
+        last_key = ""
+        if os.path.exists(hash_file):
+            with open(hash_file, "r") as f: last_key = f.read().strip()
+            
+        if pack_list_key != last_key:
+            print(f"--- Bundling Needed for {instance_id} ---")
+            m_ids = [i.strip() for i in m_ids_str.split(",") if i.strip()]
+            c_ids = [i.strip() for i in c_ids_str.split(",") if i.strip()]
+            
+            try:
+                async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+                    downloaded_zips = []
+                    for mid in m_ids:
+                        url = await rp.get_latest_version_url(client, "modrinth", mid, mc_version)
+                        if url:
+                            z_path = os.path.join(cache_dir, f"{mid}.zip")
+                            if await rp.download_file(client, url, z_path):
+                                downloaded_zips.append(z_path)
+
+                    for cid in c_ids:
+                        url = await rp.get_latest_version_url(client, "curseforge", cid, mc_version)
+                        if url:
+                            z_path = os.path.join(cache_dir, f"{cid}.zip")
+                            if await rp.download_file(client, url, z_path):
+                                downloaded_zips.append(z_path)
+
+                    if downloaded_zips:
+                        bundle_path = os.path.join(cache_dir, f"bundle_{instance_id}.zip")
+                        rp.merge_resource_packs(downloaded_zips, bundle_path)
+                        public_url, sha1 = await rp.upload_to_mcpacks(bundle_path)
+                        if public_url and sha1:
+                            env["RESOURCE_PACK"] = public_url
+                            env["RESOURCE_PACK_SHA1"] = sha1
+                            env["RESOURCE_PACK_ID"] = "" # Clear legacy
+                            # Save back to compose so it persists
+                            config['services'][first_service]['environment'] = env
+                            with open(compose_path, "w") as f:
+                                yaml.dump(config, f, default_flow_style=False)
+                            # Update cache key
+                            with open(hash_file, "w") as f: f.write(pack_list_key)
+            except Exception as e:
+                print(f"Bundling failed during start: {e}")
+
+    # Start all services
     result = subprocess.run(["docker", "compose", "up", "-d"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
@@ -214,19 +281,9 @@ def get_config(instance_id: str):
     first_service_name = list(services.keys())[0]
     service = services[first_service_name]
     
-    env_vars = {}
-    if "environment" in service:
-        if isinstance(service["environment"], list):
-            for item in service["environment"]:
-                if "=" in item:
-                    k, v = item.split("=", 1)
-                    env_vars[k] = v
-        elif isinstance(service["environment"], dict):
-            env_vars = service["environment"]
-            
     return {
         "image": service.get("image", ""),
-        "environment": env_vars,
+        "environment": service.get("environment", {}),
     }
 
 @app.put("/api/instances/{instance_id}/config")
@@ -236,72 +293,6 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
     if not os.path.exists(compose_path):
         raise HTTPException(status_code=404, detail="docker-compose.yml not found")
         
-    env = new_config.environment
-    mc_version = env.get("VERSION", "1.20.4") # Default if missing
-    
-    # Check if we should auto-bundle resource packs
-    m_ids = [i.strip() for i in env.get("RESOURCE_PACKS_MODRINTH", "").split(",") if i.strip()]
-    c_ids = [i.strip() for i in env.get("RESOURCE_PACKS_CF", "").split(",") if i.strip()]
-    
-    if m_ids or c_ids:
-        print(f"=== Bundling resource packs for {instance_id} ===")
-        print(f"  Modrinth IDs: {m_ids}")
-        print(f"  CurseForge IDs: {c_ids}")
-        print(f"  MC Version: {mc_version}")
-        try:
-            cache_dir = os.path.join(SERVERS_DIR, ".cache", "resource_packs")
-            os.makedirs(cache_dir, exist_ok=True)
-            
-            async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
-                downloaded_zips = []
-                # Resolve & download each pack
-                for mid in m_ids:
-                    url = await rp.get_latest_version_url(client, "modrinth", mid, mc_version)
-                    if url:
-                        zip_path = os.path.join(cache_dir, f"{mid}.zip")
-                        success = await rp.download_file(client, url, zip_path)
-                        if success:
-                            downloaded_zips.append(zip_path)
-                    else:
-                        print(f"  WARNING: No download URL found for modrinth/{mid}")
-                
-                for cid in c_ids:
-                    url = await rp.get_latest_version_url(client, "curseforge", cid, mc_version)
-                    if url:
-                        zip_path = os.path.join(cache_dir, f"{cid}.zip")
-                        success = await rp.download_file(client, url, zip_path)
-                        if success:
-                            downloaded_zips.append(zip_path)
-                    else:
-                        print(f"  WARNING: No download URL found for curseforge/{cid}")
-                
-                print(f"  Downloaded {len(downloaded_zips)} of {len(m_ids) + len(c_ids)} packs")
-                
-                if downloaded_zips:
-                    bundle_path = os.path.join(cache_dir, f"bundle_{instance_id}.zip")
-                    rp.merge_resource_packs(downloaded_zips, bundle_path)
-                    
-                    # Upload to MCPacks for GLOBAL access (no Tailscale needed)
-                    public_url, sha1 = await rp.upload_to_mcpacks(bundle_path)
-                    
-                    if public_url and sha1:
-                        print(f"  SUCCESS: Bundle hosted at {public_url}")
-                        env["RESOURCE_PACK"] = public_url
-                        env["RESOURCE_PACK_SHA1"] = sha1
-                        # Clear any stale manual ID
-                        env["RESOURCE_PACK_ID"] = ""
-                    else:
-                        print(f"  ERROR: MCPacks upload failed, falling back to local merge hash only")
-                        # We still update SHA1 if we can, but without URL the clients won't find it
-                        env["RESOURCE_PACK_SHA1"] = rp.get_file_sha1(bundle_path)
-                else:
-                    print(f"  WARNING: No packs were successfully downloaded, skipping bundle")
-        except Exception as e:
-            import traceback
-            print(f"FAILED to bundle resource packs: {e}")
-            traceback.print_exc()
-            # Non-critical, continue save with whatever we have
-    
     with open(compose_path, "r") as f:
         config = yaml.safe_load(f)
         
@@ -309,7 +300,7 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
     if services:
         first_service_name = list(services.keys())[0]
         config['services'][first_service_name]['image'] = new_config.image
-        config['services'][first_service_name]['environment'] = env
+        config['services'][first_service_name]['environment'] = new_config.environment
         
     with open(compose_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False)
