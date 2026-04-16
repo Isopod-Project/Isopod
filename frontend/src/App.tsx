@@ -116,6 +116,7 @@ export default function App() {
   const [consoleCommand, setConsoleCommand] = useState("");
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
+  const [manualLogs, setManualLogs] = useState<string>("");
   const [isExecuting, setIsExecuting] = useState(false);
   const scrollRef = useRef<HTMLPreElement>(null);
   
@@ -373,19 +374,19 @@ export default function App() {
     }
   };
 
-  const fetchLogs = async (id: string) => {
+  const fetchLogs = React.useCallback(async (id: string) => {
     setIsLogsLoading(true);
     try {
       const res = await fetch(`/api/instances/${id}/logs`);
       const data = await res.json();
-      setLogs(data.logs);
+      setLogs(data.logs + manualLogs);
     } catch (e) {
       console.error(e);
       setLogs("Failed to load logs.");
     } finally {
       setIsLogsLoading(false);
     }
-  };
+  }, [manualLogs]);
 
   const fetchConfig = async (id: string) => {
     try {
@@ -674,7 +675,11 @@ export default function App() {
         body: JSON.stringify({ command: cmd })
       });
       const data = await res.json();
-      setLogs(prev => prev + `\n> ${cmd}\n${data.output}`);
+      
+      const entry = `\n> ${cmd}\n${data.output}`;
+      setManualLogs(prev => prev + entry);
+      setLogs(prev => prev + entry);
+      
       setConsoleCommand("");
     } catch (e) {
       console.error("Failed to send command", e);
@@ -724,6 +729,7 @@ export default function App() {
     setIsGlobalBrowser(false);
     setIsEditModalOpen(true);
     setEditTab("logs");
+    setManualLogs("");
     fetchLogs(selectedId);
     fetchConfig(selectedId);
     fetchMcVersions();
@@ -754,7 +760,7 @@ export default function App() {
       }, 3000);
     }
     return () => interval && clearInterval(interval);
-  }, [isEditModalOpen, editTab, selectedId, isLogsLoading]);
+  }, [isEditModalOpen, editTab, selectedId, isLogsLoading, manualLogs, fetchLogs]);
 
   // Sync mod search filters when config is loaded
   useEffect(() => {
@@ -1678,6 +1684,7 @@ export default function App() {
                     >
                        {logs || "Waiting for output..."}
                     </pre>
+
                     <div className="flex bg-[#1A1A1A] border-x border-b border-[#333] rounded-b-lg p-3 gap-3">
                        <input 
                           type="text"
@@ -2277,6 +2284,7 @@ export default function App() {
                              <pre className="flex-1 p-6 overflow-auto text-xs font-mono text-neutral-400 selection:bg-[#3E8ED0]/30 whitespace-pre scrollbar-custom">
                                 {viewingFile.content}
                              </pre>
+
                           </div>
                        ) : (
                           <div className="flex-1 bg-[#1E1E1E]/50 border border-[#333] rounded-lg overflow-hidden shadow-2xl">
