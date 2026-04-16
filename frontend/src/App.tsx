@@ -379,7 +379,7 @@ export default function App() {
     try {
       const res = await fetch(`/api/instances/${id}/logs`);
       const data = await res.json();
-      setLogs(data.logs + manualLogs);
+      setLogs(data.logs);
     } catch (e) {
       console.error(e);
       setLogs("Failed to load logs.");
@@ -678,7 +678,6 @@ export default function App() {
       
       const entry = `\n> ${cmd}\n${data.output}`;
       setManualLogs(prev => prev + entry);
-      setLogs(prev => prev + entry);
       
       setConsoleCommand("");
     } catch (e) {
@@ -722,7 +721,7 @@ export default function App() {
     if (scrollRef.current) {
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [logs, editTab]);
+  }, [logs, manualLogs, editTab]);
 
   const openEditModal = () => {
     if (!selectedId) return;
@@ -1682,7 +1681,7 @@ export default function App() {
                        ref={scrollRef}
                        className="flex-1 bg-[#0D0D0D] rounded-t-lg border border-[#333] p-5 overflow-auto text-xs font-mono text-emerald-400/90 whitespace-pre-wrap selection:bg-[#3E8ED0]/40 shadow-inner"
                     >
-                       {logs || "Waiting for output..."}
+                       {logs + manualLogs || "Waiting for output..."}
                     </pre>
 
                     <div className="flex bg-[#1A1A1A] border-x border-b border-[#333] rounded-b-lg p-3 gap-3">
