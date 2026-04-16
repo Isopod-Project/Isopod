@@ -116,7 +116,14 @@ export default function App() {
   const [consoleCommand, setConsoleCommand] = useState("");
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
-  const [manualLogs, setManualLogs] = useState<string>("");
+  const [manualLogs, setManualLogs] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem('isopod_manual_logs');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
   const [isExecuting, setIsExecuting] = useState(false);
   const scrollRef = useRef<HTMLPreElement>(null);
   
@@ -386,7 +393,7 @@ export default function App() {
     } finally {
       setIsLogsLoading(false);
     }
-  }, [manualLogs]);
+  }, []);
 
   const fetchConfig = async (id: string) => {
     try {
@@ -677,7 +684,14 @@ export default function App() {
       const data = await res.json();
       
       const entry = `\n> ${cmd}\n${data.output}`;
-      setManualLogs(prev => prev + entry);
+      setManualLogs(prev => {
+         const updated = {
+            ...prev,
+            [id]: (prev[id] || "") + entry
+         };
+         localStorage.setItem('isopod_manual_logs', JSON.stringify(updated));
+         return updated;
+      });
       
       setConsoleCommand("");
     } catch (e) {
@@ -728,7 +742,6 @@ export default function App() {
     setIsGlobalBrowser(false);
     setIsEditModalOpen(true);
     setEditTab("logs");
-    setManualLogs("");
     fetchLogs(selectedId);
     fetchConfig(selectedId);
     fetchMcVersions();
@@ -1681,7 +1694,9 @@ export default function App() {
                        ref={scrollRef}
                        className="flex-1 bg-[#0D0D0D] rounded-t-lg border border-[#333] p-5 overflow-auto text-xs font-mono text-emerald-400/90 whitespace-pre-wrap selection:bg-[#3E8ED0]/40 shadow-inner"
                     >
-                       {logs + manualLogs || "Waiting for output..."}
+                        {logs}
+                        {selectedId && manualLogs[selectedId]}
+                        {!logs && (!selectedId || !manualLogs[selectedId]) && "Waiting for output..."}
                     </pre>
 
                     <div className="flex bg-[#1A1A1A] border-x border-b border-[#333] rounded-b-lg p-3 gap-3">
