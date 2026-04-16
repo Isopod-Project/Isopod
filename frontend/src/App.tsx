@@ -114,6 +114,8 @@ export default function App() {
   const [installedModsMeta, setInstalledModsMeta] = useState<any[]>([]);
   const [isMetaLoading, setIsMetaLoading] = useState(false);
   const [consoleCommand, setConsoleCommand] = useState("");
+  const [commandHistory, setCommandHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number>(-1);
   const [isExecuting, setIsExecuting] = useState(false);
   const scrollRef = useRef<HTMLPreElement>(null);
   
@@ -657,6 +659,14 @@ export default function App() {
   const handleSendCommand = async (id: string, cmd: string) => {
     if (!cmd.trim()) return;
     setIsExecuting(true);
+    
+    // Add to history if not duplicate of last
+    setCommandHistory(prev => {
+      if (prev[prev.length - 1] === cmd) return prev;
+      return [...prev, cmd];
+    });
+    setHistoryIndex(-1);
+
     try {
       const res = await fetch(`/api/instances/${id}/command`, {
         method: "POST",
@@ -1675,7 +1685,28 @@ export default function App() {
                           className="flex-1 bg-[#050505] border border-[#333] px-3 py-2 rounded text-emerald-500 font-mono text-sm focus:outline-none focus:border-[#3E8ED0]"
                           value={consoleCommand}
                           onChange={(e) => setConsoleCommand(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && handleSendCommand(selectedInstance?.id || "", consoleCommand)}
+                          onKeyDown={(e) => {
+                             if (e.key === 'Enter') {
+                                handleSendCommand(selectedInstance?.id || "", consoleCommand);
+                             } else if (e.key === 'ArrowUp') {
+                                e.preventDefault();
+                                if (commandHistory.length === 0) return;
+                                const newIndex = historyIndex === -1 ? commandHistory.length - 1 : Math.max(0, historyIndex - 1);
+                                setHistoryIndex(newIndex);
+                                setConsoleCommand(commandHistory[newIndex]);
+                             } else if (e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                if (historyIndex === -1) return;
+                                const newIndex = historyIndex + 1;
+                                if (newIndex >= commandHistory.length) {
+                                   setHistoryIndex(-1);
+                                   setConsoleCommand("");
+                                } else {
+                                   setHistoryIndex(newIndex);
+                                   setConsoleCommand(commandHistory[newIndex]);
+                                }
+                             }
+                          }}
                           disabled={isExecuting}
                        />
                        <button 
