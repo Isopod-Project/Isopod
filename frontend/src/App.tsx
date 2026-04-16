@@ -115,6 +115,7 @@ export default function App() {
   const [isMetaLoading, setIsMetaLoading] = useState(false);
   const [consoleCommand, setConsoleCommand] = useState("");
   const [isExecuting, setIsExecuting] = useState(false);
+  const [isVerbose, setIsVerbose] = useState(false);
   const scrollRef = useRef<HTMLPreElement>(null);
   
   // Version Change Handling
@@ -376,7 +377,11 @@ export default function App() {
     try {
       const res = await fetch(`/api/instances/${id}/logs`);
       const data = await res.json();
-      setLogs(data.logs);
+      
+      // We strip ANSI codes here because they never look good in <pre>
+      // but we keep all lines; filtering happens in the UI based on isVerbose
+      const cleanLogs = (data.logs || "").replace(/\x1B\[[0-9;]*[mK]/g, "");
+      setLogs(cleanLogs);
     } catch (e) {
       console.error(e);
       setLogs("Failed to load logs.");
@@ -1650,9 +1655,25 @@ export default function App() {
                 {editTab === "logs" && (
                   <div className="flex flex-col h-full p-6">
                     <div className="flex justify-between items-center mb-4">
-                      <div className="flex items-center gap-2">
-                         <Terminal className="w-5 h-5 text-neutral-500" />
-                         <span className="text-lg font-semibold text-neutral-300">Console Output</span>
+                      <div className="flex items-center gap-4">
+                         <div className="flex items-center gap-2">
+                           <Terminal className="w-5 h-5 text-neutral-500" />
+                           <span className="text-lg font-semibold text-neutral-300">Console Output</span>
+                         </div>
+                         <div className="flex bg-[#0D0D0D] border border-[#333] p-1 rounded-lg ml-4">
+                            <button 
+                               onClick={() => setIsVerbose(false)}
+                               className={`px-3 py-1 rounded-md text-[10px] font-bold transition-all ${!isVerbose ? 'bg-[#3E8ED0] text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+                            >
+                               Simplified
+                            </button>
+                            <button 
+                               onClick={() => setIsVerbose(true)}
+                               className={`px-3 py-1 rounded-md text-[10px] font-bold transition-all ${isVerbose ? 'bg-[#3E8ED0] text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+                            >
+                               Verbose
+                            </button>
+                         </div>
                       </div>
                       <button 
                         onClick={() => selectedInstance && fetchLogs(selectedInstance.id)}
@@ -1664,9 +1685,34 @@ export default function App() {
                     </div>
                     <pre 
                        ref={scrollRef}
-                       className="flex-1 bg-[#0D0D0D] rounded-t-lg border border-[#333] p-5 overflow-auto text-xs font-mono text-emerald-400/90 whitespace-pre-wrap selection:bg-[#3E8ED0]/40 shadow-inner"
+                       className="flex-1 bg-[#0D0D0D] rounded-t-lg border border-[#333] p-5 overflow-auto text-xs font-mono text-emerald-400/90 whitespace-pre-wrap selection:bg-[#3E8ED0]/40 shadow-inner scroll-smooth"
                     >
-                       {logs || "Waiting for output..."}
+                       {(() => {
+                          if (!logs) return "Waiting for output...";
+                          if (isVerbose) return logs;
+                          
+                          const noisyPatterns = [
+                            /Thread RCON Client.*started/,
+                            /Thread RCON Client.*shutting down/,
+                            /Stopping with rcon-cli/,
+                            /\[Rcon: Stopping the server\]/,
+                            /gracefully stopping server\.\.\./,
+                            /Waiting for completion\.\.\./,
+                            /mc-server-runner\s+Done/,
+                            /remote control listener/,
+                            /Thread RCON Listener started/,
+                            /Thread RCON Listener stopped/,
+                            /RCON running on/,
+                            /\[init\]/
+                          ];
+
+                          return logs.split('\n').filter(line => {
+                             // Always keep manual commands
+                             if (line.includes('> ')) return true;
+                             // Filter out noise
+                             return !noisyPatterns.some(p => p.test(line));
+                          }).join('\n');
+                       })()}
                     </pre>
                     <div className="flex bg-[#1A1A1A] border-x border-b border-[#333] rounded-b-lg p-3 gap-3">
                        <input 
