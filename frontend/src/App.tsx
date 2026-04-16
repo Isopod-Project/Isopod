@@ -1691,26 +1691,24 @@ export default function App() {
                           if (!logs) return "Waiting for output...";
                           if (isVerbose) return logs;
                           
-                          const noisyPatterns = [
-                            /Thread RCON Client.*started/,
-                            /Thread RCON Client.*shutting down/,
-                            /Stopping with rcon-cli/,
-                            /\[Rcon: Stopping the server\]/,
-                            /gracefully stopping server\.\.\./,
-                            /Waiting for completion\.\.\./,
-                            /mc-server-runner\s+Done/,
-                            /remote control listener/,
-                            /Thread RCON Listener started/,
-                            /Thread RCON Listener stopped/,
-                            /RCON running on/,
-                            /\[init\]/
+                          const allowedPatterns = [
+                            /ERROR/, /FATAL/, /Exception/, /Warning/i,
+                            /Loading \d+ mods/, / - /, / \\-- /,
+                            /Done \(/,
+                            /> /, 
+                            /issued (server )?command/,
+                            /joined the game/, /left the game/,
+                            /\[Server thread\/INFO\]: </,
+                            /Starting minecraft server version/,
+                            /Environment:/,
+                            /\[Server thread\/INFO\]: \[(?!Rcon: Stopping)/ 
                           ];
 
                           return logs.split('\n').filter(line => {
                              // Always keep manual commands
                              if (line.includes('> ')) return true;
-                             // Filter out noise
-                             return !noisyPatterns.some(p => p.test(line));
+                             // Check against strict allowlist
+                             return allowedPatterns.some(p => p.test(line));
                           }).join('\n');
                        })()}
                     </pre>
