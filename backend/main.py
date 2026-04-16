@@ -513,7 +513,8 @@ def create_instance(req: CreateInstanceRequest):
                     f"LEVEL_TYPE={req.level_type or 'DEFAULT'}",
                     f"DIFFICULTY={req.difficulty or 'easy'}",
                     f"MODE={req.gamemode or 'survival'}",
-                    f"GENERATE_STRUCTURES={'true' if req.generate_structures else 'false'}"
+                    f"GENERATE_STRUCTURES={'true' if req.generate_structures else 'false'}",
+                    "JVM_OPTS=--add-opens java.base/sun.misc=ALL-UNNAMED"
                 ],
                 "volumes": ["./data:/data"],
                 "restart": "unless-stopped"

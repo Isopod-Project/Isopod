@@ -1692,7 +1692,7 @@ export default function App() {
                           if (isVerbose) return logs;
                           
                           const allowedPatterns = [
-                            /ERROR/, /FATAL/, /Exception/, /Warning/i,
+                            /ERROR/, /FATAL/, /Exception/,
                             /Loading \d+ mods/, / - /, / \\-- /,
                             /Done \(/,
                             /> /, 
@@ -1700,7 +1700,6 @@ export default function App() {
                             /joined the game/, /left the game/,
                             /\[Server thread\/INFO\]: </,
                             /Starting minecraft server version/,
-                            /Environment:/,
                             /\[Server thread\/INFO\]: \[(?!Rcon: Stopping)/ 
                           ];
 
