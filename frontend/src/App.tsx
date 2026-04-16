@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, ArrowDown } from "lucide-react";
 
 interface Instance {
   id: string;
@@ -115,6 +115,7 @@ export default function App() {
   const [installedModsMeta, setInstalledModsMeta] = useState<any[]>([]);
   const [isMetaLoading, setIsMetaLoading] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
+  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const [consoleCommand, setConsoleCommand] = useState("");
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
@@ -723,16 +724,17 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (scrollRef.current) {
+    if (autoScrollEnabled && scrollRef.current) {
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [serverLogs, manualLogs, editTab]);
+  }, [serverLogs, manualLogs, editTab, autoScrollEnabled]);
 
   const openEditModal = () => {
     if (!selectedId) return;
     setIsGlobalBrowser(false);
     setIsEditModalOpen(true);
     setEditTab("logs");
+    setAutoScrollEnabled(true);
     fetchLogs(selectedId);
     fetchConfig(selectedId);
     fetchMcVersions();
@@ -1681,8 +1683,14 @@ export default function App() {
                         Refresh
                       </button>
                     </div>
-                    <pre 
+                    <div className="flex-1 relative flex flex-col group/console overflow-hidden">
+                        <pre 
                        ref={scrollRef}
+                           onScroll={(e) => {
+                              const target = e.currentTarget;
+                              const atBottom = target.scrollHeight - target.scrollTop <= target.clientHeight + 40;
+                              setAutoScrollEnabled(atBottom);
+                           }}
                        className="flex-1 bg-[#0D0D0D] rounded-t-lg border border-[#333] p-5 overflow-auto text-xs font-mono text-emerald-400/90 whitespace-pre-wrap selection:bg-[#3E8ED0]/40 shadow-inner"
                     >
                         {(() => {
@@ -1714,7 +1722,23 @@ export default function App() {
                            
                            return renderedLines;
                         })()}
-                    </pre>
+                                         </pre>
+                        
+                        {!autoScrollEnabled && (
+                           <button 
+                              onClick={() => {
+                                 setAutoScrollEnabled(true);
+                                 if (scrollRef.current) {
+                                    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+                                 }
+                              }}
+                              className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white px-4 py-2 rounded-full shadow-2xl flex items-center gap-2 text-xs font-bold animate-in fade-in slide-in-from-bottom-2 duration-300 border border-white/10 z-10"
+                           >
+                              <ArrowDown className="w-3 h-3" />
+                              Jump to Bottom
+                           </button>
+                        )}
+                     </div>
 
                     <div className="flex bg-[#1A1A1A] border-x border-b border-[#333] rounded-b-lg p-3 gap-3">
                        <input 
