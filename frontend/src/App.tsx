@@ -92,7 +92,8 @@ export default function App() {
   // Edit Modal states
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editTab, setEditTab] = useState("logs");
-  const [logs, setLogs] = useState("");
+  const [serverLogs, setServerLogs] = useState<Record<string, string>>({});
+  const [manualLogs, setManualLogs] = useState<Record<string, { anchor: string, content: string }[]>>({});
   const [isLogsLoading, setIsLogsLoading] = useState(false);
   // Instance Config States
   const [config, setConfig] = useState<{image: string, environment: Record<string, string>}>({image: "", environment: {}});
@@ -113,18 +114,10 @@ export default function App() {
   const [modListView, setModListView] = useState<"list" | "search">("list");
   const [installedModsMeta, setInstalledModsMeta] = useState<any[]>([]);
   const [isMetaLoading, setIsMetaLoading] = useState(false);
+  const [isExecuting, setIsExecuting] = useState(false);
   const [consoleCommand, setConsoleCommand] = useState("");
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
-  const [manualLogs, setManualLogs] = useState<Record<string, string>>(() => {
-    try {
-      const saved = localStorage.getItem('isopod_manual_logs');
-      return saved ? JSON.parse(saved) : {};
-    } catch {
-      return {};
-    }
-  });
-  const [isExecuting, setIsExecuting] = useState(false);
   const scrollRef = useRef<HTMLPreElement>(null);
   
   // Version Change Handling
@@ -386,10 +379,9 @@ export default function App() {
     try {
       const res = await fetch(`/api/instances/${id}/logs`);
       const data = await res.json();
-      setLogs(data.logs);
+      setServerLogs(prev => ({ ...prev, [id]: data.logs || "" }));
     } catch (e) {
       console.error(e);
-      setLogs("Failed to load logs.");
     } finally {
       setIsLogsLoading(false);
     }
@@ -684,15 +676,14 @@ export default function App() {
       const data = await res.json();
       
       const entry = `\n> ${cmd}\n${data.output}`;
-      setManualLogs(prev => {
-         const updated = {
-            ...prev,
-            [id]: (prev[id] || "") + entry
-         };
-         localStorage.setItem('isopod_manual_logs', JSON.stringify(updated));
-         return updated;
-      });
+      const currentLogs = serverLogs[id] || "";
+      const lines = currentLogs.split('\n').filter(Boolean);
+      const lastLine = lines[lines.length - 1] || "";
       
+      setManualLogs(prev => ({
+         ...prev,
+         [id]: [...(prev[id] || []), { anchor: lastLine, content: entry }]
+      }));
       setConsoleCommand("");
     } catch (e) {
       console.error("Failed to send command", e);
@@ -735,7 +726,7 @@ export default function App() {
     if (scrollRef.current) {
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [logs, manualLogs, editTab]);
+  }, [serverLogs, manualLogs, editTab]);
 
   const openEditModal = () => {
     if (!selectedId) return;
@@ -772,7 +763,7 @@ export default function App() {
       }, 3000);
     }
     return () => interval && clearInterval(interval);
-  }, [isEditModalOpen, editTab, selectedId, isLogsLoading, manualLogs, fetchLogs]);
+  }, [isEditModalOpen, editTab, selectedId, isLogsLoading, fetchLogs]);
 
   // Sync mod search filters when config is loaded
   useEffect(() => {
@@ -1694,9 +1685,35 @@ export default function App() {
                        ref={scrollRef}
                        className="flex-1 bg-[#0D0D0D] rounded-t-lg border border-[#333] p-5 overflow-auto text-xs font-mono text-emerald-400/90 whitespace-pre-wrap selection:bg-[#3E8ED0]/40 shadow-inner"
                     >
-                        {logs}
-                        {selectedId && manualLogs[selectedId]}
-                        {!logs && (!selectedId || !manualLogs[selectedId]) && "Waiting for output..."}
+                        {(() => {
+                           if (!selectedId) return "Waiting for output...";
+                           const logs = serverLogs[selectedId] || "";
+                           const manual = manualLogs[selectedId] || [];
+                           if (!logs && manual.length === 0) return "Waiting for output...";
+                           
+                           const sLines = logs.split('\n');
+                           const renderedLines: React.ReactNode[] = [];
+                           
+                           const serverLineSet = new Set(sLines.map(l => l.trim()));
+                           
+                           // Commands whose anchor line is no longer in the buffer (stick to top)
+                           const orphaned = manual.filter(m => !m.anchor || !serverLineSet.has(m.anchor.trim()));
+                           orphaned.forEach((m, i) => {
+                              renderedLines.push(<div key={`orph-${i}`} className="opacity-70 border-l-2 border-amber-500/20 pl-2 mb-2 italic text-[10px]">{m.content}</div>);
+                           });
+
+                           sLines.forEach((line, idx) => {
+                              renderedLines.push(<div key={`s-${idx}`}>{line}</div>);
+                              const trimmedLine = line.trim();
+                              // Find manual entries whose anchor is exactly this line
+                              const matches = manual.filter(m => m.anchor && m.anchor.trim() === trimmedLine);
+                              matches.forEach((m, midx) => {
+                                 renderedLines.push(<div key={`m-${idx}-${midx}`} className="py-1 border-l-2 border-emerald-500/30 pl-2 my-1 bg-emerald-500/5 transition-all animate-in fade-in slide-in-from-left-1">{m.content}</div>);
+                              });
+                           });
+                           
+                           return renderedLines;
+                        })()}
                     </pre>
 
                     <div className="flex bg-[#1A1A1A] border-x border-b border-[#333] rounded-b-lg p-3 gap-3">
