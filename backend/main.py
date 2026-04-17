@@ -200,6 +200,14 @@ def stop_instance(instance_id: str):
         raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
     return {"message": "Stopped"}
 
+@app.post("/api/instances/{instance_id}/kill")
+def kill_instance(instance_id: str):
+    path = get_instance_path(instance_id)
+    result = subprocess.run(["docker", "compose", "kill"], cwd=path, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
+    return {"message": "Killed"}
+
 @app.get("/api/instances/{instance_id}/config")
 def get_config(instance_id: str):
     path = get_instance_path(instance_id)
@@ -554,9 +562,36 @@ def create_instance(req: CreateInstanceRequest):
 @app.delete("/api/instances/{instance_id}")
 def delete_instance(instance_id: str):
     path = get_instance_path(instance_id)
-    # Safely stop containers before purging
-    subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True)
-    shutil.rmtree(path, ignore_errors=True)
+    # Safely stop and remove containers and volumes before purging
+    # Use --volumes to ensure bind mounts or volumes are handled, --remove-orphans for completeness
+    subprocess.run(["docker", "compose", "down", "-v", "--remove-orphans", "--timeout", "5"], cwd=path, capture_output=True)
+    
+    # Direct fallback: Try to remove by name in case compose lost track
+    if docker_client:
+        try:
+            # The naming convention is isopod_{slug} 
+            # Note: rename_instance also updates this, but instance_id is always the current slug.
+            c_name = f"isopod_{instance_id}"
+            try:
+                c = docker_client.containers.get(c_name)
+                c.remove(force=True)
+            except: pass
+        except: pass
+
+    # Try to remove the directory. On Windows, Docker might be slow to release file locks
+    # even after 'down', so we retry a few times.
+    for i in range(5):
+        try:
+            if os.path.exists(path):
+                shutil.rmtree(path)
+            break
+        except Exception as e:
+            if i == 4:
+                print(f"Failed to delete {path} after multiple attempts: {e}")
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                time.sleep(0.5)
+                
     return {"message": "Instance deleted"}
 
 @app.post("/api/instances/{instance_id}/rename")

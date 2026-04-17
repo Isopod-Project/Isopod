@@ -283,6 +283,26 @@ export default function App() {
     }
   };
 
+  const handleKill = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      setStatuses((prev: Record<string, InstanceStatus>) => ({
+        ...prev, 
+        [id]: { ...prev[id], is_running: false, is_ready: false } // Optimistic update
+      }));
+      const res = await fetch(`/api/instances/${id}/kill`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || "Failed to kill container");
+      }
+      setTimeout(() => fetchStatus(id), 1000);
+    } catch (e) {
+      console.error(e);
+      await showAlert(`Kill Error: ${e instanceof Error ? e.message : String(e)}`, "Kill Failed");
+      fetchStatus(id);
+    }
+  };
+
   const fetchLoaderVersions = async (loader: string, mcVersion: string) => {
     if (!loader || loader === "VANILLA") {
        setLoaderVersions([]);
@@ -981,13 +1001,24 @@ export default function App() {
 
             <div className="p-4 flex flex-col gap-1.5 flex-1 overflow-auto">
               {selectedStatus?.is_running ? (
-                <button 
-                  onClick={(e: React.MouseEvent) => handleStop(selectedInstance.id, e)}
-                  className="flex items-center gap-3 px-3 py-2.5 rounded bg-[#402020] hover:bg-[#5A2525] border border-[#502020] text-red-400 transition-colors"
-                >
-                  <Square className="w-4 h-4 fill-current" />
-                  <span className="font-semibold">Kill</span>
-                </button>
+                <div className="flex gap-1.5">
+                  <button 
+                    onClick={(e: React.MouseEvent) => handleStop(selectedInstance.id, e)}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-500 transition-all font-bold text-sm"
+                    title="Safe Stop (Sends /stop, saves world progress)"
+                  >
+                    <Square className="w-3.5 h-3.5 fill-current" />
+                    Stop
+                  </button>
+                  <button 
+                    onClick={(e: React.MouseEvent) => handleKill(selectedInstance.id, e)}
+                    className="flex items-center justify-center px-4 py-2.5 rounded bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-500 transition-all font-bold text-sm"
+                    title="Force Kill (Immediate power-off, UNSAFE)"
+                  >
+                    <X className="w-4 h-4" />
+                    Kill
+                  </button>
+                </div>
               ) : (
                 <button 
                   onClick={(e: React.MouseEvent) => handleStart(selectedInstance.id, e)}
@@ -3010,12 +3041,17 @@ export default function App() {
           </button>
           <button 
             onClick={(e) => { handleStop(contextMenu.instanceId, e as any); setContextMenu(null); }}
-            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-400 hover:bg-red-500 hover:text-white transition-colors text-left"
+            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-amber-500 hover:bg-amber-500 hover:text-white transition-colors text-left"
+            title="Saves world first"
           >
-            <div className="w-4 h-4 bg-red-500/20 rounded-sm flex items-center justify-center">
-              <X className="w-3 h-3 text-red-500" />
-            </div> 
-            Kill
+            <Square className="w-4 h-4" /> Stop (Safe)
+          </button>
+          <button 
+            onClick={(e) => { handleKill(contextMenu.instanceId, e as any); setContextMenu(null); }}
+            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-400 hover:bg-red-600 hover:text-white transition-colors text-left"
+            title="Force immediate stop"
+          >
+            <X className="w-4 h-4" /> Kill (Unsafe)
           </button>
 
           <div className="h-px bg-[#3A3A3A] my-1"></div>
