@@ -142,6 +142,7 @@ export default function App() {
      defaultLoader: 'VANILLA',
      autoRefresh: true,
      showSnapshots: false,
+     autoCheckUpdates: true,
      defaultWhitelistEnabled: false,
      defaultWhitelistUsers: [] as string[]
   });
@@ -155,6 +156,11 @@ export default function App() {
   // Instance Whitelist States
   const [instanceWhitelistUser, setInstanceWhitelistUser] = useState("");
   const [instanceWhitelistPreview, setInstanceWhitelistPreview] = useState<{name: string, uuid: string} | null>(null);
+  
+  // System Update States
+  const [updateInfo, setUpdateInfo] = useState<any>(null);
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
+  const [isUpdatingSystem, setIsUpdatingSystem] = useState(false);
 
   // Bootstrap seenPlayers with defaults and common entries
   useEffect(() => {
@@ -719,9 +725,41 @@ export default function App() {
     fetchMcVersions();
   };
 
+  const checkSystemUpdates = async (force: boolean = false) => {
+    setIsCheckingUpdates(true);
+    try {
+      const res = await fetch(`/api/system/check-updates?force=${force}`);
+      const data = await res.json();
+      setUpdateInfo(data);
+    } catch (e) {
+      console.error("Failed to check for updates", e);
+    } finally {
+      setIsCheckingUpdates(false);
+    }
+  };
+
+  const performSystemUpdate = async () => {
+     const confirmed = await showConfirm("This will update Isopod to the latest version and restart the application. All your instance data is safe. Proceed?", "Update Isopod");
+     if (!confirmed) return;
+
+     setIsUpdatingSystem(true);
+     try {
+        const res = await fetch("/api/system/update", { method: "POST" });
+        const data = await res.json();
+        await showAlert(data.message, "Update Started");
+        // Reload after a delay
+        setTimeout(() => window.location.reload(), 5000);
+     } catch (e) {
+        await showAlert("Failed to start update", "Error");
+     } finally {
+        setIsUpdatingSystem(false);
+     }
+  };
+
   useEffect(() => {
     fetchInstances();
     fetchMcVersions();
+    checkSystemUpdates();
     
     const interval = setInterval(() => {
         setInstances((prevInstances: Instance[]) => {
@@ -886,10 +924,16 @@ export default function App() {
           </button>
           <button 
              onClick={openSettings}
-             className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium"
+             className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium relative"
           >
             <Settings className="w-4 h-4 text-neutral-300" />
             Settings
+            {updateInfo?.has_update && (
+               <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+               </span>
+            )}
           </button>
           <button 
             onClick={fetchInstances}
@@ -2652,11 +2696,15 @@ export default function App() {
                   <h5 className="px-3 text-[10px] font-bold text-neutral-600 uppercase tracking-widest mb-1 mt-4">System</h5>
                   {[
                      { id: "defaults", name: "Server Defaults", icon: Database },
+                     { id: "updates", name: "Updates", icon: RefreshCw },
                      { id: "advanced", name: "Advanced", icon: Shield }
                   ].map((tab) => (
                      <button 
                         key={tab.id}
-                        onClick={() => setSettingsTab(tab.id)}
+                        onClick={() => {
+                           setSettingsTab(tab.id);
+                           if (tab.id === "updates") checkSystemUpdates();
+                        }}
                         className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${settingsTab === tab.id ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
                      >
                         <tab.icon className="w-4 h-4" />
@@ -2932,6 +2980,91 @@ export default function App() {
                         </div>
                      </div>
                   )}
+
+                  {settingsTab === "updates" && (
+                     <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
+                        <div className="flex justify-between items-start">
+                           <div>
+                              <h3 className="text-lg font-bold mb-1">Updates</h3>
+                              <p className="text-sm text-neutral-500">Manage Isopod application updates.</p>
+                           </div>
+                           <button 
+                              onClick={() => checkSystemUpdates(true)}
+                              disabled={isCheckingUpdates}
+                              className="p-2 hover:bg-[#333] rounded-lg transition-colors text-[#3E8ED0] disabled:opacity-50"
+                           >
+                              <RefreshCw className={`w-5 h-5 ${isCheckingUpdates ? 'animate-spin' : ''}`} />
+                           </button>
+                        </div>
+
+                        {updateInfo && (
+                           <div className="space-y-6">
+                              <div className="bg-[#242424] border border-[#3A3A3A] rounded-xl overflow-hidden shadow-sm">
+                                 <div className="p-6 flex items-center justify-between bg-gradient-to-r from-[#242424] to-[#2A2A2A]">
+                                    <div className="flex items-center gap-6">
+                                       <div className="flex flex-col items-center">
+                                          <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-1">Current</span>
+                                          <div className="bg-[#1A1A1A] border border-[#333] px-4 py-2 rounded-lg font-mono text-xs font-bold text-neutral-400">{updateInfo.current_version}</div>
+                                       </div>
+                                       <ChevronRight className="w-5 h-5 text-neutral-700 mt-4" />
+                                       <div className="flex flex-col items-center">
+                                          <span className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${updateInfo.has_update ? 'text-emerald-500' : 'text-neutral-500'}`}>Latest</span>
+                                          <div className={`px-4 py-2 rounded-lg font-mono text-xs font-bold border transition-all ${updateInfo.has_update ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'bg-[#1A1A1A] border-[#333] text-neutral-400'}`}>
+                                             {updateInfo.latest_version}
+                                          </div>
+                                       </div>
+                                    </div>
+
+                                    {updateInfo.has_update ? (
+                                       <button 
+                                          onClick={performSystemUpdate}
+                                          disabled={isUpdatingSystem}
+                                          className="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-bold text-sm shadow-xl shadow-emerald-500/10 transition-all flex items-center gap-2"
+                                       >
+                                          {isUpdatingSystem ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                                          Update Now
+                                       </button>
+                                    ) : (
+                                       <div className="flex items-center gap-2 text-emerald-500 text-xs font-bold bg-emerald-500/10 px-4 py-2 rounded-lg border border-emerald-500/20">
+                                          <Check className="w-4 h-4" /> Up to date
+                                       </div>
+                                    )}
+                                 </div>
+
+                                 {updateInfo.has_update && (
+                                    <div className="p-6 border-t border-[#3A3A3A] bg-[#1E1E1E]">
+                                       <div className="flex items-center gap-2 mb-4">
+                                          <FileText className="w-4 h-4 text-[#3E8ED0]" />
+                                          <h4 className="text-xs font-bold text-neutral-300 uppercase tracking-wider">Release Notes</h4>
+                                       </div>
+                                       <div className="bg-[#141414] border border-[#333] p-4 rounded-lg text-xs text-neutral-400 font-sans leading-relaxed whitespace-pre-wrap max-h-[200px] overflow-auto scrollbar-custom">
+                                          {updateInfo.release_notes}
+                                       </div>
+                                       <div className="mt-4 flex items-center gap-2 text-[10px] text-neutral-600">
+                                          <Globe className="w-3 h-3" /> Published on {new Date(updateInfo.published_at).toLocaleDateString()}
+                                       </div>
+                                    </div>
+                                 )}
+                              </div>
+                              
+                              <div className="bg-[#3E8ED0]/5 border border-[#3E8ED0]/20 p-4 rounded-lg flex gap-3 items-start">
+                                 <AlertCircle className="w-5 h-5 text-[#3E8ED0] mt-0.5" />
+                                 <p className="text-[11px] text-neutral-500 leading-relaxed">
+                                    Updates will preserve all your instance data, world files, and configurations. The application will experience a brief downtime while it restarts with the new version.
+                                 </p>
+                              </div>
+                           </div>
+                        )}
+                        
+                        {!updateInfo && isCheckingUpdates && (
+                           <div className="flex flex-col items-center justify-center p-12 gap-4">
+                              <RefreshCw className="w-8 h-8 text-[#3E8ED0] animate-spin" />
+                              <span className="text-sm font-medium text-neutral-500">Retrieving update information...</span>
+                           </div>
+                        )}
+                     </div>
+                  )}
+
                </div>
             </div>
 

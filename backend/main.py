@@ -2,6 +2,7 @@ import os
 import subprocess
 import shutil
 import re
+import asyncio
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +19,24 @@ import time
 load_dotenv()
 
 app = FastAPI(title="Isopod Backend")
+
+ISOPOD_VERSION = "v0.0.1"
+GITHUB_REPO = os.getenv("GITHUB_REPO", "Tacoz234/Isopod")
+
+# Internal state for background update checks
+cached_update_info: Optional[Dict[str, Any]] = None
+
+class SystemInfo(BaseModel):
+    version: str
+    is_docker: bool
+
+class UpdateInfo(BaseModel):
+    current_version: str
+    latest_version: str
+    has_update: bool
+    release_notes: str
+    published_at: Optional[str] = None
+
 
 # We will need CORS for frontend development
 app.add_middleware(
@@ -926,7 +945,114 @@ def get_file_content(instance_id: str, path: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/system/info", response_model=SystemInfo)
+def get_system_info():
+    return {
+        "version": ISOPOD_VERSION,
+        "is_docker": os.path.exists("/.dockerenv")
+    }
+
+async def get_latest_release():
+    """Fetches the latest release info from GitHub API."""
+    try:
+        async with httpx.AsyncClient() as client:
+            headers = {"Accept": "application/vnd.github.v3+json"}
+            res = await client.get(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", headers=headers, timeout=10)
+            
+            if res.status_code == 200:
+                data = res.json()
+                latest_v = data.get("tag_name", "Unknown")
+                return {
+                    "current_version": ISOPOD_VERSION,
+                    "latest_version": latest_v,
+                    "has_update": latest_v != ISOPOD_VERSION,
+                    "release_notes": data.get("body", "No release notes available."),
+                    "published_at": data.get("published_at")
+                }
+            return None
+    except Exception as e:
+        print(f"Error fetching release: {e}")
+        return None
+
+async def update_check_loop():
+    """Background task to check for updates every 12 hours."""
+    global cached_update_info
+    while True:
+        info = await get_latest_release()
+        if info:
+            cached_update_info = info
+        # Sleep for 12 hours
+        await asyncio.sleep(12 * 3600)
+
+@app.on_event("startup")
+async def startup_event():
+    # Start the periodic update check in the background
+    asyncio.create_task(update_check_loop())
+
+@app.get("/api/system/check-updates", response_model=UpdateInfo)
+async def check_updates(force: bool = False):
+    """
+    Returns update information. Uses cached data unless 'force' is True 
+    or no cache exists yet.
+    """
+    global cached_update_info
+    if force or not cached_update_info:
+        info = await get_latest_release()
+        if info:
+            cached_update_info = info
+            return info
+        else:
+             # Fallback if GitHub is down but we want to return something valid
+             return {
+                "current_version": ISOPOD_VERSION,
+                "latest_version": ISOPOD_VERSION,
+                "has_update": False,
+                "release_notes": "Could not connect to the update server."
+             }
+    
+    return cached_update_info
+
+@app.post("/api/system/update")
+async def perform_update():
+    """
+    Attempts to update the launcher by pulling the latest code/images 
+    and restarting the container via the mounted Docker socket.
+    """
+    if not os.path.exists("/var/run/docker.sock"):
+        raise HTTPException(status_code=500, detail="Docker socket not found. Cannot perform self-update.")
+
+    # In a real environment, we'd trigger a background process to pull and restart
+    # Since this container will be killed when restarted, we need to run it in a way that continues
+    
+    # Example command to update if using compose:
+    # docker compose -f isopod-compose.yml pull && docker compose -f isopod-compose.yml up -d
+    
+    # For now, we'll provide a response and then attempt to trigger a restart
+    # We'll use a small delay so the response reaches the client
+    
+    async def trigger_restart():
+        await asyncio.sleep(2)
+        # We try to determine the compose file name.
+        compose_file = "isopod-compose.yml" if os.path.exists("isopod-compose.yml") else "docker-compose.yml"
+        
+        # Pull (if possible) and up -d
+        # If built from source, this only works if 'git pull' happened, which we haven't implemented yet.
+        # But if the user uses a pre-built image, 'pull' is exactly what they need.
+        try:
+            # We run this in the background using subprocess.Popen to avoid being killed immediately
+            subprocess.Popen(
+                ["docker", "compose", "-f", compose_file, "up", "-d", "--pull", "always"],
+                start_new_session=True
+            )
+        except Exception as e:
+            print(f"Self-update trigger failed: {e}")
+
+    asyncio.create_task(trigger_restart())
+    
+    return {"message": "Update sequence initiated. The application will restart automatically. Please refresh the page in a few moments."}
+
 # Mount the compiled frontend to be served statically
+
 
 # Ensure '/app/frontend/dist' exists or gracefully ignore if not fully built locally
 dist_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
