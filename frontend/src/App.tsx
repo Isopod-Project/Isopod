@@ -923,7 +923,7 @@ export default function App() {
                            : 'bg-neutral-500'
                         }`}></div>
                       </div>
-                      <span className="text-xs text-center font-medium line-clamp-2 leading-tight">
+                      <span className="text-xs text-center font-medium line-clamp-2 leading-tight break-all">
                         {inst.name}
                       </span>
                     </div>
@@ -955,7 +955,7 @@ export default function App() {
                  )}
 
               </div>
-              <h2 className="text-lg font-bold text-center leading-tight mb-1">{selectedInstance.name}</h2>
+              <h2 className="text-lg font-bold text-center leading-tight mb-1 break-all">{selectedInstance.name}</h2>
               <p className="text-xs text-neutral-400">
                  {!selectedStatus?.is_running ? 'Offline' : (selectedStatus?.is_ready ? 'Online' : 'Starting...')}
               </p>
