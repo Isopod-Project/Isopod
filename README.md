@@ -19,7 +19,7 @@
 ## 🚀 Quick Start
 1. Ensure you have **Docker** and **Docker Compose** installed.
 2. Clone this repository: `git clone https://github.com/Tacoz234/Isopod.git`
-3. Start the application: `docker compose up -d`
+3. Start the application: `docker compose -f isopod-compose.yml up -d --build`
 4. Access the dashboard at `http://localhost:8000`.
 
 ## 🛠 Tech Stack
