@@ -1,26 +1,29 @@
+# Stage 1: Get Node.js binaries directly
+FROM node:20-slim AS node_base
+
+# Stage 2: Main Dev Image
 FROM python:3.11-slim
 
-# Prevent apt-get from asking questions
 ENV DEBIAN_FRONTEND=noninteractive
-
 WORKDIR /app
 
-# Install dependencies with optimization
+# Install ONLY Docker CLI and curl (this is much faster without Node/NPM via apt)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     docker.io \
     curl \
-    ca-certificates \
-    gnupg \
-    nodejs \
-    npm && \
-    # Install Docker Compose V2 plugin
+    ca-certificates && \
     mkdir -p /usr/lib/docker/cli-plugins/ && \
     curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" -o /usr/lib/docker/cli-plugins/docker-compose && \
     chmod +x /usr/lib/docker/cli-plugins/docker-compose && \
-    # Clean up apt cache to keep image small
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+# Instantly copy Node.js and NPM from the official image
+COPY --from=node_base /usr/local/bin/node /usr/local/bin/
+COPY --from=node_base /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
+    ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
 # Pre-install Python dependencies
 COPY backend/requirements.txt ./
