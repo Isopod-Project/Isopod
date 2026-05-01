@@ -1,26 +1,32 @@
 FROM python:3.11-slim
 
+# Prevent apt-get from asking questions
+ENV DEBIAN_FRONTEND=noninteractive
+
 WORKDIR /app
 
-# Install Docker CLI, nodejs, and curl
+# Install dependencies with optimization
 RUN apt-get update && \
-    apt-get install -y docker.io curl nodejs npm && \
-    rm -rf /var/lib/apt/lists/* && \
+    apt-get install -y --no-install-recommends \
+    docker.io \
+    curl \
+    ca-certificates \
+    gnupg \
+    nodejs \
+    npm && \
+    # Install Docker Compose V2 plugin
     mkdir -p /usr/lib/docker/cli-plugins/ && \
     curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" -o /usr/lib/docker/cli-plugins/docker-compose && \
-    chmod +x /usr/lib/docker/cli-plugins/docker-compose
+    chmod +x /usr/lib/docker/cli-plugins/docker-compose && \
+    # Clean up apt cache to keep image small
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-# We copy this first to leverage Docker cache
+# Pre-install Python dependencies
 COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-
-# In development, we don't COPY the source code into the image.
-# Instead, we will mount it as a volume in docker-compose.
-# This allows for instant code changes without rebuilding the image.
 
 EXPOSE 8000
 EXPOSE 5173
 
-# Default to running the backend with hot-reload enabled
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
