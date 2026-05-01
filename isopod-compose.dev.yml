@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  isopod:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: isopod-dev
+    restart: unless-stopped
+    ports:
+      - "8000:8000"  # Backend / API
+      - "5173:5173"  # Frontend Dev Server (Vite)
+    volumes:
+      - .:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Ensure this matches your CasaOS data directory
+      - /DATA/AppData/isopod/servers:/DATA/AppData/isopod/servers
+    environment:
+      - SERVERS_DIR=/DATA/AppData/isopod/servers
+      - GITHUB_REPO=Tacoz234/Isopod
+      - DEBUG=true
+    # This command starts BOTH the backend and the frontend dev server
+    # We use '&' to run them in parallel
+    command: >
+      sh -c "cd frontend && npm install && npm run dev -- --host 0.0.0.0 & 
+             uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
