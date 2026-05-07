@@ -8,7 +8,8 @@ echo "----------------------------------------------------"
 # 1. Sync Python Dependencies
 echo "📦 Checking Python dependencies..."
 if [ -f "backend/requirements.txt" ]; then
-    pip install -r backend/requirements.txt --no-cache-dir
+    # Using default cache location which is mapped to a volume
+    pip install -r backend/requirements.txt
 fi
 
 # 2. Build Frontend (if source exists)
@@ -16,9 +17,9 @@ if [ -d "frontend" ]; then
     echo "🏗️ Checking Frontend..."
     cd frontend
     
-    # Only install if node_modules is missing or package.json changed
+    # Only install if node_modules is missing
     if [ ! -d "node_modules" ]; then
-        echo "📥 Installing Node modules (this may take a minute)..."
+        echo "📥 Installing Node modules (first time only)..."
         npm install
     fi
     
