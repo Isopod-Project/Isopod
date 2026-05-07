@@ -9,21 +9,17 @@ services:
     container_name: isopod-dev
     restart: unless-stopped
     ports:
-      - "8000:8000"  # This is the port for the Web UI
+      - "8001:8000"  # This is the port for the Web UI (Changed to 8001 to avoid conflict)
     volumes:
-      # Mount the Docker socket so Isopod can manage other containers
+      # Mount the Docker socket
       - /var/run/docker.sock:/var/run/docker.sock
       
       # MOUNT YOUR SOURCE CODE HERE
-      # In CasaOS, change the left side to the absolute path of your repo on the host
-      - .:/app
+      # Note: CasaOS requires an absolute path here (e.g. /DATA/AppData/isopod)
+      - /DATA/AppData/isopod:/app
       
       # Persistent storage for the Minecraft servers
       - /DATA/AppData/isopod/servers:/DATA/AppData/isopod/servers
-      
-      # Cache volumes to keep restarts FAST (prevents re-downloading deps)
-      - isopod-node-cache:/app/frontend/node_modules
-      - isopod-pip-cache:/root/.cache/pip
       
     environment:
       - SERVERS_DIR=/DATA/AppData/isopod/servers
@@ -36,6 +32,3 @@ services:
       description: "Development build: Pull changes and click RESTART to update."
       casaos_app_id: "isopod-dev"
 
-volumes:
-  isopod-node-cache:
-  isopod-pip-cache:
