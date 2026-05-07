@@ -5,30 +5,27 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    image: isopod:dev  # The name and tag for your local dev image
+    image: isopod:dev
     container_name: isopod-dev
     restart: unless-stopped
     ports:
-      - "8001:8000"  # This is the port for the Web UI (Changed to 8001 to avoid conflict)
+      - "${DEV_PORT:-8001}:8000"
     volumes:
-      # Mount the Docker socket
       - /var/run/docker.sock:/var/run/docker.sock
       
-      # MOUNT YOUR SOURCE CODE HERE
-      # Note: CasaOS requires an absolute path here (e.g. /DATA/AppData/isopod)
-      - /DATA/AppData/isopod:/app
+      # Mount the source code (Defaults to current directory)
+      - ${PROJECT_ROOT:-.}:/app
       
-      # Persistent storage for the Minecraft servers
-      - /DATA/AppData/isopod/servers:/DATA/AppData/isopod/servers
+      # Mount the servers directory (Defaults to the common CasaOS path)
+      - ${SERVERS_DIR:-/DATA/AppData/isopod/servers}:/DATA/AppData/isopod/servers
       
     environment:
-      - SERVERS_DIR=/DATA/AppData/isopod/servers
+      - SERVERS_DIR=${SERVERS_DIR:-/DATA/AppData/isopod/servers}
       - ENV=development
     
-    # CasaOS UI Metadata
     labels:
       icon: "https://raw.githubusercontent.com/tacoz234/Isopod/main/dev_logo.png"
       title: "Isopod Dev"
-      description: "Development build: Pull changes and click RESTART to update."
+      description: "Development build: Restart to rebuild frontend and sync backend."
       casaos_app_id: "isopod-dev"
 
