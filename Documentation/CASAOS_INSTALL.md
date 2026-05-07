@@ -46,7 +46,8 @@ services:
 ```
 
 6. Click **Submit**.
-7. CasaOS will pre-fill the form. Click **Install**.
+7. For Icon URL, replace what's autofilled from CasaOS with `https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png`
+8. Click **Install**.
 
 ## 3. Configuration Details (Manual Check)
 If you prefer to fill out the form manually, ensure these settings are correct:
