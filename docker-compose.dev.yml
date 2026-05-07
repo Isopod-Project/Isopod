@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  isopod-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: isopod-dev
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount the Docker socket so Isopod can manage other containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      
+      # Mount the entire source code directory
+      # This allows 'git pull' on the host to reflect inside the container on restart
+      - .:/app
+      
+      # Persistent storage for the Minecraft servers managed by Isopod
+      - /DATA/AppData/isopod/servers:/DATA/AppData/isopod/servers
+      
+      # Optional: Cache node_modules to avoid re-installing on every build
+      # - isopod_node_modules:/app/frontend/node_modules
+      
+    environment:
+      - SERVERS_DIR=/DATA/AppData/isopod/servers
+      - ENV=development
+    
+    # CasaOS UI Metadata
+    labels:
+      icon: "https://raw.githubusercontent.com/tacoz234/Isopod/main/dev_logo.png"
+      title: "Isopod Dev"
+      description: "Development build of Isopod. Restarts rebuild the frontend and sync backend changes."
+
+# volumes:
+#   isopod_node_modules:
