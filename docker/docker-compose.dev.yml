@@ -3,8 +3,8 @@ version: '3.8'
 services:
   isopod-dev:
     build:
-      context: .
-      dockerfile: Dockerfile.dev
+      context: ..
+      dockerfile: docker/Dockerfile.dev
     image: isopod:dev
     container_name: isopod-dev
     restart: unless-stopped
@@ -14,7 +14,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       
       # Mount the source code (Defaults to current directory)
-      - ${PROJECT_ROOT:-.}:/app
+      - ${PROJECT_ROOT:-..}:/app
       
       # Mount the servers directory (Defaults to the common CasaOS path)
       - ${SERVERS_DIR:-/DATA/AppData/isopod/servers}:/DATA/AppData/isopod/servers
@@ -24,7 +24,7 @@ services:
       - ENV=development
     
     labels:
-      icon: "https://raw.githubusercontent.com/tacoz234/Isopod/main/dev_logo.png"
+      icon: "https://raw.githubusercontent.com/tacoz234/Isopod/main/assets/dev_logo.png"
       title: "Isopod Dev"
       description: "Development build: Restart to rebuild frontend and sync backend."
       casaos_app_id: "isopod-dev"

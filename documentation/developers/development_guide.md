@@ -18,12 +18,12 @@ This guide explains how to set up and use the **Isopod Development Environment**
    SSH into your server and run:
    ```bash
    cd /path/to/Isopod
-   docker build -t isopod:dev -f Dockerfile.dev .
+   docker build -t isopod:dev -f docker/Dockerfile.dev .
    ```
 
 2. **Install in CasaOS**:
    - Go to **App Store** -> **Custom Install**.
-   - Click **Import** and paste the contents of `docker-compose.dev.yml`.
+   - Click **Import** and paste the contents of `docker/docker-compose.dev.yml`.
    - **Important**: In the "Volumes" section, ensure the Host path for `/app` is set to the **absolute path** of your repository (e.g., `/home/tacoz/Isopod`).
 
 3. **Port**: The dev environment defaults to port **8001** to avoid conflicting with the production build on 8000.
@@ -44,20 +44,20 @@ If you prefer using the terminal directly:
 
 2. **Start the Environment**:
    ```bash
-   docker compose -f docker-compose.dev.yml up -d
+   docker compose -f docker/docker-compose.dev.yml up -d
    ```
 
 3. **View Logs**:
    ```bash
-   docker compose -f docker-compose.dev.yml logs -f
+   docker compose -f docker/docker-compose.dev.yml logs -f
    ```
 
 ---
 
 ## 📁 Key Development Files
-- **`Dockerfile.dev`**: Defines the environment (Python + Node.js).
-- **`dev-entrypoint.sh`**: The script that manages dependencies and builds on every restart.
-- **`docker-compose.dev.yml`**: Orchestrates the development container.
+- **`docker/Dockerfile.dev`**: Defines the environment (Python + Node.js).
+- **`docker/dev-entrypoint.sh`**: The script that manages dependencies and builds on every restart.
+- **`docker/docker-compose.dev.yml`**: Orchestrates the development container.
 
 ## 🛠️ Tech Stack
 - **Backend**: FastAPI (Python)

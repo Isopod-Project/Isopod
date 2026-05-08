@@ -24,7 +24,7 @@ LABEL com.casaos.app.name="Isopod Dev"
 LABEL com.casaos.app.icon="https://raw.githubusercontent.com/tacoz234/Isopod/main/dev_logo.png"
 
 # Use the dev entrypoint script
-COPY dev-entrypoint.sh /dev-entrypoint.sh
+COPY docker/dev-entrypoint.sh /dev-entrypoint.sh
 RUN chmod +x /dev-entrypoint.sh
 
 ENTRYPOINT ["/dev-entrypoint.sh"]
