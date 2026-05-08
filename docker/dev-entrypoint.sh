@@ -23,8 +23,8 @@ if [ -d "frontend" ]; then
         npm install
     fi
     
-    echo "🔨 Building frontend..."
-    npm run build
+    echo "🔨 Building frontend (Dev Mode)..."
+    VITE_DEV_BUILD=true npm run build
     cd ..
 fi
 

@@ -874,13 +874,23 @@ export default function App() {
     setIsSavingGlobal(false);
   };
 
+  const isDev = import.meta.env.VITE_DEV_BUILD === "true";
+  
   return (
-    <div className="flex h-screen bg-[#242424] text-[#E0E0E0] font-sans selection:bg-[#3E8ED0]/40 overflow-hidden">
+    <div className="flex h-screen bg-[#242424] text-[#E0E0E0] font-sans selection:bg-[#3E8ED0]/40 overflow-hidden relative">
+      {isDev && (
+        <div className="dev-watermark">
+          {Array.from({ length: 150 }).map((_, i) => (
+            <span key={i} className="dev-watermark-text">Development Build</span>
+          ))}
+        </div>
+      )}
       <div className="flex-1 flex flex-col">
         <header className="h-[52px] min-h-[52px] bg-[#3B3B3B] border-b border-[#1E1E1E] flex items-center px-4 gap-4 flex-shrink-0 shadow-sm z-10">
           <div className="flex items-center gap-2 mr-4 border-r border-[#4A4A4A] pr-4 py-1">
              <img src="/logo.png" className="w-8 h-8 rounded" alt="Isopod Logo" />
-             <span className="text-xl font-bold tracking-tight text-white">Isopod</span>
+              <span className="text-xl font-bold tracking-tight text-white">Isopod</span>
+              {isDev && <span className="ml-2 bg-amber-500 text-black text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter">Dev Build</span>}
           </div>
           <button 
             onClick={() => {
