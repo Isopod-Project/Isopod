@@ -99,6 +99,17 @@ Make sure the user running Docker has permissions to the `Isopod` folder. You ca
 sudo chown -R $USER:$USER /home/your-user/Isopod
 ```
 
+### "exec /app/docker/dev-entrypoint.sh: no such file or directory"
+This is a common issue when cloning the repository on **Windows**. Windows uses different "line endings" (CRLF) than Linux (LF). 
+
+**The Fix**:
+1. Open the project in **VS Code**.
+2. Open `docker/dev-entrypoint.sh`.
+3. In the bottom-right corner of the window, you will see `CRLF`. Click it and change it to `LF`.
+4. Save the file and restart the container.
+
+*Note: I've added a `.gitattributes` file to the repo to help prevent this automatically in the future.*
+
 ---
 
 ## 🛠️ Tech Stack
