@@ -879,9 +879,35 @@ export default function App() {
   return (
     <div className="flex h-screen bg-[#242424] text-[#E0E0E0] font-sans selection:bg-[#3E8ED0]/40 overflow-hidden relative">
       {isDev && (
-        <div className="dev-watermark">
-          {Array.from({ length: 150 }).map((_, i) => (
-            <span key={i} className="dev-watermark-text">Development Build</span>
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          pointerEvents: 'none',
+          zIndex: 0,
+          opacity: 0.03,
+          overflow: 'hidden',
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '150px',
+          justifyContent: 'center',
+          alignContent: 'center',
+          transform: 'rotate(-20deg) scale(1.6)',
+          userSelect: 'none'
+        }}>
+          {Array.from({ length: 100 }).map((_, i) => (
+            <span key={i} style={{
+              fontSize: '18px',
+              fontWeight: 900,
+              white-space: 'nowrap',
+              color: '#ffffff',
+              letterSpacing: '4px',
+              textTransform: 'uppercase'
+            }}>
+              Development Build
+            </span>
           ))}
         </div>
       )}

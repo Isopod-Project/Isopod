@@ -182,31 +182,3 @@
     border-right-color: var(--border);
   }
 }
-
-.dev-watermark {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  pointer-events: none;
-  z-index: 0;
-  opacity: 0.04;
-  overflow: hidden;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 120px;
-  justify-content: center;
-  align-content: center;
-  transform: rotate(-20deg) scale(1.5);
-  user-select: none;
-}
-
-.dev-watermark-text {
-  font-size: 18px;
-  font-weight: 900;
-  white-space: nowrap;
-  color: #ffffff;
-  letter-spacing: 4px;
-  text-transform: uppercase;
-}
