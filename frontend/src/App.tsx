@@ -926,22 +926,40 @@ export default function App() {
              onClick={openSettings}
              className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium relative"
           >
-            <Settings className="w-4 h-4 text-neutral-300" />
-            Settings
-            {updateInfo?.has_update && (
-               <span className="absolute -top-1 -right-1 flex h-2 w-2">
-                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-               </span>
-            )}
-          </button>
-          <button 
-            onClick={fetchInstances}
-            className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium ml-auto"
-          >
-            <RefreshCw className="w-4 h-4 text-sky-400" />
-            Refresh
-          </button>
+             <Settings className="w-4 h-4 text-neutral-300" />
+             Settings
+             {updateInfo?.has_update && (
+                <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+             )}
+           </button>
+
+           {updateInfo?.has_update && (
+              <button
+                 onClick={openSettings}
+                 className="flex items-center gap-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-[10px] font-bold px-3 py-1.5 rounded-lg border border-emerald-500/20 transition-all animate-pulse shadow-lg shadow-emerald-500/5 group ml-2"
+              >
+                 <RefreshCw className="w-3 h-3 group-hover:rotate-180 transition-transform duration-500" />
+                 UPDATE AVAILABLE: {updateInfo.latest_version}
+              </button>
+           )}
+           
+           <div className="ml-auto flex items-center gap-4">
+              <div className="flex flex-col items-end">
+                 <span className="text-[9px] font-black text-neutral-500 uppercase tracking-tighter leading-none mb-0.5">Version</span>
+                 <span className="text-[11px] font-mono font-bold text-neutral-400 leading-none">{updateInfo?.current_version || "..."}</span>
+              </div>
+              <button 
+                onClick={fetchInstances}
+                className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium"
+              >
+                <RefreshCw className="w-4 h-4 text-sky-400" />
+                Refresh
+              </button>
+           </div>
+
         </header>
         
         <main className="flex-1 overflow-auto p-6 bg-[#2B2B2B]">

@@ -1039,6 +1039,11 @@ async def perform_update():
         # If built from source, this only works if 'git pull' happened, which we haven't implemented yet.
         # But if the user uses a pre-built image, 'pull' is exactly what they need.
         try:
+            # If we are in a git repository, pull the latest code first
+            if os.path.exists(".git"):
+                print("Git repository detected. Pulling latest code...")
+                subprocess.run(["git", "pull"], check=True, timeout=30)
+
             # We run this in the background using subprocess.Popen to avoid being killed immediately
             subprocess.Popen(
                 ["docker", "compose", "-f", compose_file, "up", "-d", "--pull", "always"],
@@ -1046,6 +1051,7 @@ async def perform_update():
             )
         except Exception as e:
             print(f"Self-update trigger failed: {e}")
+
 
     asyncio.create_task(trigger_restart())
     
