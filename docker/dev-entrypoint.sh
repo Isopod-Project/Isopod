@@ -24,7 +24,8 @@ if [ -d "frontend" ]; then
     fi
     
     echo "🔨 Building frontend (Dev Mode)..."
-    VITE_DEV_BUILD=true npm run build
+    echo "VITE_DEV_BUILD=true" > .env
+    npm run build
     cd ..
 fi
 

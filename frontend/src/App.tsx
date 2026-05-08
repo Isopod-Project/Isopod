@@ -874,7 +874,8 @@ export default function App() {
     setIsSavingGlobal(false);
   };
 
-  const isDev = import.meta.env.VITE_DEV_BUILD === "true";
+  const isDev = import.meta.env.VITE_DEV_BUILD === "true" || import.meta.env.MODE === "development";
+  console.log("Isopod Dev Mode:", isDev, "Mode:", import.meta.env.MODE);
   
   return (
     <div className="flex h-screen bg-[#242424] text-[#E0E0E0] font-sans selection:bg-[#3E8ED0]/40 overflow-hidden relative">
