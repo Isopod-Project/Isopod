@@ -876,6 +876,21 @@ export default function App() {
 
    const isDev = import.meta.env.VITE_DEV_BUILD === "true" || import.meta.env.MODE === "development";
 
+   // Dynamic favicon for dev branch
+   useEffect(() => {
+      if (isDev) {
+         const link = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
+         if (link) {
+            link.href = "/dev_logo.png";
+         }
+      } else {
+         const link = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
+         if (link) {
+            link.href = "/logo.png";
+         }
+      }
+   }, [isDev]);
+
    return (
       <div className="flex h-screen bg-[#242424] text-[#E0E0E0] font-sans selection:bg-[#3E8ED0]/40 overflow-hidden relative">
          {isDev && (
@@ -914,7 +929,7 @@ export default function App() {
          <div className="flex-1 flex flex-col">
             <header className="h-[52px] min-h-[52px] bg-[#3B3B3B] border-b border-[#1E1E1E] flex items-center px-4 gap-4 flex-shrink-0 shadow-sm z-10">
                <div className="flex items-center gap-2 mr-4 border-r border-[#4A4A4A] pr-4 py-1">
-                  <img src="/logo.png" className="w-8 h-8 rounded" alt="Isopod Logo" />
+                  <img src={isDev ? "/dev_logo.png" : "/logo.png"} className="w-8 h-8 rounded" alt="Isopod Logo" />
                   <span className="text-xl font-bold tracking-tight text-white">Isopod</span>
                   {isDev && <span className="ml-2 bg-amber-500 text-black text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter">Dev Build</span>}
                </div>
