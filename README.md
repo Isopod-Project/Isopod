@@ -1,5 +1,5 @@
 # 🦀 Isopod
-![Isopod Logo](README_logo.png)
+![Isopod Logo](assets/README_logo.png)
 
 **Isopod** is a modern, lightweight, and powerful Minecraft Instance Manager built on Docker. It provides a Prism-like experience for self-hosted Minecraft servers with a sleek, interactive dashboard.
 
@@ -30,6 +30,10 @@
 
 ## 🦀 Mascot
 The official mascot of Isopod is a colorful, rolling isopod (woodlouse), representing the project's focus on encapsulation, portability (rolling!), and vibrancy.
+
+## 📖 Documentation
+- **[User Guides](documentation/everyone/getting-started.md)**: Getting started, features, and troubleshooting for all users.
+- **[Developer Guide](documentation/developers/organization_guide.md)**: Project architecture, coding standards, and organization rules for contributors.
 
 ---
 *Created by [Tacoz234](https://github.com/Tacoz234)*
