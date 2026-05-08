@@ -901,7 +901,7 @@ export default function App() {
             <span key={i} style={{
               fontSize: '18px',
               fontWeight: 900,
-              white-space: 'nowrap',
+              whiteSpace: 'nowrap',
               color: '#ffffff',
               letterSpacing: '4px',
               textTransform: 'uppercase'
