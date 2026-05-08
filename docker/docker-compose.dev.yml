@@ -8,6 +8,7 @@ services:
     image: isopod:dev
     container_name: isopod-dev
     restart: unless-stopped
+    entrypoint: /app/docker/dev-entrypoint.sh
     ports:
       - "${DEV_PORT:-8001}:8000"
     volumes:
