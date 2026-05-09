@@ -913,7 +913,7 @@ export default function App() {
       setIsSavingGlobal(false);
    };
 
-   const isDev = import.meta.env.VITE_DEV_BUILD === "true" || import.meta.env.MODE === "development";
+   const isDev = import.meta.env.MODE === 'development';
 
    // Dynamic favicon for dev branch
    useEffect(() => {

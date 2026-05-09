@@ -108,8 +108,6 @@ This is a common issue when cloning the repository on **Windows**. Windows uses 
 3. In the bottom-right corner of the window, you will see `CRLF`. Click it and change it to `LF`.
 4. Save the file and restart the container.
 
-*Note: I've added a `.gitattributes` file to the repo to help prevent this automatically in the future.*
-
 ---
 
 ## 🛠️ Tech Stack

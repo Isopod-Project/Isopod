@@ -23,7 +23,6 @@ Since Isopod is currently in development, you must build the image locally on yo
 5. Paste the following configuration:
 
 ```yaml
-version: '3.8'
 services:
   isopod:
     image: isopod:latest
