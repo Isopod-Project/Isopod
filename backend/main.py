@@ -375,20 +375,44 @@ def update_config(instance_id: str, new_config: InstanceConfig):
 async def upload_icon(instance_id: str, file: UploadFile = File(...)):
     """Upload an icon for the instance. Saves for Isopod UI and server-icon.png for Minecraft."""
     path = get_instance_path(instance_id)
-    # Save as icon.png in root (for Isopod)
-    icon_path = os.path.join(path, "icon.png")
-    with open(icon_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
     
-    # Save as server-icon.png in data/ if it exists (for Minecraft)
-    data_dir = os.path.join(path, "data")
-    if os.path.exists(data_dir):
-        # We need to seek back to start of file to copy again
+    try:
+        from PIL import Image
+        import io
+        
+        # Read the file content
+        content = await file.read()
+        
+        # Open the image and resize to 64x64 PNG
+        img = Image.open(io.BytesIO(content))
+        img = img.convert("RGBA")
+        img = img.resize((64, 64), Image.Resampling.LANCZOS)
+        
+        # Save as icon.png in root (for Isopod)
+        icon_path = os.path.join(path, "icon.png")
+        img.save(icon_path, "PNG")
+        
+        # Save as server-icon.png in data/ (for Minecraft)
+        data_dir = os.path.join(path, "data")
+        os.makedirs(data_dir, exist_ok=True)
+        mc_icon_path = os.path.join(data_dir, "server-icon.png")
+        img.save(mc_icon_path, "PNG")
+            
+    except Exception as e:
+        print(f"Error processing uploaded icon: {e}")
+        # Fallback to copy file without resizing if PIL fails
+        file.file.seek(0)
+        icon_path = os.path.join(path, "icon.png")
+        with open(icon_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        data_dir = os.path.join(path, "data")
+        os.makedirs(data_dir, exist_ok=True)
         file.file.seek(0)
         mc_icon_path = os.path.join(data_dir, "server-icon.png")
         with open(mc_icon_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-            
+                
     return {"message": "Icon updated", "icon_url": f"/api/instances/{instance_id}/icon"}
 
 @app.get("/api/instances/{instance_id}/icon")
@@ -717,6 +741,13 @@ def create_instance(req: CreateInstanceRequest):
                 icon_save_path = os.path.join(path, "icon.png")
                 img.save(icon_save_path, "PNG")
                 print(f"DEBUG: Saved icon to {icon_save_path}")
+                
+                # Save to data/server-icon.png for Minecraft
+                data_dir = os.path.join(path, "data")
+                os.makedirs(data_dir, exist_ok=True)
+                mc_icon_path = os.path.join(data_dir, "server-icon.png")
+                img.save(mc_icon_path, "PNG")
+                print(f"DEBUG: Saved server icon to {mc_icon_path}")
             else:
                 print(f"DEBUG: Icon download failed with status {res.status_code}")
         except Exception as e:

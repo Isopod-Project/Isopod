@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image } from "lucide-react";
 
 interface Instance {
   id: string;
@@ -30,6 +30,7 @@ export default function App() {
   const [simplifiedConsole, setSimplifiedConsole] = useState(true);
   const [pendingIconId, setPendingIconId] = useState<string | null>(null);
   const iconInputRef = useRef<HTMLInputElement>(null);
+  const [iconCacheBuster, setIconCacheBuster] = useState(Date.now());
 
   
   // Selected Instance for the right sidebar
@@ -465,12 +466,18 @@ export default function App() {
      if (!pendingIconId || !e.target.files?.[0]) return;
      const file = e.target.files[0];
      const formData = new FormData();
-     formData.append("icon", file);
+     formData.append("file", file);
      try {
-        await fetch(`/api/instances/${pendingIconId}/icon`, { method: "POST", body: formData });
-        fetchInstances();
+        const res = await fetch(`/api/instances/${pendingIconId}/icon`, { method: "POST", body: formData });
+        if (res.ok) {
+           setIconCacheBuster(Date.now());
+           await fetchInstances();
+        } else {
+           await showAlert("Failed to upload icon. Ensure it is a valid image.", "Upload Error");
+        }
      } catch (err) {
         console.error(err);
+        await showAlert("Error uploading icon to server.", "Network Error");
      }
      setPendingIconId(null);
      e.target.value = "";
@@ -1141,7 +1148,15 @@ export default function App() {
                       }`}
                     >
                       <div className="relative mb-3 flex items-center justify-center w-[72px] h-[72px] bg-[#3B3B3B] rounded shadow-inner">
-                        <Gamepad2 className={`w-10 h-10 ${isRunning ? (statuses[inst.id]?.is_ready ? 'text-emerald-400' : 'text-amber-400') : 'text-[#878787]'}`} />
+                        {inst.icon_url ? (
+                          <img 
+                            src={`${inst.icon_url}?v=${iconCacheBuster}`} 
+                            alt={inst.name}
+                            className="w-16 h-16 object-contain rounded" 
+                          />
+                        ) : (
+                          <Gamepad2 className={`w-10 h-10 ${isRunning ? (statuses[inst.id]?.is_ready ? 'text-emerald-400' : 'text-amber-400') : 'text-[#878787]'}`} />
+                        )}
                         <div className={`absolute bottom-1 right-1 w-3 h-3 rounded-full border-2 border-[#3B3B3B] ${
                            isRunning 
                            ? (statuses[inst.id]?.is_ready ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse') 
@@ -1170,15 +1185,35 @@ export default function App() {
               >
                  <X className="w-3.5 h-3.5" />
               </button>
-              <div className="w-24 h-24 bg-[#3B3B3B] rounded-lg shadow-inner flex flex-col items-center justify-center mb-4 relative">
-                 <Gamepad2 className="w-12 h-12 text-[#878787]" />
+              <div 
+                onClick={() => {
+                  setPendingIconId(selectedInstance.id);
+                  iconInputRef.current?.click();
+                }}
+                className="w-24 h-24 bg-[#3B3B3B] rounded-lg shadow-inner flex flex-col items-center justify-center mb-4 relative cursor-pointer group/icon overflow-hidden border border-neutral-700 hover:border-sky-500 transition-all duration-300"
+                title="Click to change icon"
+              >
+                 {selectedInstance.icon_url ? (
+                   <img 
+                     src={`${selectedInstance.icon_url}?v=${iconCacheBuster}`} 
+                     alt={selectedInstance.name}
+                     className="w-16 h-16 object-contain rounded transition-transform duration-300 group-hover/icon:scale-105"
+                   />
+                 ) : (
+                   <Gamepad2 className="w-12 h-12 text-[#878787] transition-transform duration-300 group-hover/icon:scale-105" />
+                 )}
+                 
+                 {/* Premium hover overlay */}
+                 <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/icon:opacity-100 flex items-center justify-center transition-opacity duration-300">
+                    <Pencil className="w-6 h-6 text-white drop-shadow-md animate-in zoom-in-50 duration-200" />
+                 </div>
+
                  {selectedStatus?.is_running && (
-                   <span className="absolute top-2 right-2 flex h-3 w-3">
+                   <span className="absolute top-2 right-2 flex h-3 w-3 z-10">
                      <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${selectedStatus?.is_ready ? 'bg-emerald-400' : 'bg-amber-400'} opacity-75`}></span>
                      <span className={`relative inline-flex rounded-full h-3 w-3 ${selectedStatus?.is_ready ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
                    </span>
                  )}
-
               </div>
               <h2 className="text-lg font-bold text-center leading-tight mb-1">{selectedInstance.name}</h2>
               <p className="text-xs text-neutral-400">
@@ -3340,8 +3375,16 @@ export default function App() {
           >
             <Pencil className="w-4 h-4" /> Rename
           </button>
-          <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
-            <span className="w-4 h-4 bg-neutral-700 rounded-sm flex items-center justify-center text-[8px] font-bold">F0</span> Change Icon
+          <button 
+            onClick={(e) => {
+              e.stopPropagation();
+              setPendingIconId(contextMenu.instanceId);
+              iconInputRef.current?.click();
+              setContextMenu(null);
+            }}
+            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left"
+          >
+            <Image className="w-4 h-4 text-sky-400" /> Change Icon
           </button>
 
           <div className="h-px bg-[#3A3A3A] my-1"></div>
@@ -3462,6 +3505,13 @@ export default function App() {
            </div>
         </div>
       )}
+      <input 
+         type="file" 
+         ref={iconInputRef} 
+         className="hidden" 
+         accept="image/*" 
+         onChange={handleIconUpload} 
+      />
     </div>
 
   );
