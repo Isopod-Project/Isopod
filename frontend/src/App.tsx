@@ -192,10 +192,24 @@ export default function App() {
   const [whitelistPreview, setWhitelistPreview] = useState<{name: string, uuid: string} | null>(null);
   const [isVerifyingUser, setIsVerifyingUser] = useState(false);
   
-  // Instance Whitelist States
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [instanceWhitelistUser, setInstanceWhitelistUser] = useState("");
   const [instanceWhitelistPreview, setInstanceWhitelistPreview] = useState<{name: string, uuid: string} | null>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // User Management Tab States
+  interface InstanceUser {
+    name: string;
+    uuid?: string;
+    level: number;
+    is_op: boolean;
+    whitelisted: boolean;
+  }
+  const [instanceUsers, setInstanceUsers] = useState<InstanceUser[]>([]);
+  const [isUsersLoading, setIsUsersLoading] = useState(false);
+  const [isUsersSaving, setIsUsersSaving] = useState(false);
+  const [userSearchText, setUserSearchText] = useState("");
+  const [userSearchPreview, setUserSearchPreview] = useState<{name: string, uuid: string} | null>(null);
+  const [isUserSearchVerifying, setIsUserSearchVerifying] = useState(false);
 
   // Resource Pack States
   const [resourcePackQuery, setResourcePackQuery] = useState("");
@@ -604,6 +618,71 @@ export default function App() {
       console.error("Failed to fetch config", e);
     }
   };
+
+  const fetchInstanceUsers = async (id: string) => {
+    setIsUsersLoading(true);
+    try {
+      const res = await fetch(`/api/instances/${id}/users`);
+      if (res.ok) {
+        const data = await res.json();
+        setInstanceUsers(data);
+      }
+    } catch (e) {
+      console.error("Failed to fetch instance users", e);
+    } finally {
+      setIsUsersLoading(false);
+    }
+  };
+
+  const saveInstanceUsers = async (id: string) => {
+    setIsUsersSaving(true);
+    try {
+      const res = await fetch(`/api/instances/${id}/users`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(instanceUsers)
+      });
+      if (res.ok) {
+        await showAlert("User management and whitelist saved successfully.", "Success");
+      } else {
+        throw new Error("Failed to save user configuration");
+      }
+    } catch (e: any) {
+       await showAlert("Error saving users: " + e.message, "Save Failed");
+    } finally {
+      setIsUsersSaving(false);
+    }
+  };
+
+  // Verify Minecraft User for User Management Tab
+  useEffect(() => {
+     const timer = setTimeout(async () => {
+        if (userSearchText.length >= 3) {
+           setIsUserSearchVerifying(true);
+           try {
+              const res = await fetch(`https://playerdb.co/api/player/minecraft/${userSearchText}`);
+              if (res.ok) {
+                 const data = await res.json();
+                 if (data.success && data.data && data.data.player) {
+                    const p = { 
+                       name: data.data.player.username, 
+                       uuid: data.data.player.raw_id 
+                    };
+                    setUserSearchPreview(p);
+                 } else {
+                    setUserSearchPreview(null);
+                 }
+              } else {
+                 setUserSearchPreview(null);
+              }
+           } catch (e) { setUserSearchPreview(null); }
+           finally { setIsUserSearchVerifying(false); }
+        } else {
+           setUserSearchPreview(null);
+        }
+     }, 500);
+     return () => clearTimeout(timer);
+  }, [userSearchText]);
 
   const fetchMcVersions = async () => {
     setIsVersionsLoading(true);
@@ -2229,6 +2308,16 @@ export default function App() {
                     <Settings className="w-4 h-4" />
                     Configuration
                   </button>
+                  <button 
+                    onClick={() => {
+                       setEditTab("users");
+                       fetchInstanceUsers(selectedInstance?.id || "");
+                    }}
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "users" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                  >
+                    <Users className="w-4 h-4" />
+                    User Management
+                  </button>
                 </div>
 
                  <div className="mt-auto pt-4 flex flex-col gap-2">
@@ -2333,6 +2422,224 @@ export default function App() {
                           {isExecuting ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Terminal className="w-3 h-3" />}
                           Send
                        </button>
+                    </div>
+                  </div>
+                )}
+
+                {editTab === "users" && (
+                  <div className="flex flex-col h-full p-8 overflow-auto scrollbar-custom text-[#E0E0E0]">
+                    <div className="max-w-4xl w-full mx-auto space-y-6">
+                      <div className="flex justify-between items-center">
+                         <div className="flex items-center gap-3">
+                            <Users className="w-6 h-6 text-[#3E8ED0]" />
+                            <div>
+                               <h3 className="text-xl font-bold">User Management</h3>
+                               <p className="text-xs text-neutral-500">Manage whitelist and player permissions (operator status).</p>
+                            </div>
+                         </div>
+                      </div>
+
+                      {/* Add Player Section */}
+                      <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg overflow-hidden shadow-xl">
+                         <div className="px-4 py-3 bg-[#2D2D2D] border-b border-[#3A3A3A] flex justify-between items-center bg-gradient-to-r from-[#2D2D2D] to-[#242424]">
+                            <span className="text-xs font-bold text-neutral-200 uppercase tracking-wider">Add Player to Whitelist</span>
+                         </div>
+                         <div className="p-5 space-y-4">
+                            <div className="flex gap-2">
+                               <div className="relative flex-1 group">
+                                  <div className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-[#1A1A1A] border border-[#333] flex items-center justify-center overflow-hidden">
+                                     {userSearchPreview ? (
+                                        <img 
+                                           src={`https://crafatar.com/avatars/${userSearchPreview.uuid}?size=32&overlay`} 
+                                           referrerPolicy="no-referrer"
+                                           alt="" 
+                                           className="w-full h-full"
+                                           onError={(e) => {
+                                              e.currentTarget.src = `https://minotar.net/avatar/${userSearchText}/32`;
+                                           }}
+                                        />
+                                     ) : (
+                                        <Users className="w-3 h-3 text-neutral-600" />
+                                     )}
+                                  </div>
+                                  <input 
+                                     type="text"
+                                     value={userSearchText}
+                                     onChange={(e) => setUserSearchText(e.target.value)}
+                                     onKeyDown={(e) => {
+                                        if (e.key === 'Enter' && userSearchText.trim()) {
+                                           const targetName = userSearchPreview ? userSearchPreview.name : userSearchText.trim();
+                                           const targetUuid = userSearchPreview ? userSearchPreview.uuid : undefined;
+                                           if (!instanceUsers.some(u => u.name.toLowerCase() === targetName.toLowerCase())) {
+                                              setInstanceUsers(prev => [
+                                                 ...prev,
+                                                 {
+                                                    name: targetName,
+                                                    uuid: targetUuid,
+                                                    level: 0,
+                                                    is_op: false,
+                                                    whitelisted: true
+                                                 }
+                                              ]);
+                                           }
+                                           setUserSearchText("");
+                                           setUserSearchPreview(null);
+                                        }
+                                     }}
+                                     placeholder="Minecraft Gamertag..."
+                                     className="w-full bg-[#1A1A1A] border border-[#333] pl-12 pr-4 py-3 rounded-lg focus:outline-none focus:border-[#3E8ED0]/40 text-sm placeholder:text-neutral-700 transition-all font-medium"
+                                  />
+                                  {isUserSearchVerifying && (
+                                     <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-neutral-600" />
+                                     </div>
+                                  )}
+                                  {userSearchPreview && (
+                                     <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-[#3E8ED0]/80 bg-[#3E8ED0]/5 px-2 py-0.5 rounded border border-[#3E8ED0]/20">
+                                        FOUND
+                                     </div>
+                                  )}
+                               </div>
+                               <button 
+                                  onClick={() => {
+                                     if (userSearchText.trim()) {
+                                        const targetName = userSearchPreview ? userSearchPreview.name : userSearchText.trim();
+                                        const targetUuid = userSearchPreview ? userSearchPreview.uuid : undefined;
+                                        if (!instanceUsers.some(u => u.name.toLowerCase() === targetName.toLowerCase())) {
+                                           setInstanceUsers(prev => [
+                                              ...prev,
+                                              {
+                                                 name: targetName,
+                                                 uuid: targetUuid,
+                                                 level: 0,
+                                                 is_op: false,
+                                                 whitelisted: true
+                                              }
+                                           ]);
+                                        }
+                                        setUserSearchText("");
+                                        setUserSearchPreview(null);
+                                     }
+                                  }}
+                                  className="px-6 py-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] rounded-lg text-sm font-bold transition-all text-white shadow-md shadow-[#3E8ED0]/10"
+                               >
+                                  Add Player
+                               </button>
+                            </div>
+                         </div>
+                      </div>
+
+                      {/* Players List */}
+                      <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg overflow-hidden shadow-xl">
+                         <div className="px-4 py-3 bg-[#2D2D2D] border-b border-[#3A3A3A] flex justify-between items-center bg-gradient-to-r from-[#2D2D2D] to-[#242424]">
+                            <span className="text-xs font-bold text-neutral-200 uppercase tracking-wider">Managed Players ({instanceUsers.length})</span>
+                         </div>
+                         
+                         {isUsersLoading ? (
+                            <div className="flex flex-col items-center justify-center py-12 gap-3">
+                               <RefreshCw className="w-8 h-8 text-[#3E8ED0] animate-spin" />
+                               <span className="text-xs text-neutral-500">Loading user lists...</span>
+                            </div>
+                         ) : instanceUsers.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-12 text-neutral-600 text-sm gap-2">
+                               <Users className="w-8 h-8 opacity-20" />
+                               <span className="italic">No players whitelisted or opped on this server.</span>
+                            </div>
+                         ) : (
+                            <div className="overflow-x-auto">
+                               <table className="w-full text-left border-collapse text-xs">
+                                  <thead>
+                                     <tr className="border-b border-[#2D2D2D] text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
+                                        <th className="px-5 py-3.5">Player</th>
+                                        <th className="px-5 py-3.5">Whitelisted</th>
+                                        <th className="px-5 py-3.5">Operator (OP) Level</th>
+                                        <th className="px-5 py-3.5 text-right">Actions</th>
+                                     </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-[#2D2D2D]">
+                                     {instanceUsers.map((user, idx) => (
+                                        <tr key={user.name} className="hover:bg-[#2A2A2A]/40 transition-colors">
+                                           <td className="px-5 py-3 flex items-center gap-3">
+                                              <img 
+                                                 src={user.uuid ? `https://crafatar.com/avatars/${user.uuid}?size=32&overlay` : `https://minotar.net/avatar/${user.name}/32`} 
+                                                 alt="" 
+                                                 className="w-7 h-7 rounded bg-[#141414] border border-[#333]"
+                                                 onError={(e) => {
+                                                    e.currentTarget.src = `https://minotar.net/avatar/${user.name}/32`;
+                                                 }}
+                                              />
+                                              <div className="flex flex-col">
+                                                 <span className="text-sm font-bold text-neutral-200">{user.name}</span>
+                                                 {user.uuid && <span className="text-[9px] font-mono text-neutral-600">{user.uuid}</span>}
+                                              </div>
+                                           </td>
+                                           <td className="px-5 py-3">
+                                              <button
+                                                 onClick={() => {
+                                                    setInstanceUsers(prev => prev.map((u, i) => i === idx ? { ...u, whitelisted: !u.whitelisted } : u));
+                                                 }}
+                                                 className={`px-3 py-1 rounded text-[10px] font-bold transition-all border ${user.whitelisted ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' : 'bg-neutral-800 border-neutral-700 text-neutral-500'}`}
+                                              >
+                                                 {user.whitelisted ? 'WHITELISTED' : 'BYPASSED'}
+                                              </button>
+                                           </td>
+                                           <td className="px-5 py-3">
+                                              <select
+                                                 value={user.is_op ? user.level : 0}
+                                                 onChange={(e) => {
+                                                    const val = parseInt(e.target.value);
+                                                    setInstanceUsers(prev => prev.map((u, i) => i === idx ? { 
+                                                       ...u, 
+                                                       is_op: val > 0, 
+                                                       level: val 
+                                                    } : u));
+                                                 }}
+                                                 className="bg-[#141414] border border-[#333] p-1.5 rounded text-xs text-neutral-300 focus:outline-none focus:border-[#3E8ED0]/40"
+                                              >
+                                                 <option value={0}>Standard Player (No OP)</option>
+                                                 <option value={1}>Level 1: Bypass Spawn Protection</option>
+                                                 <option value={2}>Level 2: Cheat Commands / Command Blocks</option>
+                                                 <option value={3}>Level 3: Kick, Ban, Promote</option>
+                                                 <option value={4}>Level 4: Full Operator</option>
+                                              </select>
+                                           </td>
+                                           <td className="px-5 py-3 text-right">
+                                              <button 
+                                                 onClick={() => {
+                                                    setInstanceUsers(prev => prev.filter((_, i) => i !== idx));
+                                                 }}
+                                                 className="p-1.5 bg-[#3D2525]/30 hover:bg-red-500/20 text-red-400 rounded border border-red-500/20 transition-all"
+                                                 title="Remove from Whitelist"
+                                              >
+                                                 <Trash2 className="w-3.5 h-3.5" />
+                                              </button>
+                                           </td>
+                                        </tr>
+                                     ))}
+                                  </tbody>
+                               </table>
+                            </div>
+                         )}
+                      </div>
+
+                      {/* Save Panel */}
+                      <div className="flex justify-end gap-3 pt-4 border-t border-[#3A3A3A]">
+                         <button 
+                            onClick={() => fetchInstanceUsers(selectedInstance?.id || "")}
+                            className="px-5 py-2.5 rounded-lg text-neutral-400 hover:bg-[#323232] hover:text-white font-bold transition-all text-xs"
+                         >
+                            Discard Changes
+                         </button>
+                         <button 
+                            onClick={() => saveInstanceUsers(selectedInstance?.id || "")}
+                            disabled={isUsersSaving}
+                            className="px-6 py-2.5 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white rounded-lg font-bold text-xs shadow-md shadow-[#3E8ED0]/15 transition-all flex items-center gap-2"
+                         >
+                            {isUsersSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                            Save User Configuration
+                         </button>
+                      </div>
+
                     </div>
                   </div>
                 )}

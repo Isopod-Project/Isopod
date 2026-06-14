@@ -472,6 +472,243 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
         
     return {"message": "Config updated"}
 
+class WhitelistUser(BaseModel):
+    name: str
+    uuid: Optional[str] = None
+    level: int = 0
+    is_op: bool = False
+    whitelisted: bool = True
+
+@app.get("/api/instances/{instance_id}/users")
+def get_instance_users(instance_id: str):
+    path = get_instance_path(instance_id)
+    
+    # Paths for files
+    data_dir = os.path.join(path, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    whitelist_path = os.path.join(data_dir, "whitelist.json")
+    ops_path = os.path.join(data_dir, "ops.json")
+    
+    users = {}
+    
+    # 1. Check ops.json
+    if os.path.exists(ops_path):
+        try:
+            with open(ops_path, "r") as f:
+                ops_data = json.load(f)
+                if isinstance(ops_data, list):
+                    for entry in ops_data:
+                        if isinstance(entry, dict) and "name" in entry:
+                            name = entry["name"]
+                            uuid = entry.get("uuid")
+                            level = entry.get("level", 4)
+                            users[name.lower()] = {
+                                "name": name,
+                                "uuid": uuid,
+                                "level": level,
+                                "is_op": True,
+                                "whitelisted": False # Default to false, check whitelist.json next
+                            }
+        except Exception as e:
+            print(f"Error reading ops.json: {e}")
+            
+    # 2. Check whitelist.json
+    if os.path.exists(whitelist_path):
+        try:
+            with open(whitelist_path, "r") as f:
+                wl_data = json.load(f)
+                if isinstance(wl_data, list):
+                    for entry in wl_data:
+                        if isinstance(entry, dict) and "name" in entry:
+                            name = entry["name"]
+                            uuid = entry.get("uuid")
+                            key = name.lower()
+                            if key in users:
+                                users[key]["whitelisted"] = True
+                                if uuid and not users[key]["uuid"]:
+                                    users[key]["uuid"] = uuid
+                            else:
+                                users[key] = {
+                                    "name": name,
+                                    "uuid": uuid,
+                                    "level": 0,
+                                    "is_op": False,
+                                    "whitelisted": True
+                                }
+        except Exception as e:
+            print(f"Error reading whitelist.json: {e}")
+            
+    # 3. If both files don't exist or are empty, fallback to environment in docker-compose.yml
+    if not users:
+        compose_path = os.path.join(path, "docker-compose.yml")
+        if os.path.exists(compose_path):
+            try:
+                with open(compose_path, "r") as f:
+                    config = yaml.safe_load(f)
+                services = config.get("services", {})
+                if services:
+                    first_service_name = list(services.keys())[0]
+                    service = services[first_service_name]
+                    env = service.get("environment", {})
+                    
+                    # Convert list to dict if needed
+                    env_dict = {}
+                    if isinstance(env, list):
+                        for item in env:
+                            if "=" in item:
+                                k, v = item.split("=", 1)
+                                env_dict[k] = v
+                    elif isinstance(env, dict):
+                        env_dict = env
+                        
+                    whitelist_str = env_dict.get("WHITELIST", "")
+                    ops_str = env_dict.get("OPS", "")
+                    
+                    wl_names = [n.strip() for n in whitelist_str.split(",") if n.strip()]
+                    op_names = [n.strip() for n in ops_str.split(",") if n.strip()]
+                    
+                    for name in wl_names:
+                        users[name.lower()] = {
+                            "name": name,
+                            "uuid": None,
+                            "level": 0,
+                            "is_op": False,
+                            "whitelisted": True
+                        }
+                    for name in op_names:
+                        key = name.lower()
+                        if key in users:
+                            users[key]["is_op"] = True
+                            users[key]["level"] = 4
+                        else:
+                            users[key] = {
+                                "name": name,
+                                "uuid": None,
+                                "level": 4,
+                                "is_op": True,
+                                "whitelisted": False
+                            }
+            except Exception as e:
+                print(f"Error reading fallback environment from docker-compose.yml: {e}")
+                
+    # Return as list
+    return list(users.values())
+
+@app.put("/api/instances/{instance_id}/users")
+def update_instance_users(instance_id: str, users: List[WhitelistUser]):
+    path = get_instance_path(instance_id)
+    
+    data_dir = os.path.join(path, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    whitelist_path = os.path.join(data_dir, "whitelist.json")
+    ops_path = os.path.join(data_dir, "ops.json")
+    
+    whitelist_data = []
+    ops_data = []
+    
+    whitelist_names = []
+    ops_names = []
+    
+    for u in users:
+        name = u.name
+        uuid = u.uuid
+        level = u.level
+        is_op = u.is_op
+        whitelisted = u.whitelisted
+        
+        if not name:
+            continue
+            
+        if whitelisted:
+            whitelist_data.append({
+                "uuid": uuid or "",
+                "name": name
+            })
+            whitelist_names.append(name)
+            
+        if is_op or level > 0:
+            ops_data.append({
+                "uuid": uuid or "",
+                "name": name,
+                "level": level if level > 0 else 4,
+                "bypassesPlayerLimit": False
+            })
+            ops_names.append(name)
+            
+    # Write files
+    try:
+        with open(whitelist_path, "w") as f:
+            json.dump(whitelist_data, f, indent=2)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write whitelist.json: {str(e)}")
+        
+    try:
+        with open(ops_path, "w") as f:
+            json.dump(ops_data, f, indent=2)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write ops.json: {str(e)}")
+        
+    # Also update environment in docker-compose.yml to keep it in sync
+    compose_path = os.path.join(path, "docker-compose.yml")
+    if os.path.exists(compose_path):
+        try:
+            with open(compose_path, "r") as f:
+                config = yaml.safe_load(f)
+            services = config.get("services", {})
+            if services:
+                first_service_name = list(services.keys())[0]
+                service = services[first_service_name]
+                env = service.get("environment", {})
+                
+                wl_str = ",".join(whitelist_names)
+                ops_str = ",".join(ops_names)
+                
+                if isinstance(env, list):
+                    new_env = []
+                    found_wl = False
+                    found_ops = False
+                    for item in env:
+                        if item.startswith("WHITELIST="):
+                            new_env.append(f"WHITELIST={wl_str}")
+                            found_wl = True
+                        elif item.startswith("OPS="):
+                            new_env.append(f"OPS={ops_str}")
+                            found_ops = True
+                        else:
+                            new_env.append(item)
+                    if not found_wl:
+                        new_env.append(f"WHITELIST={wl_str}")
+                    if not found_ops:
+                        new_env.append(f"OPS={ops_str}")
+                    service["environment"] = new_env
+                elif isinstance(env, dict):
+                    env["WHITELIST"] = wl_str
+                    env["OPS"] = ops_str
+                    service["environment"] = env
+                    
+            with open(compose_path, "w") as f:
+                yaml.dump(config, f, default_flow_style=False)
+        except Exception as e:
+            print(f"Error syncing environment variables to docker-compose.yml: {e}")
+            
+    # If container is running, execute command to reload whitelist
+    is_running = False
+    if docker_client:
+        try:
+            c_name = f"isopod_{instance_id}"
+            c = docker_client.containers.get(c_name)
+            is_running = c.status == "running"
+        except: pass
+        
+    if is_running:
+        cmd = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", "whitelist reload"]
+        try:
+            subprocess.run(cmd, cwd=path, capture_output=True, text=True, timeout=5)
+        except Exception as e:
+            print(f"RCON whitelist reload failed: {e}")
+            
+    return {"message": "Users updated successfully"}
+
 @app.post("/api/instances/{instance_id}/icon")
 async def upload_icon(instance_id: str, file: UploadFile = File(...)):
     """Upload an icon for the instance. Saves for Isopod UI and server-icon.png for Minecraft."""
