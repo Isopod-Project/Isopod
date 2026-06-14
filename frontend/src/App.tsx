@@ -362,6 +362,8 @@ export default function App() {
 
   const handleKill = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    const confirmed = await showConfirm("Stopping the server is better, only use if it's hung. Are you sure you want to forcefully kill this server?", "Kill Server");
+    if (!confirmed) return;
     try {
       setStatuses((prev: Record<string, InstanceStatus>) => ({
         ...prev, 
