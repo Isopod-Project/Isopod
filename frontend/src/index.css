@@ -242,3 +242,100 @@ body {
 .theme-oled .hover\:bg-\[\#323232\]:hover {
   background-color: #111111 !important;
 }
+
+/* --- EXTRA COMPONENT THEMING OVERRIDES --- */
+
+/* 1. LIGHT MODE SPECIFICS */
+
+/* Address badge */
+.theme-light .bg-\[\#050505\] {
+  background-color: #e5e7eb !important; /* light gray badge */
+  border-color: #d1d5db !important;
+}
+.theme-light .hover\:bg-\[\#1A1A1A\]:hover {
+  background-color: #d1d5db !important;
+}
+
+/* Console & logs containers */
+.theme-light .bg-\[\#0D0D0D\] {
+  background-color: #f9fafb !important; /* crisp light background */
+  border-color: #d1d5db !important;
+}
+.theme-light .text-emerald-400\/90 {
+  color: #047857 !important; /* dark readable emerald text */
+}
+.theme-light .text-emerald-500 {
+  color: #047857 !important;
+}
+.theme-light .bg-\[\#1A1A1A\] {
+  background-color: #f3f4f6 !important;
+}
+.theme-light input.bg-\[\#050505\] {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+  border-color: #d1d5db !important;
+}
+.theme-light input.bg-\[\#050505\]:focus {
+  border-color: #3E8ED0 !important;
+}
+.theme-light pre.text-neutral-400 {
+  color: #374151 !important; /* readable file content text */
+  background-color: #f9fafb !important;
+}
+
+/* Launch button overrides */
+.theme-light .bg-\[\#1A3A22\] {
+  background-color: #10b981 !important; /* emerald-500 */
+  border-color: #059669 !important; /* emerald-600 */
+  color: #ffffff !important;
+}
+.theme-light .bg-\[\#1A3A22\] .text-emerald-400 {
+  color: #ffffff !important;
+}
+.theme-light .hover\:bg-\[\#204A2A\]:hover {
+  background-color: #059669 !important; /* emerald-600 */
+}
+
+
+/* 2. OLED MODE SPECIFICS */
+
+/* Address badge */
+.theme-oled .bg-\[\#050505\] {
+  background-color: #000000 !important;
+  border-color: #222222 !important;
+}
+.theme-oled .hover\:bg-\[\#1A1A1A\]:hover {
+  background-color: #0d0d0d !important;
+}
+
+/* Console & logs containers */
+.theme-oled .bg-\[\#0D0D0D\] {
+  background-color: #000000 !important;
+  border-color: #222222 !important;
+}
+.theme-oled .bg-\[\#1A1A1A\] {
+  background-color: #000000 !important;
+  border-color: #222222 !important;
+}
+.theme-oled input.bg-\[\#050505\] {
+  background-color: #000000 !important;
+  border-color: #222222 !important;
+  color: #10b981 !important;
+}
+.theme-oled input.bg-\[\#050505\]:focus {
+  border-color: #3e8ed0 !important;
+}
+.theme-oled pre.text-neutral-400 {
+  background-color: #000000 !important;
+  color: #d4d4d4 !important;
+}
+
+/* Launch button overrides for neon-style premium OLED look */
+.theme-oled .bg-\[\#1A3A22\] {
+  background-color: #000000 !important;
+  border-color: #10b981 !important; /* emerald-500 */
+  color: #10b981 !important;
+}
+.theme-oled .hover\:bg-\[\#204A2A\]:hover {
+  background-color: rgba(16, 185, 129, 0.1) !important;
+}
