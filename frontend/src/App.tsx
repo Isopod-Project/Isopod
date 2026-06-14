@@ -51,26 +51,25 @@ export default function App() {
 
   const showAlert = (message: string, title = "Alert") => {
     return new Promise<void>((resolve) => {
-      setDialog({ title, message, type: "alert", onResult: () => { setDialog(null); resolve(); } });
+      setDialog({ title, message, type: "alert", onResult: () => { setDialog(null); setTimeout(resolve, 50); } });
     });
   };
 
   const showConfirm = (message: string, title = "Confirm") => {
     return new Promise<boolean>((resolve) => {
-      setDialog({ title, message, type: "confirm", onResult: (res) => { setDialog(null); resolve(!!res); } });
+      setDialog({ title, message, type: "confirm", onResult: (res) => { setDialog(null); setTimeout(() => resolve(!!res), 50); } });
     });
   };
 
   const showPrompt = (message: string, defaultValue = "", title = "Prompt") => {
     return new Promise<string | null>((resolve) => {
-      setDialog({ title, message, type: "prompt", defaultValue, onResult: (res) => { setDialog(null); resolve(res); } });
+      setDialog({ title, message, type: "prompt", defaultValue, onResult: (res) => { setDialog(null); setTimeout(() => resolve(res), 50); } });
     });
   };
   
-  
   const showSelect = (message: string, options: string[], title = "Select Option", defaultValue = "") => {
     return new Promise<string | null>((resolve) => {
-      setDialog({ title, message, type: "select", options, defaultValue, onResult: (res) => { setDialog(null); resolve(res); } });
+      setDialog({ title, message, type: "select", options, defaultValue, onResult: (res) => { setDialog(null); setTimeout(() => resolve(res), 50); } });
     });
   };
 
@@ -452,11 +451,11 @@ export default function App() {
   const handleChangeGroup = async (id: string) => {
      const current = groups.filter(g => g !== "No group");
      const options = ["No group", ...current, "+ New Group..."];
-     const sel = await showSelect("Target group:", options);
+     const sel = await showSelect("Select a folder to move this server to:", options, "Move to Folder");
      if (sel) {
         let finalGroup = sel;
         if (sel === "+ New Group...") {
-           finalGroup = await showPrompt("Group name:") || "";
+           finalGroup = await showPrompt("Enter a name for the new folder:", "", "Create New Folder") || "";
            if (!finalGroup) return;
         }
         await fetch(`/api/instances/${id}/group`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ group: finalGroup }) });
