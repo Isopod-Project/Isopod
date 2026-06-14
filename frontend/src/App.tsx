@@ -967,8 +967,14 @@ export default function App() {
 
    const fetchInstalledModsMeta = async () => {
       if (!config || !config.environment) return;
-      const mIdsEnv = config.environment["MODRINTH_PROJECTS"] || "";
-      const cIdsEnv = config.environment["CF_PROJECTS"] || "";
+      const mIdsEnv = [
+         config.environment["MODRINTH_PROJECTS"] || "",
+         config.environment["MODRINTH_MODPACK"] || ""
+      ].filter(Boolean).join(',');
+      const cIdsEnv = [
+         config.environment["CF_PROJECTS"] || "",
+         config.environment["CF_PROJECT_ID"] || ""
+      ].filter(Boolean).join(',');
       if (!mIdsEnv && !cIdsEnv) {
          setInstalledModsMeta([]);
          return;
