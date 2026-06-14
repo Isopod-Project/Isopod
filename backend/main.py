@@ -2,7 +2,8 @@ import os
 import subprocess
 import shutil
 import re
-from fastapi import FastAPI, HTTPException
+import asyncio
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -14,10 +15,29 @@ from typing import List, Optional, Dict, Any
 import httpx
 import json
 import time
+from . import resource_packs as rp
 
 load_dotenv()
 
 app = FastAPI(title="Isopod Backend")
+
+ISOPOD_VERSION = "v0.0.1"
+GITHUB_REPO = os.getenv("GITHUB_REPO", "Tacoz234/Isopod")
+
+# Internal state for background update checks
+cached_update_info: Optional[Dict[str, Any]] = None
+
+class SystemInfo(BaseModel):
+    version: str
+    is_docker: bool
+
+class UpdateInfo(BaseModel):
+    current_version: str
+    latest_version: str
+    has_update: bool
+    release_notes: str
+    published_at: Optional[str] = None
+
 
 # We will need CORS for frontend development
 app.add_middleware(
@@ -137,7 +157,7 @@ def get_instance_status(instance_id: str):
         try:
             # Check most recent logs for Minecraft heartbeats
             log_result = subprocess.run(
-                ["docker", "compose", "logs", "--tail=100", "mc"],
+                ["docker", "compose", "logs", "--tail=200", "mc"],
                 cwd=get_instance_path(instance_id),
                 capture_output=True, text=True, timeout=5
             )
@@ -185,9 +205,103 @@ def get_instance_status(instance_id: str):
     }
 
 @app.post("/api/instances/{instance_id}/start")
-def start_instance(instance_id: str):
+async def start_instance(instance_id: str):
     path = get_instance_path(instance_id)
-    # Start all services defined in the instance's compose file
+    compose_path = os.path.join(path, "docker-compose.yml")
+    
+    with open(compose_path, "r") as f:
+        config = yaml.safe_load(f)
+    
+    services = config.get("services", {})
+    if not services:
+        raise HTTPException(status_code=400, detail="No services found in compose file")
+        
+    first_service = list(services.keys())[0]
+    raw_env = services[first_service].get("environment", {})
+    
+    # Standardize to dict for easier manipulation
+    if isinstance(raw_env, list):
+        env = {}
+        for item in raw_env:
+            if '=' in item:
+                k, v = item.split('=', 1)
+                env[k] = v
+    else:
+        env = dict(raw_env)
+        
+    # Ensure EULA is accepted
+    changed = False
+    if env.get("EULA") != "TRUE":
+        env["EULA"] = "TRUE"
+        changed = True
+    
+    if changed:
+        # Save back in the format it was
+        if isinstance(raw_env, list):
+            services[first_service]["environment"] = [f"{k}={v}" for k, v in env.items()]
+        else:
+            services[first_service]["environment"] = env
+            
+        with open(compose_path, "w") as f:
+            yaml.dump(config, f, default_flow_style=False)
+
+    mc_version = env.get("VERSION", "1.20.4")
+    
+    # Resource Pack Bundling Logic
+    m_ids_str = env.get("RESOURCE_PACKS_MODRINTH", "")
+    c_ids_str = env.get("RESOURCE_PACKS_CF", "")
+    pack_list_key = f"{m_ids_str}|{c_ids_str}|{mc_version}"
+    
+    if m_ids_str or c_ids_str:
+        cache_dir = os.path.join(SERVERS_DIR, ".cache", "resource_packs")
+        os.makedirs(cache_dir, exist_ok=True)
+        hash_file = os.path.join(cache_dir, f"{instance_id}_key.txt")
+        
+        # Check cache
+        last_key = ""
+        if os.path.exists(hash_file):
+            with open(hash_file, "r") as f: last_key = f.read().strip()
+            
+        if pack_list_key != last_key:
+            print(f"--- Bundling Needed for {instance_id} ---")
+            m_ids = [i.strip() for i in m_ids_str.split(",") if i.strip()]
+            c_ids = [i.strip() for i in c_ids_str.split(",") if i.strip()]
+            
+            try:
+                async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+                    downloaded_zips = []
+                    for mid in m_ids:
+                        url = await rp.get_latest_version_url(client, "modrinth", mid, mc_version)
+                        if url:
+                            z_path = os.path.join(cache_dir, f"{mid}.zip")
+                            if await rp.download_file(client, url, z_path):
+                                downloaded_zips.append(z_path)
+
+                    for cid in c_ids:
+                        url = await rp.get_latest_version_url(client, "curseforge", cid, mc_version)
+                        if url:
+                            z_path = os.path.join(cache_dir, f"{cid}.zip")
+                            if await rp.download_file(client, url, z_path):
+                                downloaded_zips.append(z_path)
+
+                    if downloaded_zips:
+                        bundle_path = os.path.join(cache_dir, f"bundle_{instance_id}.zip")
+                        rp.merge_resource_packs(downloaded_zips, bundle_path)
+                        public_url, sha1 = await rp.upload_to_mcpacks(bundle_path)
+                        if public_url and sha1:
+                            env["RESOURCE_PACK"] = public_url
+                            env["RESOURCE_PACK_SHA1"] = sha1
+                            env["RESOURCE_PACK_ID"] = "" # Clear legacy
+                            # Save back to compose so it persists
+                            config['services'][first_service]['environment'] = env
+                            with open(compose_path, "w") as f:
+                                yaml.dump(config, f, default_flow_style=False)
+                            # Update cache key
+                            with open(hash_file, "w") as f: f.write(pack_list_key)
+            except Exception as e:
+                print(f"Bundling failed during start: {e}")
+
+    # Start all services
     result = subprocess.run(["docker", "compose", "up", "-d"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
@@ -196,10 +310,19 @@ def start_instance(instance_id: str):
 @app.post("/api/instances/{instance_id}/stop")
 def stop_instance(instance_id: str):
     path = get_instance_path(instance_id)
-    result = subprocess.run(["docker", "compose", "stop"], cwd=path, capture_output=True, text=True)
+    # Use 'down' instead of 'stop' to remove the container, which clears Docker logs
+    result = subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
     return {"message": "Stopped"}
+
+@app.post("/api/instances/{instance_id}/kill")
+def kill_instance(instance_id: str):
+    path = get_instance_path(instance_id)
+    result = subprocess.run(["docker", "compose", "kill"], cwd=path, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
+    return {"message": "Killed"}
 
 @app.get("/api/instances/{instance_id}/config")
 def get_config(instance_id: str):
@@ -218,23 +341,13 @@ def get_config(instance_id: str):
     first_service_name = list(services.keys())[0]
     service = services[first_service_name]
     
-    env_vars = {}
-    if "environment" in service:
-        if isinstance(service["environment"], list):
-            for item in service["environment"]:
-                if "=" in item:
-                    k, v = item.split("=", 1)
-                    env_vars[k] = v
-        elif isinstance(service["environment"], dict):
-            env_vars = service["environment"]
-            
     return {
         "image": service.get("image", ""),
-        "environment": env_vars,
+        "environment": service.get("environment", {}),
     }
 
 @app.put("/api/instances/{instance_id}/config")
-def update_config(instance_id: str, new_config: InstanceConfig):
+async def update_config(instance_id: str, new_config: InstanceConfig):
     path = get_instance_path(instance_id)
     compose_path = os.path.join(path, "docker-compose.yml")
     if not os.path.exists(compose_path):
@@ -247,7 +360,10 @@ def update_config(instance_id: str, new_config: InstanceConfig):
     if services:
         first_service_name = list(services.keys())[0]
         config['services'][first_service_name]['image'] = new_config.image
-        config['services'][first_service_name]['environment'] = new_config.environment
+        # Ensure EULA is preserved/added
+        env = new_config.environment
+        env["EULA"] = "TRUE"
+        config['services'][first_service_name]['environment'] = env
         
     with open(compose_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False)
@@ -402,8 +518,9 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
         
     facets = [
         [f"project_type:{class_type}"],
-        ["server_side:required", "server_side:optional"] # Skip "unsupported" (client-only)
     ]
+    if class_type == "mod":
+        facets.append(["server_side:required", "server_side:optional"])
     if mc_version:
         facets.append([f"versions:{mc_version}"])
     if loader:
@@ -413,7 +530,7 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
     params = {
         "query": q,
         "facets": json.dumps(facets),
-        "limit": 20
+        "limit": 120
     }
     
     async with httpx.AsyncClient() as client:
@@ -441,8 +558,12 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
     mc_version = None if mc_version == "undefined" or not mc_version else mc_version
     loader = None if loader == "undefined" or not loader else loader
     
-    # Using '6' for mods, '4471' for modpacks
-    class_id = 4471 if class_type == "modpack" else 6
+    # Using '6' for mods, '4471' for modpacks, '12' for resource packs
+    class_id = 6
+    if class_type == "modpack":
+        class_id = 4471
+    elif class_type == "resourcepack":
+        class_id = 12
     
     # If query is empty, we browse via parameters
     query_str = q if q else ""
@@ -465,7 +586,7 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
         "searchFilter": q,
         "classId": class_id, 
         "excludeCategoryIds": "4764" if class_id == 6 else None, # Client Side only for mods
-        "pageSize": 20
+        "pageSize": 120
     }
     if mc_version:
         params["gameVersion"] = mc_version
@@ -541,7 +662,8 @@ def create_instance(req: CreateInstanceRequest):
                     f"LEVEL_TYPE={req.level_type or 'DEFAULT'}",
                     f"DIFFICULTY={req.difficulty or 'easy'}",
                     f"MODE={req.gamemode or 'survival'}",
-                    f"GENERATE_STRUCTURES={'true' if req.generate_structures else 'false'}"
+                    f"GENERATE_STRUCTURES={'true' if req.generate_structures else 'false'}",
+                    "JVM_OPTS=--add-opens java.base/sun.misc=ALL-UNNAMED"
                 ],
                 "volumes": ["./data:/data"],
                 "restart": "unless-stopped"
@@ -582,9 +704,36 @@ def create_instance(req: CreateInstanceRequest):
 @app.delete("/api/instances/{instance_id}")
 def delete_instance(instance_id: str):
     path = get_instance_path(instance_id)
-    # Safely stop containers before purging
-    subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True)
-    shutil.rmtree(path, ignore_errors=True)
+    # Safely stop and remove containers and volumes before purging
+    # Use --volumes to ensure bind mounts or volumes are handled, --remove-orphans for completeness
+    subprocess.run(["docker", "compose", "down", "-v", "--remove-orphans", "--timeout", "5"], cwd=path, capture_output=True)
+    
+    # Direct fallback: Try to remove by name in case compose lost track
+    if docker_client:
+        try:
+            # The naming convention is isopod_{slug} 
+            # Note: rename_instance also updates this, but instance_id is always the current slug.
+            c_name = f"isopod_{instance_id}"
+            try:
+                c = docker_client.containers.get(c_name)
+                c.remove(force=True)
+            except: pass
+        except: pass
+
+    # Try to remove the directory. On Windows, Docker might be slow to release file locks
+    # even after 'down', so we retry a few times.
+    for i in range(5):
+        try:
+            if os.path.exists(path):
+                shutil.rmtree(path)
+            break
+        except Exception as e:
+            if i == 4:
+                print(f"Failed to delete {path} after multiple attempts: {e}")
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                time.sleep(0.5)
+                
     return {"message": "Instance deleted"}
 
 @app.post("/api/instances/{instance_id}/rename")
@@ -954,7 +1103,120 @@ def get_file_content(instance_id: str, path: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/system/info", response_model=SystemInfo)
+def get_system_info():
+    return {
+        "version": ISOPOD_VERSION,
+        "is_docker": os.path.exists("/.dockerenv")
+    }
+
+async def get_latest_release():
+    """Fetches the latest release info from GitHub API."""
+    try:
+        async with httpx.AsyncClient() as client:
+            headers = {"Accept": "application/vnd.github.v3+json"}
+            res = await client.get(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", headers=headers, timeout=10)
+            
+            if res.status_code == 200:
+                data = res.json()
+                latest_v = data.get("tag_name", "Unknown")
+                return {
+                    "current_version": ISOPOD_VERSION,
+                    "latest_version": latest_v,
+                    "has_update": latest_v != ISOPOD_VERSION,
+                    "release_notes": data.get("body", "No release notes available."),
+                    "published_at": data.get("published_at")
+                }
+            return None
+    except Exception as e:
+        print(f"Error fetching release: {e}")
+        return None
+
+async def update_check_loop():
+    """Background task to check for updates every 12 hours."""
+    global cached_update_info
+    while True:
+        info = await get_latest_release()
+        if info:
+            cached_update_info = info
+        # Sleep for 12 hours
+        await asyncio.sleep(12 * 3600)
+
+@app.on_event("startup")
+async def startup_event():
+    # Start the periodic update check in the background
+    asyncio.create_task(update_check_loop())
+
+@app.get("/api/system/check-updates", response_model=UpdateInfo)
+async def check_updates(force: bool = False):
+    """
+    Returns update information. Uses cached data unless 'force' is True 
+    or no cache exists yet.
+    """
+    global cached_update_info
+    if force or not cached_update_info:
+        info = await get_latest_release()
+        if info:
+            cached_update_info = info
+            return info
+        else:
+             # Fallback if GitHub is down but we want to return something valid
+             return {
+                "current_version": ISOPOD_VERSION,
+                "latest_version": ISOPOD_VERSION,
+                "has_update": False,
+                "release_notes": "Could not connect to the update server."
+             }
+    
+    return cached_update_info
+
+@app.post("/api/system/update")
+async def perform_update():
+    """
+    Attempts to update the launcher by pulling the latest code/images 
+    and restarting the container via the mounted Docker socket.
+    """
+    if not os.path.exists("/var/run/docker.sock"):
+        raise HTTPException(status_code=500, detail="Docker socket not found. Cannot perform self-update.")
+
+    # In a real environment, we'd trigger a background process to pull and restart
+    # Since this container will be killed when restarted, we need to run it in a way that continues
+    
+    # Example command to update if using compose:
+    # docker compose -f isopod-compose.yml pull && docker compose -f isopod-compose.yml up -d
+    
+    # For now, we'll provide a response and then attempt to trigger a restart
+    # We'll use a small delay so the response reaches the client
+    
+    async def trigger_restart():
+        await asyncio.sleep(2)
+        # We try to determine the compose file name.
+        compose_file = "isopod-compose.yml" if os.path.exists("isopod-compose.yml") else "docker-compose.yml"
+        
+        # Pull (if possible) and up -d
+        # If built from source, this only works if 'git pull' happened, which we haven't implemented yet.
+        # But if the user uses a pre-built image, 'pull' is exactly what they need.
+        try:
+            # If we are in a git repository, pull the latest code first
+            if os.path.exists(".git"):
+                print("Git repository detected. Pulling latest code...")
+                subprocess.run(["git", "pull"], check=True, timeout=30)
+
+            # We run this in the background using subprocess.Popen to avoid being killed immediately
+            subprocess.Popen(
+                ["docker", "compose", "-f", compose_file, "up", "-d", "--pull", "always"],
+                start_new_session=True
+            )
+        except Exception as e:
+            print(f"Self-update trigger failed: {e}")
+
+
+    asyncio.create_task(trigger_restart())
+    
+    return {"message": "Update sequence initiated. The application will restart automatically. Please refresh the page in a few moments."}
+
 # Mount the compiled frontend to be served statically
+
 
 # Ensure '/app/frontend/dist' exists or gracefully ignore if not fully built locally
 dist_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
