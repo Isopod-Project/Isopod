@@ -96,6 +96,7 @@ export default function App() {
   const [modpackResults, setModpackResults] = useState<any[]>([]);
   const [isModpackLoading, setIsModpackLoading] = useState(false);
   const [selectedModpack, setSelectedModpack] = useState<any>(null);
+  const [importFile, setImportFile] = useState<File | null>(null);
   const [versionSearch, setVersionSearch] = useState("");
   const [versionFilters, setVersionFilters] = useState({
     Releases: true,
@@ -308,30 +309,12 @@ export default function App() {
     }
   };
 
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      setIsCreating(true);
-      try {
-         const formData = new FormData();
-         formData.append("file", file);
-         const res = await fetch("/api/instances/import", { method: "POST", body: formData });
-         if (res.ok) {
-            const data = await res.json();
-            await fetchInstances();
-            setSelectedId(data.id);
-            setIsAddModalOpen(false);
-            await showAlert("Instance imported successfully!", "Success");
-         } else {
-            const err = await res.json().catch(() => ({}));
-            await showAlert(`Failed to import: ${err.detail || 'Server error'}`, "Error");
-         }
-      } catch (err) {
-         await showAlert("Error uploading instance zip.", "Error");
-      } finally {
-         setIsCreating(false);
-         if (e.target) e.target.value = '';
-      }
+      setImportFile(file);
+      const baseName = file.name.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ");
+      setNewName(baseName);
   };
 
   const handleStart = async (id: string, e: React.MouseEvent) => {
@@ -424,6 +407,36 @@ export default function App() {
     e.preventDefault();
     setIsCreating(true);
     try {
+      if (addTab === 'import') {
+        if (!importFile) {
+          await showAlert("Please select a ZIP file first.", "Error");
+          setIsCreating(false);
+          return;
+        }
+        const formData = new FormData();
+        formData.append("file", importFile);
+        if (newName) formData.append("name", newName);
+        if (newPort) formData.append("port", newPort);
+        
+        const res = await fetch("/api/instances/import", {
+          method: "POST",
+          body: formData
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || "Failed to import instance");
+        }
+        const data = await res.json();
+        setInstances((prev: Instance[]) => [...prev, data]);
+        setIsAddModalOpen(false);
+        setImportFile(null);
+        setNewName("");
+        await showAlert("Instance imported successfully!", "Success");
+        fetchInstances();
+        setIsCreating(false);
+        return;
+      }
+
       const body: any = { 
         name: newName, 
         template: selectedAddLoader.toLowerCase(), 
@@ -1368,6 +1381,7 @@ export default function App() {
                 setSelectedAddVersion("latest");
                 setSelectedAddLoader("VANILLA");
                 setSelectedModpack(null);
+                setImportFile(null);
              }}
             className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium"
           >
@@ -1990,13 +2004,36 @@ export default function App() {
                                  <Database className="w-10 h-10 text-[#3E8ED0]" />
                               </div>
                               <div className="space-y-2">
-                                 <h3 className="text-xl font-bold text-white">Import Server / World</h3>
-                                 <p className="text-sm text-neutral-400 max-w-sm">Upload an Isopod server export (.zip) or a Minecraft singleplayer world (.zip containing level.dat) to create a new server instance.</p>
+                                 <h3 className="text-xl font-bold text-white">
+                                    {importFile ? "File Selected" : "Import Server / World"}
+                                 </h3>
+                                 <p className="text-sm text-neutral-400 max-w-sm">
+                                    {importFile ? (
+                                       <span className="font-mono text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20 block truncate max-w-xs mx-auto">
+                                          {importFile.name}
+                                       </span>
+                                    ) : (
+                                       "Upload an Isopod server export (.zip) or a Minecraft singleplayer world (.zip containing level.dat) to create a new server instance."
+                                    )}
+                                 </p>
                               </div>
-                              <label className="px-8 py-3 bg-[#3E8ED0] hover:bg-[#2B6A9E] rounded-lg font-bold text-white transition-all cursor-pointer shadow-lg shadow-[#3E8ED0]/15">
-                                  Browse Zip File
-                                  <input type="file" className="hidden" accept=".zip" onChange={handleImport} />
-                              </label>
+                              <div className="flex gap-2">
+                                 <label className="px-6 py-2.5 bg-[#3E8ED0] hover:bg-[#2B6A9E] rounded-lg font-bold text-white transition-all cursor-pointer shadow-lg shadow-[#3E8ED0]/15 text-sm">
+                                     {importFile ? "Change Zip File" : "Browse Zip File"}
+                                     <input type="file" className="hidden" accept=".zip" onChange={handleImport} />
+                                 </label>
+                                 {importFile && (
+                                    <button 
+                                       onClick={() => {
+                                          setImportFile(null);
+                                          setNewName("");
+                                       }}
+                                       className="px-6 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-500 rounded-lg font-bold transition-all text-sm"
+                                    >
+                                       Clear
+                                    </button>
+                                 )}
+                              </div>
                            </div>
                         )}
 
@@ -2187,9 +2224,9 @@ export default function App() {
                    {addStep === 1 ? (
                       <button 
                         onClick={() => setAddStep(2)}
-                        disabled={!newName || (addTab !== 'custom' && addTab !== 'import' && !selectedModpack)}
+                        disabled={!newName || (addTab === 'import' && !importFile) || (addTab !== 'custom' && addTab !== 'import' && !selectedModpack)}
                         className={`flex items-center gap-2 px-8 py-2 rounded font-bold text-sm shadow-xl transition-all ${
-                          !newName || (addTab !== 'custom' && addTab !== 'import' && !selectedModpack) ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed border border-[#333]' : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white shadow-[#3E8ED0]/10'
+                          !newName || (addTab === 'import' && !importFile) || (addTab !== 'custom' && addTab !== 'import' && !selectedModpack) ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed border border-[#333]' : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white shadow-[#3E8ED0]/10'
                         }`}
                       >
                         Next <ChevronRight className="w-4 h-4" />

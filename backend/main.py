@@ -5,7 +5,7 @@ import re
 import zipfile
 import tempfile
 import asyncio
-from fastapi import FastAPI, HTTPException, File, UploadFile, Request, BackgroundTasks
+from fastapi import FastAPI, HTTPException, File, UploadFile, Request, BackgroundTasks, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
@@ -1384,12 +1384,16 @@ def export_instance(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/instances/import")
-async def import_instance(file: UploadFile = File(...)):
+async def import_instance(
+    file: UploadFile = File(...),
+    name: Optional[str] = Form(None),
+    port: Optional[int] = Form(None)
+):
     if not file.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="Only .zip files are supported")
         
     # Generate a unique slug for the new instance
-    base_name = file.filename.rsplit('.', 1)[0]
+    base_name = name if name else file.filename.rsplit('.', 1)[0]
     new_slug = generate_slug(base_name)
     
     # Avoid collisions
@@ -1495,7 +1499,7 @@ async def import_instance(file: UploadFile = File(...)):
                             try:
                                 p = service["ports"][0] or "25565:25565"
                                 current_port = int(str(p).split(':')[0])
-                                new_port = current_port
+                                new_port = port if port else current_port
                                 while new_port in used_ports or new_port < 1024:
                                     new_port += 1
                                 service["ports"] = [f"{new_port}:25565"]
@@ -1552,7 +1556,7 @@ async def import_instance(file: UploadFile = File(...)):
                                         used_ports.add(int(str(p).split(':')[0]))
                     except: pass
             
-            new_port = 25565
+            new_port = port if port else 25565
             while new_port in used_ports or new_port < 1024:
                 new_port += 1
                 
