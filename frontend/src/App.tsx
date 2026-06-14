@@ -315,6 +315,7 @@ export default function App() {
       setImportFile(file);
       const baseName = file.name.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ");
       setNewName(baseName);
+      e.target.value = '';
   };
 
   const handleStart = async (id: string, e: React.MouseEvent) => {
