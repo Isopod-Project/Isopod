@@ -1101,9 +1101,14 @@ def create_instance(req: CreateInstanceRequest):
             env.append(f"LOADER_VERSION={req.loader_version}")
 
     if req.modrinth_id:
-        env.append(f"MODRINTH_PROJECTS={req.modrinth_id}")
+        env.append(f"MODRINTH_MODPACK={req.modrinth_id}")
     if req.cf_id:
-        env.append(f"CF_PROJECTS={req.cf_id}")
+        # Find TYPE in env and replace it with AUTO_CURSEFORGE
+        for i, item in enumerate(env):
+            if item.startswith("TYPE="):
+                env[i] = "TYPE=AUTO_CURSEFORGE"
+                break
+        env.append(f"CF_PROJECT_ID={req.cf_id}")
     
     with open(os.path.join(path, "docker-compose.yml"), "w") as f:
         yaml.dump(compose_content, f, default_flow_style=False)
