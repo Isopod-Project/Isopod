@@ -1459,31 +1459,16 @@ async def import_instance(
             prefix = os.path.dirname(compose_file_path)
             
             with zipfile.ZipFile(tmp_path, 'r') as zipf:
-                for member in zipf.infolist():
-                    filename = member.filename
-                    filename_normalized = filename.replace('\\', '/')
-                    prefix_normalized = prefix.replace('\\', '/')
-                    
-                    if prefix_normalized:
-                        if filename_normalized.startswith(prefix_normalized + "/"):
-                            rel_path = os.path.relpath(filename_normalized, prefix_normalized)
-                            if rel_path == "." or rel_path == "..":
-                                continue
-                            target_file = os.path.join(target_path, rel_path)
-                            if member.is_dir():
-                                os.makedirs(target_file, exist_ok=True)
-                            else:
-                                os.makedirs(os.path.dirname(target_file), exist_ok=True)
-                                with zipf.open(member) as source, open(target_file, "wb") as target:
-                                    shutil.copyfileobj(source, target)
-                    else:
-                        target_file = os.path.join(target_path, filename_normalized)
-                        if member.is_dir():
-                            os.makedirs(target_file, exist_ok=True)
-                        else:
-                            os.makedirs(os.path.dirname(target_file), exist_ok=True)
-                            with zipf.open(member) as source, open(target_file, "wb") as target:
-                                shutil.copyfileobj(source, target)
+                zipf.extractall(target_path)
+                
+            if prefix:
+                prefix_path = os.path.join(target_path, prefix)
+                for item in os.listdir(prefix_path):
+                    shutil.move(os.path.join(prefix_path, item), os.path.join(target_path, item))
+                try:
+                    shutil.rmtree(prefix_path)
+                except:
+                    pass
                                 
             # Update docker-compose.yml to match the new slug and avoid port conflict
             compose_path = os.path.join(target_path, "docker-compose.yml")
@@ -1555,33 +1540,19 @@ async def import_instance(
             prefix = os.path.dirname(level_dat_path)
             
             with zipfile.ZipFile(tmp_path, 'r') as zipf:
-                world_dir = os.path.join(target_path, "data", "world")
+                zipf.extractall(target_path)
+                
+            world_dir = os.path.join(target_path, "data", "world")
+            os.makedirs(os.path.dirname(world_dir), exist_ok=True)
+            
+            if prefix:
+                prefix_path = os.path.join(target_path, prefix)
+                shutil.move(prefix_path, world_dir)
+            else:
                 os.makedirs(world_dir, exist_ok=True)
-                for member in zipf.infolist():
-                    filename = member.filename
-                    filename_normalized = filename.replace('\\', '/')
-                    prefix_normalized = prefix.replace('\\', '/')
-                    
-                    if prefix_normalized:
-                        if filename_normalized.startswith(prefix_normalized + "/"):
-                            rel_path = os.path.relpath(filename_normalized, prefix_normalized)
-                            if rel_path == "." or rel_path == "..":
-                                continue
-                            target_file = os.path.join(world_dir, rel_path)
-                            if member.is_dir():
-                                os.makedirs(target_file, exist_ok=True)
-                            else:
-                                os.makedirs(os.path.dirname(target_file), exist_ok=True)
-                                with zipf.open(member) as source, open(target_file, "wb") as target:
-                                    shutil.copyfileobj(source, target)
-                    else:
-                        target_file = os.path.join(world_dir, filename_normalized)
-                        if member.is_dir():
-                            os.makedirs(target_file, exist_ok=True)
-                        else:
-                            os.makedirs(os.path.dirname(target_file), exist_ok=True)
-                            with zipf.open(member) as source, open(target_file, "wb") as target:
-                                shutil.copyfileobj(source, target)
+                for item in os.listdir(target_path):
+                    if item != "data":
+                        shutil.move(os.path.join(target_path, item), os.path.join(world_dir, item))
                                 
             # Generate the default docker-compose.yml for this single player world
             used_ports = set()
