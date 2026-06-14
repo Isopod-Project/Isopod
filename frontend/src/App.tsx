@@ -1156,52 +1156,96 @@ export default function App() {
                 <p>No instances found. Create folders in your servers directory.</p>
              </div>
           ) : (
-            <div>
-              <div className="flex items-center gap-2 border-b border-[#404040] pb-2 mb-4 cursor-default">
-                 <Layers className="w-4 h-4 text-neutral-400" />
-                 <span className="font-semibold text-neutral-300">Ungrouped</span>
-              </div>
-              
-              <div className="flex flex-wrap gap-4">
-                {instances.map((inst) => {
-                  const isSelected = selectedId === inst.id;
-                  const isRunning = statuses[inst.id]?.is_running;
-                  
-                  return (
-                    <div 
-                      key={inst.id}
-                      onClick={() => setSelectedId(inst.id)}
-                      onContextMenu={(e) => handleContextMenu(e, inst.id)}
-                      className={`flex flex-col items-center justify-center p-3 rounded cursor-pointer transition-all w-[110px] select-none ${
-                        isSelected 
-                          ? 'bg-[#3E8ED0]/20 outline outline-2 outline-[#3E8ED0] shadow-sm' 
-                          : 'hover:bg-[#404040] border border-transparent'
-                      }`}
-                    >
-                      <div className="relative mb-3 flex items-center justify-center w-[72px] h-[72px] bg-[#3B3B3B] rounded shadow-inner">
-                        {inst.icon_url ? (
-                          <img 
-                            src={`${inst.icon_url}?v=${iconCacheBuster}`} 
-                            alt={inst.name}
-                            className="w-16 h-16 object-contain rounded" 
-                          />
-                        ) : (
-                          <Gamepad2 className={`w-10 h-10 ${isRunning ? (statuses[inst.id]?.is_ready ? 'text-emerald-400' : 'text-amber-400') : 'text-[#878787]'}`} />
+             <div className="space-y-8">
+               {groups.map((groupName) => {
+                 const groupInstances = instances.filter(inst => {
+                   if (groupName === "No group" || !groupName) {
+                     return !inst.group || inst.group === "No group";
+                   }
+                   return inst.group === groupName;
+                 });
+
+                 // Only render the group if it contains instances
+                 if (groupInstances.length === 0) return null;
+
+                 const isDefaultGroup = groupName === "No group" || !groupName;
+
+                 return (
+                   <div key={groupName || "No group"} className="bg-[#2D2D2D]/30 p-4 rounded-lg border border-[#3A3A3A]/40 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
+                     <div className="flex items-center justify-between border-b border-[#404040]/50 pb-2 mb-4 group/header cursor-default">
+                        <div className="flex items-center gap-2">
+                           <Folder className="w-4 h-4 text-yellow-500" />
+                           <span className="font-bold text-neutral-200 tracking-wide">
+                             {isDefaultGroup ? "Ungrouped" : groupName}
+                           </span>
+                           <span className="text-[10px] text-neutral-500 font-mono bg-[#1A1A1A] px-2 py-0.5 rounded-full border border-[#2A2A2A]">
+                             {groupInstances.length} {groupInstances.length === 1 ? "server" : "servers"}
+                           </span>
+                        </div>
+                        
+                        {!isDefaultGroup && (
+                           <div className="flex items-center gap-2 opacity-0 group-hover/header:opacity-100 transition-opacity duration-200">
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); handleRenameGroup(groupName); }}
+                                className="p-1 hover:bg-[#3E8ED0]/20 rounded text-neutral-400 hover:text-sky-400 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                                title="Rename Group"
+                              >
+                                 <Edit className="w-3.5 h-3.5" /> Rename
+                              </button>
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); handleDeleteGroup(groupName); }}
+                                className="p-1 hover:bg-red-500/20 rounded text-neutral-400 hover:text-red-400 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                                title="Dissolve Group"
+                              >
+                                 <Trash2 className="w-3.5 h-3.5" /> Dissolve
+                              </button>
+                           </div>
                         )}
-                        <div className={`absolute bottom-1 right-1 w-3 h-3 rounded-full border-2 border-[#3B3B3B] ${
-                           isRunning 
-                           ? (statuses[inst.id]?.is_ready ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse') 
-                           : 'bg-neutral-500'
-                        }`}></div>
-                      </div>
-                      <span className="text-xs text-center font-medium line-clamp-2 leading-tight">
-                        {inst.name}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+                     </div>
+                     
+                     <div className="flex flex-wrap gap-4">
+                       {groupInstances.map((inst) => {
+                         const isSelected = selectedId === inst.id;
+                         const isRunning = statuses[inst.id]?.is_running;
+                         
+                         return (
+                           <div 
+                             key={inst.id}
+                             onClick={() => setSelectedId(inst.id)}
+                             onContextMenu={(e) => handleContextMenu(e, inst.id)}
+                             className={`flex flex-col items-center justify-center p-3 rounded cursor-pointer transition-all w-[110px] select-none ${
+                               isSelected 
+                                 ? 'bg-[#3E8ED0]/20 outline outline-2 outline-[#3E8ED0] shadow-sm' 
+                                 : 'hover:bg-[#404040] border border-transparent'
+                             }`}
+                           >
+                             <div className="relative mb-3 flex items-center justify-center w-[72px] h-[72px] bg-[#3B3B3B] rounded shadow-inner">
+                               {inst.icon_url ? (
+                                 <img 
+                                   src={`${inst.icon_url}?v=${iconCacheBuster}`} 
+                                   alt={inst.name}
+                                   className="w-16 h-16 object-contain rounded" 
+                                 />
+                               ) : (
+                                 <Gamepad2 className={`w-10 h-10 ${isRunning ? (statuses[inst.id]?.is_ready ? 'text-emerald-400' : 'text-amber-400') : 'text-[#878787]'}`} />
+                               )}
+                               <div className={`absolute bottom-1 right-1 w-3 h-3 rounded-full border-2 border-[#3B3B3B] ${
+                                  isRunning 
+                                  ? (statuses[inst.id]?.is_ready ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse') 
+                                  : 'bg-neutral-500'
+                               }`}></div>
+                             </div>
+                             <span className="text-xs text-center font-medium line-clamp-2 leading-tight">
+                               {inst.name}
+                             </span>
+                           </div>
+                         );
+                       })}
+                     </div>
+                   </div>
+                 );
+               })}
+             </div>
           )}
         </main>
       </div>
@@ -3480,8 +3524,11 @@ export default function App() {
           >
             <List className="w-4 h-4" /> Edit...
           </button>
-          <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
-            <Tag className="w-4 h-4" /> Change Group...
+          <button 
+            onClick={() => { handleChangeGroup(contextMenu.instanceId); setContextMenu(null); }}
+            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left"
+          >
+            <Tag className="w-4 h-4 text-sky-400" /> Change Group...
           </button>
           <button 
             onClick={() => {
