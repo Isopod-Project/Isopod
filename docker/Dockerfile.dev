@@ -1,0 +1,30 @@
+FROM python:3.11-slim
+
+# Install system dependencies: Node.js, Docker CLI, and build tools
+RUN apt-get update && apt-get install -y \
+    curl \
+    docker.io \
+    git \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Docker Compose v2 for subprocess invocation
+RUN mkdir -p /usr/lib/docker/cli-plugins/ && \
+    curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" -o /usr/lib/docker/cli-plugins/docker-compose && \
+    chmod +x /usr/lib/docker/cli-plugins/docker-compose
+
+WORKDIR /app
+
+# Expose the FastAPI port
+EXPOSE 8000
+
+# Metadata for CasaOS
+LABEL com.casaos.app.name="Isopod Dev"
+LABEL com.casaos.app.icon="https://raw.githubusercontent.com/tacoz234/Isopod/main/dev_logo.png"
+
+# Use the dev entrypoint script
+COPY docker/dev-entrypoint.sh /dev-entrypoint.sh
+RUN chmod +x /dev-entrypoint.sh
+
+ENTRYPOINT ["/dev-entrypoint.sh"]
