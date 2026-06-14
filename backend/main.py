@@ -1408,54 +1408,154 @@ async def import_instance(file: UploadFile = File(...)):
         tmp_path = tmp.name
         
     try:
+        is_server_export = False
+        is_single_player_world = False
+        level_dat_path = None
+        
         with zipfile.ZipFile(tmp_path, 'r') as zipf:
-            zipf.extractall(target_path)
+            names = zipf.namelist()
+            if any(name.endswith('docker-compose.yml') or name.endswith('docker-compose.yaml') for name in names):
+                is_server_export = True
+            else:
+                for name in names:
+                    if name.lower().endswith('level.dat'):
+                        is_single_player_world = True
+                        level_dat_path = name
+                        break
+                        
+        if not is_server_export and not is_single_player_world:
+            raise HTTPException(
+                status_code=400, 
+                detail="Invalid zip structure. Must contain a docker-compose.yml (for server exports) or level.dat (for single-player worlds)."
+            )
             
-        # Update docker-compose.yml to match the new slug and avoid port conflict
-        compose_path = os.path.join(target_path, "docker-compose.yml")
-        if os.path.exists(compose_path):
-            try:
-                with open(compose_path, "r") as f:
-                    config = yaml.safe_load(f)
+        if is_server_export:
+            with zipfile.ZipFile(tmp_path, 'r') as zipf:
+                zipf.extractall(target_path)
                 
-                services = config.get("services", {})
-                if services:
-                    # Find used ports
-                    used_ports = set()
-                    for entry in os.scandir(SERVERS_DIR):
-                        if entry.is_dir() and entry.name != new_slug:
-                            try:
-                                other_compose = os.path.join(entry.path, "docker-compose.yml")
-                                if os.path.exists(other_compose):
-                                    with open(other_compose, 'r') as of:
-                                        odata = yaml.safe_load(of)
-                                        for _, oservice in odata.get("services", {}).items():
-                                            for p in oservice.get("ports", []):
-                                                used_ports.add(int(str(p).split(':')[0]))
-                            except: pass
-
-                    service_name = "mc" if "mc" in services else list(services.keys())[0]
-                    service = services[service_name]
-                    service["container_name"] = f"isopod_{new_slug}"
+            # Update docker-compose.yml to match the new slug and avoid port conflict
+            compose_path = os.path.join(target_path, "docker-compose.yml")
+            if os.path.exists(compose_path):
+                try:
+                    with open(compose_path, "r") as f:
+                        config = yaml.safe_load(f)
                     
-                    if "ports" in service:
-                        try:
-                            p = service["ports"][0] or "25565:25565"
-                            current_port = int(str(p).split(':')[0])
-                            new_port = current_port
-                            while new_port in used_ports or new_port < 1024:
-                                new_port += 1
-                            service["ports"] = [f"{new_port}:25565"]
-                        except: pass
+                    services = config.get("services", {})
+                    if services:
+                        # Find used ports
+                        used_ports = set()
+                        for entry in os.scandir(SERVERS_DIR):
+                            if entry.is_dir() and entry.name != new_slug:
+                                try:
+                                    other_compose = os.path.join(entry.path, "docker-compose.yml")
+                                    if os.path.exists(other_compose):
+                                        with open(other_compose, 'r') as of:
+                                            odata = yaml.safe_load(of)
+                                            for _, oservice in odata.get("services", {}).items():
+                                                for p in oservice.get("ports", []):
+                                                    used_ports.add(int(str(p).split(':')[0]))
+                                except: pass
+    
+                        service_name = "mc" if "mc" in services else list(services.keys())[0]
+                        service = services[service_name]
+                        service["container_name"] = f"isopod_{new_slug}"
+                        
+                        if "ports" in service:
+                            try:
+                                p = service["ports"][0] or "25565:25565"
+                                current_port = int(str(p).split(':')[0])
+                                new_port = current_port
+                                while new_port in used_ports or new_port < 1024:
+                                    new_port += 1
+                                service["ports"] = [f"{new_port}:25565"]
+                            except: pass
+                    
+                    with open(compose_path, "w") as f:
+                        yaml.dump(config, f, default_flow_style=False)
+                except Exception as e:
+                    print(f"Error updating compose after import: {e}")
+        else:
+            # Extract single player world contents to target_path/data/world
+            prefix = os.path.dirname(level_dat_path)
+            
+            with zipfile.ZipFile(tmp_path, 'r') as zipf:
+                world_dir = os.path.join(target_path, "data", "world")
+                os.makedirs(world_dir, exist_ok=True)
+                for member in zipf.infolist():
+                    filename = member.filename
+                    filename_normalized = filename.replace('\\', '/')
+                    prefix_normalized = prefix.replace('\\', '/')
+                    
+                    if prefix_normalized:
+                        if filename_normalized.startswith(prefix_normalized + "/"):
+                            rel_path = os.path.relpath(filename_normalized, prefix_normalized)
+                            if rel_path == "." or rel_path == "..":
+                                continue
+                            target_file = os.path.join(world_dir, rel_path)
+                            if member.is_dir():
+                                os.makedirs(target_file, exist_ok=True)
+                            else:
+                                os.makedirs(os.path.dirname(target_file), exist_ok=True)
+                                with zipf.open(member) as source, open(target_file, "wb") as target:
+                                    shutil.copyfileobj(source, target)
+                    else:
+                        target_file = os.path.join(world_dir, filename_normalized)
+                        if member.is_dir():
+                            os.makedirs(target_file, exist_ok=True)
+                        else:
+                            os.makedirs(os.path.dirname(target_file), exist_ok=True)
+                            with zipf.open(member) as source, open(target_file, "wb") as target:
+                                shutil.copyfileobj(source, target)
+                                
+            # Generate the default docker-compose.yml for this single player world
+            used_ports = set()
+            for entry in os.scandir(SERVERS_DIR):
+                if entry.is_dir() and entry.name != new_slug:
+                    try:
+                        other_compose = os.path.join(entry.path, "docker-compose.yml")
+                        if os.path.exists(other_compose):
+                            with open(other_compose, 'r') as of:
+                                odata = yaml.safe_load(of)
+                                for _, oservice in odata.get("services", {}).items():
+                                    for p in oservice.get("ports", []):
+                                        used_ports.add(int(str(p).split(':')[0]))
+                    except: pass
+            
+            new_port = 25565
+            while new_port in used_ports or new_port < 1024:
+                new_port += 1
                 
-                with open(compose_path, "w") as f:
-                    yaml.dump(config, f, default_flow_style=False)
-            except Exception as e:
-                print(f"Error updating compose after import: {e}")
+            compose_content = {
+                "services": {
+                    "mc": {
+                        "image": "itzg/minecraft-server",
+                        "container_name": f"isopod_{new_slug}",
+                        "ports": [f"{new_port}:25565"],
+                        "environment": [
+                            "EULA=TRUE",
+                            "TYPE=VANILLA",
+                            "VERSION=latest",
+                            "MEMORY=2G",
+                            f"MOTD={base_name} Hosted by Isopod",
+                            "ENABLE_RCON=true",
+                            "RCON_PASSWORD=isopod",
+                            "JVM_OPTS=--add-opens java.base/sun.misc=ALL-UNNAMED"
+                        ],
+                        "volumes": ["./data:/data"],
+                        "restart": "unless-stopped"
+                    }
+                }
+            }
+            with open(os.path.join(target_path, "docker-compose.yml"), "w") as f:
+                yaml.dump(compose_content, f, default_flow_style=False)
                 
+            save_instance_meta(target_path, {"group": "No group"})
+            
         return {"id": new_slug, "message": "Instance imported successfully"}
     except Exception as e:
         shutil.rmtree(target_path, ignore_errors=True)
+        if isinstance(e, HTTPException):
+            raise e
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
     finally:
         if os.path.exists(tmp_path):

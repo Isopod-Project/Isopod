@@ -1990,10 +1990,10 @@ export default function App() {
                                  <Database className="w-10 h-10 text-[#3E8ED0]" />
                               </div>
                               <div className="space-y-2">
-                                 <h3 className="text-xl font-bold text-white">Import Existing Server</h3>
-                                 <p className="text-sm text-neutral-400 max-w-sm">Place your server files in a folder within your servers directory, then select it here to begin configuration.</p>
+                                 <h3 className="text-xl font-bold text-white">Import Server / World</h3>
+                                 <p className="text-sm text-neutral-400 max-w-sm">Upload an Isopod server export (.zip) or a Minecraft singleplayer world (.zip containing level.dat) to create a new server instance.</p>
                               </div>
-                              <label className="px-8 py-3 bg-[#333] hover:bg-[#444] rounded-lg font-bold text-white transition-all cursor-pointer">
+                              <label className="px-8 py-3 bg-[#3E8ED0] hover:bg-[#2B6A9E] rounded-lg font-bold text-white transition-all cursor-pointer shadow-lg shadow-[#3E8ED0]/15">
                                   Browse Zip File
                                   <input type="file" className="hidden" accept=".zip" onChange={handleImport} />
                               </label>
