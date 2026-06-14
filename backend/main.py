@@ -1387,7 +1387,13 @@ def export_instance(
 async def import_instance(
     file: UploadFile = File(...),
     name: Optional[str] = Form(None),
-    port: Optional[int] = Form(None)
+    port: Optional[int] = Form(None),
+    difficulty: Optional[str] = Form(None),
+    gamemode: Optional[str] = Form(None),
+    seed: Optional[str] = Form(None),
+    level_type: Optional[str] = Form(None),
+    generate_structures: Optional[bool] = Form(None),
+    memory: Optional[str] = Form(None)
 ):
     if not file.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="Only .zip files are supported")
@@ -1504,6 +1510,30 @@ async def import_instance(
                                     new_port += 1
                                 service["ports"] = [f"{new_port}:25565"]
                             except: pass
+
+                        # Update other properties if provided
+                        env = service.get("environment", [])
+                        if isinstance(env, list):
+                            def set_env_list(key, val):
+                                for i, item in enumerate(env):
+                                    if item.startswith(f"{key}="):
+                                        env[i] = f"{key}={val}"
+                                        return
+                                env.append(f"{key}={val}")
+
+                            if difficulty: set_env_list("DIFFICULTY", difficulty)
+                            if gamemode: set_env_list("MODE", gamemode)
+                            if seed: set_env_list("SEED", seed)
+                            if level_type: set_env_list("LEVEL_TYPE", level_type)
+                            if generate_structures is not None: set_env_list("GENERATE_STRUCTURES", "true" if generate_structures else "false")
+                            if memory: set_env_list("MEMORY", memory)
+                        elif isinstance(env, dict):
+                            if difficulty: env["DIFFICULTY"] = difficulty
+                            if gamemode: env["MODE"] = gamemode
+                            if seed: env["SEED"] = seed
+                            if level_type: env["LEVEL_TYPE"] = level_type
+                            if generate_structures is not None: env["GENERATE_STRUCTURES"] = "true" if generate_structures else "false"
+                            if memory: env["MEMORY"] = memory
                     
                     with open(compose_path, "w") as f:
                         yaml.dump(config, f, default_flow_style=False)
@@ -1570,10 +1600,15 @@ async def import_instance(
                             "EULA=TRUE",
                             "TYPE=VANILLA",
                             "VERSION=latest",
-                            "MEMORY=2G",
+                            f"MEMORY={memory or '2G'}",
                             f"MOTD={base_name} Hosted by Isopod",
                             "ENABLE_RCON=true",
                             "RCON_PASSWORD=isopod",
+                            f"SEED={seed or ''}",
+                            f"LEVEL_TYPE={level_type or 'DEFAULT'}",
+                            f"DIFFICULTY={difficulty or 'easy'}",
+                            f"MODE={gamemode or 'survival'}",
+                            f"GENERATE_STRUCTURES={'true' if generate_structures else 'false'}",
                             "JVM_OPTS=--add-opens java.base/sun.misc=ALL-UNNAMED"
                         ],
                         "volumes": ["./data:/data"],

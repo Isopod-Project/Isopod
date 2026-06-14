@@ -413,12 +413,18 @@ export default function App() {
           setIsCreating(false);
           return;
         }
-        const formData = new FormData();
-        formData.append("file", importFile);
-        if (newName) formData.append("name", newName);
-        if (newPort) formData.append("port", newPort);
-        
-        const res = await fetch("/api/instances/import", {
+         const formData = new FormData();
+         formData.append("file", importFile);
+         if (newName) formData.append("name", newName);
+         if (newPort) formData.append("port", newPort);
+         if (newDifficulty) formData.append("difficulty", newDifficulty);
+         if (newGamemode) formData.append("gamemode", newGamemode);
+         if (newSeed) formData.append("seed", newSeed);
+         if (newLevelType) formData.append("level_type", newLevelType);
+         formData.append("generate_structures", String(newGenerateStructures));
+         if (newMemory) formData.append("memory", newMemory);
+         
+         const res = await fetch("/api/instances/import", {
           method: "POST",
           body: formData
         });
