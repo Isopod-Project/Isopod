@@ -1411,12 +1411,17 @@ async def import_instance(file: UploadFile = File(...)):
         is_server_export = False
         is_single_player_world = False
         level_dat_path = None
+        compose_file_path = None
         
         with zipfile.ZipFile(tmp_path, 'r') as zipf:
             names = zipf.namelist()
-            if any(name.endswith('docker-compose.yml') or name.endswith('docker-compose.yaml') for name in names):
-                is_server_export = True
-            else:
+            for name in names:
+                if name.endswith('docker-compose.yml') or name.endswith('docker-compose.yaml'):
+                    is_server_export = True
+                    compose_file_path = name
+                    break
+            
+            if not is_server_export:
                 for name in names:
                     if name.lower().endswith('level.dat'):
                         is_single_player_world = True
@@ -1430,9 +1435,35 @@ async def import_instance(file: UploadFile = File(...)):
             )
             
         if is_server_export:
+            prefix = os.path.dirname(compose_file_path)
+            
             with zipfile.ZipFile(tmp_path, 'r') as zipf:
-                zipf.extractall(target_path)
-                
+                for member in zipf.infolist():
+                    filename = member.filename
+                    filename_normalized = filename.replace('\\', '/')
+                    prefix_normalized = prefix.replace('\\', '/')
+                    
+                    if prefix_normalized:
+                        if filename_normalized.startswith(prefix_normalized + "/"):
+                            rel_path = os.path.relpath(filename_normalized, prefix_normalized)
+                            if rel_path == "." or rel_path == "..":
+                                continue
+                            target_file = os.path.join(target_path, rel_path)
+                            if member.is_dir():
+                                os.makedirs(target_file, exist_ok=True)
+                            else:
+                                os.makedirs(os.path.dirname(target_file), exist_ok=True)
+                                with zipf.open(member) as source, open(target_file, "wb") as target:
+                                    shutil.copyfileobj(source, target)
+                    else:
+                        target_file = os.path.join(target_path, filename_normalized)
+                        if member.is_dir():
+                            os.makedirs(target_file, exist_ok=True)
+                        else:
+                            os.makedirs(os.path.dirname(target_file), exist_ok=True)
+                            with zipf.open(member) as source, open(target_file, "wb") as target:
+                                shutil.copyfileobj(source, target)
+                                
             # Update docker-compose.yml to match the new slug and avoid port conflict
             compose_path = os.path.join(target_path, "docker-compose.yml")
             if os.path.exists(compose_path):
