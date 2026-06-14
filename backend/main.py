@@ -923,7 +923,14 @@ def duplicate_instance(instance_id: str, req: DuplicateInstanceRequest):
     return {"id": new_slug, "message": "Instance duplicated"}
 
 @app.get("/api/instances/{instance_id}/export")
-def export_instance(instance_id: str):
+def export_instance(
+    instance_id: str,
+    world: bool = True,
+    mods: bool = True,
+    configs: bool = True,
+    plugins: bool = True,
+    logs: bool = True
+):
     path = get_instance_path(instance_id)
     
     # Create a temporary zip file
@@ -936,14 +943,55 @@ def export_instance(instance_id: str):
             for root, dirs, files in os.walk(path):
                 for file in files:
                     file_path = os.path.join(root, file)
-                    arcname = os.path.relpath(file_path, path)
-                    zipf.write(file_path, arcname)
+                    rel_path = os.path.relpath(file_path, path)
+                    
+                    # Classification logic
+                    parts = rel_path.split(os.sep)
+                    include = False
+                    
+                    if len(parts) == 1:
+                        # Root files like docker-compose.yml, icon.png, metadata.json
+                        if configs:
+                            include = True
+                    elif parts[0] == "data":
+                        if len(parts) == 2:
+                            # Files directly under data/, e.g. server.properties, ops.json
+                            if configs:
+                                include = True
+                        else:
+                            # Subfolders inside data/
+                            subfolder = parts[1]
+                            if subfolder.startswith("world"):
+                                if world:
+                                    include = True
+                            elif subfolder == "mods":
+                                if mods:
+                                    include = True
+                            elif subfolder == "config":
+                                if configs:
+                                    include = True
+                            elif subfolder == "plugins":
+                                if plugins:
+                                    include = True
+                            elif subfolder == "logs":
+                                if logs:
+                                    include = True
+                            else:
+                                # Other custom directories (e.g. mod-specific storage)
+                                if configs:
+                                    include = True
+                    else:
+                        # Other root folders
+                        if configs:
+                            include = True
+                            
+                    if include:
+                        zipf.write(file_path, rel_path)
         
         return FileResponse(
             zip_path, 
             media_type='application/zip', 
-            filename=zip_filename,
-            background=None # FileResponse handles cleanup if we use a specific pattern, but here we just return
+            filename=zip_filename
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

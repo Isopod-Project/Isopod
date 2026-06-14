@@ -122,6 +122,15 @@ export default function App() {
   const [originalConfig, setOriginalConfig] = useState<any>(null);
   const [isSaving, setIsSaving] = useState(false);
   
+  // Export Modal states
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportInstanceId, setExportInstanceId] = useState<string | null>(null);
+  const [exportWorld, setExportWorld] = useState(true);
+  const [exportConfigs, setExportConfigs] = useState(true);
+  const [exportMods, setExportMods] = useState(true);
+  const [exportPlugins, setExportPlugins] = useState(true);
+  const [exportLogs, setExportLogs] = useState(false);
+  
   // Versions
   const [mcVersions, setMcVersions] = useState<any[]>([]);
   const [isVersionsLoading, setIsVersionsLoading] = useState(false);
@@ -483,9 +492,28 @@ export default function App() {
      e.target.value = "";
   };
 
-  const handleExport = (id: string) => {
-      window.location.href = `/api/instances/${id}/export`;
-  };
+   const handleExport = (id: string) => {
+       setExportInstanceId(id);
+       setExportWorld(true);
+       setExportConfigs(true);
+       setExportMods(true);
+       setExportPlugins(true);
+       setExportLogs(false);
+       setIsExportModalOpen(true);
+   };
+
+   const handleExportSubmit = () => {
+       if (!exportInstanceId) return;
+       const params = new URLSearchParams({
+          world: exportWorld.toString(),
+          mods: exportMods.toString(),
+          configs: exportConfigs.toString(),
+          plugins: exportPlugins.toString(),
+          logs: exportLogs.toString()
+       });
+       window.location.href = `/api/instances/${exportInstanceId}/export?${params.toString()}`;
+       setIsExportModalOpen(false);
+   };
 
   const handleRenameGroup = async (groupName: string) => {
       if (groupName === "No group") return;
@@ -1269,6 +1297,12 @@ export default function App() {
                  className="flex items-center gap-3 px-3 py-1.5 rounded hover:bg-[#323232] text-neutral-300 transition-colors"
                >
                  <Folder className="w-4 h-4" /> Folder
+               </button>
+               <button 
+                 onClick={() => handleExport(selectedInstance.id)}
+                 className="flex items-center gap-3 px-3 py-1.5 rounded hover:bg-[#323232] text-neutral-300 transition-colors"
+               >
+                 <Share className="w-4 h-4 text-sky-400" /> Export
                </button>
               <div className="h-px bg-[#323232] my-2"></div>
               <button 
@@ -3436,7 +3470,10 @@ export default function App() {
           >
             <Folder className="w-4 h-4" /> Folder
           </button>
-          <button className="w-full flex items-center justify-between px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
+          <button 
+            onClick={() => { handleExport(contextMenu.instanceId); setContextMenu(null); }}
+            className="w-full flex items-center justify-between px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left"
+          >
             <div className="flex items-center gap-3">
               <Share className="w-4 h-4" /> Export...
             </div>
@@ -3500,6 +3537,110 @@ export default function App() {
                    className="px-6 py-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white font-bold rounded text-[10px] transition-all shadow-lg shadow-[#3E8ED0]/15 uppercase tracking-widest"
                  >
                    OK
+                 </button>
+              </div>
+           </div>
+        </div>
+      )}
+      {isExportModalOpen && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+           <div className="bg-[#2A2A2A] border border-[#3A3A3A] rounded-lg shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
+              <div className="px-6 py-4 border-b border-[#323232] bg-[#242424] flex items-center justify-between">
+                 <div className="flex items-center gap-2">
+                    <Share className="w-5 h-5 text-sky-400" />
+                    <h3 className="font-bold text-white tracking-wide uppercase text-[10px] tracking-widest">Export Instance</h3>
+                 </div>
+                 <button 
+                   onClick={() => setIsExportModalOpen(false)}
+                   className="p-1 hover:bg-[#323232] rounded-full text-neutral-400 hover:text-white transition"
+                 >
+                    <X className="w-4 h-4" />
+                 </button>
+              </div>
+              <div className="p-6 flex flex-col gap-4">
+                 <p className="text-neutral-300 text-sm leading-relaxed">
+                    Select the components you want to include in the backup zip for <strong className="text-white">{instances.find(i => i.id === exportInstanceId)?.name}</strong>:
+                 </p>
+                 
+                 <div className="flex flex-col gap-3">
+                    <label className="flex items-start gap-3 p-3 bg-[#202020] hover:bg-[#252525] rounded-lg border border-[#333] cursor-pointer transition select-none">
+                       <input 
+                         type="checkbox" 
+                         checked={exportWorld} 
+                         onChange={(e) => setExportWorld(e.target.checked)}
+                         className="mt-1 accent-sky-500 rounded border-neutral-600 focus:ring-sky-500"
+                       />
+                       <div className="ml-3">
+                          <div className="text-sm font-semibold text-neutral-200">World Files</div>
+                          <div className="text-xs text-neutral-400">Includes Overworld, Nether, and End dimensions.</div>
+                       </div>
+                    </label>
+
+                    <label className="flex items-start gap-3 p-3 bg-[#202020] hover:bg-[#252525] rounded-lg border border-[#333] cursor-pointer transition select-none">
+                       <input 
+                         type="checkbox" 
+                         checked={exportConfigs} 
+                         onChange={(e) => setExportConfigs(e.target.checked)}
+                         className="mt-1 accent-sky-500 rounded border-neutral-600 focus:ring-sky-500"
+                       />
+                       <div className="ml-3">
+                          <div className="text-sm font-semibold text-neutral-200">Configurations & Settings</div>
+                          <div className="text-xs text-neutral-400">Includes server.properties, compose files, and mod configs.</div>
+                       </div>
+                    </label>
+
+                    <label className="flex items-start gap-3 p-3 bg-[#202020] hover:bg-[#252525] rounded-lg border border-[#333] cursor-pointer transition select-none">
+                       <input 
+                         type="checkbox" 
+                         checked={exportMods} 
+                         onChange={(e) => setExportMods(e.target.checked)}
+                         className="mt-1 accent-sky-500 rounded border-neutral-600 focus:ring-sky-500"
+                       />
+                       <div className="ml-3">
+                          <div className="text-sm font-semibold text-neutral-200">Mods</div>
+                          <div className="text-xs text-neutral-400">Includes Fabric/Forge jar files from the mods folder.</div>
+                       </div>
+                    </label>
+
+                    <label className="flex items-start gap-3 p-3 bg-[#202020] hover:bg-[#252525] rounded-lg border border-[#333] cursor-pointer transition select-none">
+                       <input 
+                         type="checkbox" 
+                         checked={exportPlugins} 
+                         onChange={(e) => setExportPlugins(e.target.checked)}
+                         className="mt-1 accent-sky-500 rounded border-neutral-600 focus:ring-sky-500"
+                       />
+                       <div className="ml-3">
+                          <div className="text-sm font-semibold text-neutral-200">Plugins</div>
+                          <div className="text-xs text-neutral-400">Includes Spigot/Paper server plugins.</div>
+                       </div>
+                    </label>
+
+                    <label className="flex items-start gap-3 p-3 bg-[#202020] hover:bg-[#252525] rounded-lg border border-[#333] cursor-pointer transition select-none">
+                       <input 
+                         type="checkbox" 
+                         checked={exportLogs} 
+                         onChange={(e) => setExportLogs(e.target.checked)}
+                         className="mt-1 accent-sky-500 rounded border-neutral-600 focus:ring-sky-500"
+                       />
+                       <div className="ml-3">
+                          <div className="text-sm font-semibold text-neutral-200">Server Logs</div>
+                          <div className="text-xs text-neutral-400">Includes historical console logs (can be very large).</div>
+                       </div>
+                    </label>
+                 </div>
+              </div>
+              <div className="px-6 py-4 bg-[#242424] border-t border-[#323232] flex justify-end gap-3">
+                 <button 
+                   onClick={() => setIsExportModalOpen(false)}
+                   className="px-4 py-2 text-[10px] font-bold text-neutral-400 hover:text-white transition-colors uppercase tracking-widest"
+                 >
+                    Cancel
+                 </button>
+                 <button 
+                   onClick={handleExportSubmit}
+                   className="px-6 py-2 bg-sky-500 hover:bg-sky-600 text-white font-bold rounded text-[10px] transition-all shadow-lg shadow-sky-500/15 uppercase tracking-widest flex items-center gap-2"
+                 >
+                    <Share className="w-3.5 h-3.5" /> Export
                  </button>
               </div>
            </div>
