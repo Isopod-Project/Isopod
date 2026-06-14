@@ -2,10 +2,13 @@ import os
 import subprocess
 import shutil
 import re
-from fastapi import FastAPI, HTTPException
+import zipfile
+import tempfile
+import asyncio
+from fastapi import FastAPI, HTTPException, File, UploadFile, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import docker
@@ -14,10 +17,29 @@ from typing import List, Optional, Dict, Any
 import httpx
 import json
 import time
+from . import resource_packs as rp
 
 load_dotenv()
 
 app = FastAPI(title="Isopod Backend")
+
+ISOPOD_VERSION = "v0.0.1"
+GITHUB_REPO = os.getenv("GITHUB_REPO", "Tacoz234/Isopod")
+
+# Internal state for background update checks
+cached_update_info: Optional[Dict[str, Any]] = None
+
+class SystemInfo(BaseModel):
+    version: str
+    is_docker: bool
+
+class UpdateInfo(BaseModel):
+    current_version: str
+    latest_version: str
+    has_update: bool
+    release_notes: str
+    published_at: Optional[str] = None
+
 
 # We will need CORS for frontend development
 app.add_middleware(
@@ -61,6 +83,22 @@ class CreateInstanceRequest(BaseModel):
     loader_version: Optional[str] = "latest"
     modrinth_id: Optional[str] = None
     cf_id: Optional[str] = None
+    group: Optional[str] = "No group"
+    icon_url: Optional[str] = None
+    memory: Optional[str] = "1G"
+    # World settings
+    seed: Optional[str] = None
+    level_type: Optional[str] = "DEFAULT"
+    difficulty: Optional[str] = "easy"
+    gamemode: Optional[str] = "survival"
+    generate_structures: Optional[bool] = True
+
+
+class RenameInstanceRequest(BaseModel):
+    name: str
+
+class DuplicateInstanceRequest(BaseModel):
+    name: Optional[str] = None
 
 class CommandRequest(BaseModel):
     command: str
@@ -71,6 +109,8 @@ class Instance(BaseModel):
     path: str
     has_compose: bool
     status: str
+    group: str = "No group"
+    icon_url: Optional[str] = None
 
 def get_instance_path(instance_id: str) -> str:
     # Basic sanitize
@@ -79,6 +119,22 @@ def get_instance_path(instance_id: str) -> str:
     if not os.path.exists(path) or not os.path.isdir(path):
         raise HTTPException(status_code=404, detail="Instance not found")
     return path
+
+def get_instance_meta(instance_path: str) -> dict:
+    meta_path = os.path.join(instance_path, "isopod-meta.json")
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, 'r') as f:
+                return json.load(f)
+        except: pass
+    return {"group": "No group"}
+
+def save_instance_meta(instance_path: str, meta: dict):
+    existing = get_instance_meta(instance_path)
+    existing.update(meta)
+    meta_path = os.path.join(instance_path, "isopod-meta.json")
+    with open(meta_path, 'w') as f:
+        json.dump(existing, f, indent=2)
 
 @app.get("/api/instances", response_model=List[Instance])
 def list_instances():
@@ -94,15 +150,80 @@ def list_instances():
             has_compose = os.path.exists(compose_path)
             
             if has_compose:
+                icon_path = os.path.join(entry.path, "icon.png")
+                meta = get_instance_meta(entry.path)
                 instances.append(Instance(
                     id=entry.name,
                     name=entry.name.replace("-", " ").title(),
                     path=entry.path,
                     has_compose=has_compose,
-                    status="Valid"
+                    status="Valid",
+                    group=meta.get("group", "No group"),
+                    icon_url=f"/api/instances/{entry.name}/icon" if os.path.exists(icon_path) else None
                 ))
                 
     return instances
+
+@app.get("/api/groups")
+def list_groups():
+    groups = set(["No group"])
+    for entry in os.scandir(SERVERS_DIR):
+        if entry.is_dir():
+            meta = get_instance_meta(entry.path)
+            groups.add(meta.get("group", "No group"))
+    return sorted(list(groups))
+
+class SetGroupRequest(BaseModel):
+    group: str
+
+class RenameGroupRequest(BaseModel):
+    new_name: str
+
+@app.post("/api/instances/{instance_id}/group")
+def set_instance_group(instance_id: str, req: SetGroupRequest):
+    path = get_instance_path(instance_id)
+    meta = get_instance_meta(path)
+    meta["group"] = req.group
+    save_instance_meta(path, meta)
+    return {"id": instance_id, "group": req.group}
+
+@app.delete("/api/groups/{group_name}")
+def delete_group(group_name: str):
+    """Dissolve a group, moving all instances in it to 'No group'."""
+    if group_name == "No group":
+        raise HTTPException(status_code=400, detail="Cannot delete default group")
+    
+    count = 0
+    if not os.path.exists(SERVERS_DIR):
+        return {"message": "Groups cleared", "count": 0}
+
+    for entry in os.scandir(SERVERS_DIR):
+        if entry.is_dir():
+            meta = get_instance_meta(entry.path)
+            if meta.get("group") == group_name:
+                meta["group"] = "No group"
+                save_instance_meta(entry.path, meta)
+                count += 1
+    return {"message": f"Group dissolved. {count} instances moved to 'No group'.", "count": count}
+
+@app.post("/api/groups/{group_name}/rename")
+def rename_group(group_name: str, req: RenameGroupRequest):
+    """Rename a group for all instances in it."""
+    if group_name == "No group":
+        raise HTTPException(status_code=400, detail="Cannot rename default group")
+    
+    count = 0
+    if not os.path.exists(SERVERS_DIR):
+        return {"message": "Groups updated", "count": 0}
+
+    for entry in os.scandir(SERVERS_DIR):
+        if entry.is_dir():
+            meta = get_instance_meta(entry.path)
+            if meta.get("group") == group_name:
+                meta["group"] = req.new_name
+                save_instance_meta(entry.path, meta)
+                count += 1
+    return {"message": f"Group renamed. {count} instances updated.", "count": count}
 
 @app.get("/api/instances/{instance_id}/status")
 async def get_instance_status(instance_id: str):
@@ -127,7 +248,7 @@ async def get_instance_status(instance_id: str):
         try:
             # Check most recent logs for Minecraft heartbeats
             log_result = subprocess.run(
-                ["docker", "compose", "logs", "--tail=100", "mc"],
+                ["docker", "compose", "logs", "--tail=200", "mc"],
                 cwd=get_instance_path(instance_id),
                 capture_output=True, text=True, timeout=5
             )
@@ -186,9 +307,103 @@ async def get_instance_status(instance_id: str):
     }
 
 @app.post("/api/instances/{instance_id}/start")
-def start_instance(instance_id: str):
+async def start_instance(instance_id: str):
     path = get_instance_path(instance_id)
-    # Start all services defined in the instance's compose file
+    compose_path = os.path.join(path, "docker-compose.yml")
+    
+    with open(compose_path, "r") as f:
+        config = yaml.safe_load(f)
+    
+    services = config.get("services", {})
+    if not services:
+        raise HTTPException(status_code=400, detail="No services found in compose file")
+        
+    first_service = list(services.keys())[0]
+    raw_env = services[first_service].get("environment", {})
+    
+    # Standardize to dict for easier manipulation
+    if isinstance(raw_env, list):
+        env = {}
+        for item in raw_env:
+            if '=' in item:
+                k, v = item.split('=', 1)
+                env[k] = v
+    else:
+        env = dict(raw_env)
+        
+    # Ensure EULA is accepted
+    changed = False
+    if env.get("EULA") != "TRUE":
+        env["EULA"] = "TRUE"
+        changed = True
+    
+    if changed:
+        # Save back in the format it was
+        if isinstance(raw_env, list):
+            services[first_service]["environment"] = [f"{k}={v}" for k, v in env.items()]
+        else:
+            services[first_service]["environment"] = env
+            
+        with open(compose_path, "w") as f:
+            yaml.dump(config, f, default_flow_style=False)
+
+    mc_version = env.get("VERSION", "1.20.4")
+    
+    # Resource Pack Bundling Logic
+    m_ids_str = env.get("RESOURCE_PACKS_MODRINTH", "")
+    c_ids_str = env.get("RESOURCE_PACKS_CF", "")
+    pack_list_key = f"{m_ids_str}|{c_ids_str}|{mc_version}"
+    
+    if m_ids_str or c_ids_str:
+        cache_dir = os.path.join(SERVERS_DIR, ".cache", "resource_packs")
+        os.makedirs(cache_dir, exist_ok=True)
+        hash_file = os.path.join(cache_dir, f"{instance_id}_key.txt")
+        
+        # Check cache
+        last_key = ""
+        if os.path.exists(hash_file):
+            with open(hash_file, "r") as f: last_key = f.read().strip()
+            
+        if pack_list_key != last_key:
+            print(f"--- Bundling Needed for {instance_id} ---")
+            m_ids = [i.strip() for i in m_ids_str.split(",") if i.strip()]
+            c_ids = [i.strip() for i in c_ids_str.split(",") if i.strip()]
+            
+            try:
+                async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+                    downloaded_zips = []
+                    for mid in m_ids:
+                        url = await rp.get_latest_version_url(client, "modrinth", mid, mc_version)
+                        if url:
+                            z_path = os.path.join(cache_dir, f"{mid}.zip")
+                            if await rp.download_file(client, url, z_path):
+                                downloaded_zips.append(z_path)
+
+                    for cid in c_ids:
+                        url = await rp.get_latest_version_url(client, "curseforge", cid, mc_version)
+                        if url:
+                            z_path = os.path.join(cache_dir, f"{cid}.zip")
+                            if await rp.download_file(client, url, z_path):
+                                downloaded_zips.append(z_path)
+
+                    if downloaded_zips:
+                        bundle_path = os.path.join(cache_dir, f"bundle_{instance_id}.zip")
+                        rp.merge_resource_packs(downloaded_zips, bundle_path)
+                        public_url, sha1 = await rp.upload_to_mcpacks(bundle_path)
+                        if public_url and sha1:
+                            env["RESOURCE_PACK"] = public_url
+                            env["RESOURCE_PACK_SHA1"] = sha1
+                            env["RESOURCE_PACK_ID"] = "" # Clear legacy
+                            # Save back to compose so it persists
+                            config['services'][first_service]['environment'] = env
+                            with open(compose_path, "w") as f:
+                                yaml.dump(config, f, default_flow_style=False)
+                            # Update cache key
+                            with open(hash_file, "w") as f: f.write(pack_list_key)
+            except Exception as e:
+                print(f"Bundling failed during start: {e}")
+
+    # Start all services
     result = subprocess.run(["docker", "compose", "up", "-d"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
@@ -197,10 +412,19 @@ def start_instance(instance_id: str):
 @app.post("/api/instances/{instance_id}/stop")
 def stop_instance(instance_id: str):
     path = get_instance_path(instance_id)
-    result = subprocess.run(["docker", "compose", "stop"], cwd=path, capture_output=True, text=True)
+    # Use 'down' instead of 'stop' to remove the container, which clears Docker logs
+    result = subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
     return {"message": "Stopped"}
+
+@app.post("/api/instances/{instance_id}/kill")
+def kill_instance(instance_id: str):
+    path = get_instance_path(instance_id)
+    result = subprocess.run(["docker", "compose", "kill"], cwd=path, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
+    return {"message": "Killed"}
 
 @app.get("/api/instances/{instance_id}/config")
 def get_config(instance_id: str):
@@ -219,23 +443,13 @@ def get_config(instance_id: str):
     first_service_name = list(services.keys())[0]
     service = services[first_service_name]
     
-    env_vars = {}
-    if "environment" in service:
-        if isinstance(service["environment"], list):
-            for item in service["environment"]:
-                if "=" in item:
-                    k, v = item.split("=", 1)
-                    env_vars[k] = v
-        elif isinstance(service["environment"], dict):
-            env_vars = service["environment"]
-            
     return {
         "image": service.get("image", ""),
-        "environment": env_vars,
+        "environment": service.get("environment", {}),
     }
 
 @app.put("/api/instances/{instance_id}/config")
-def update_config(instance_id: str, new_config: InstanceConfig):
+async def update_config(instance_id: str, new_config: InstanceConfig):
     path = get_instance_path(instance_id)
     compose_path = os.path.join(path, "docker-compose.yml")
     if not os.path.exists(compose_path):
@@ -248,12 +462,94 @@ def update_config(instance_id: str, new_config: InstanceConfig):
     if services:
         first_service_name = list(services.keys())[0]
         config['services'][first_service_name]['image'] = new_config.image
-        config['services'][first_service_name]['environment'] = new_config.environment
+        # Ensure EULA is preserved/added
+        env = new_config.environment
+        env["EULA"] = "TRUE"
+        config['services'][first_service_name]['environment'] = env
         
     with open(compose_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False)
         
     return {"message": "Config updated"}
+
+@app.post("/api/instances/{instance_id}/icon")
+async def upload_icon(instance_id: str, file: UploadFile = File(...)):
+    """Upload an icon for the instance. Saves for Isopod UI and server-icon.png for Minecraft."""
+    path = get_instance_path(instance_id)
+    
+    try:
+        from PIL import Image
+        import io
+        
+        # Read the file content
+        content = await file.read()
+        
+        # Open the image and resize to 64x64 PNG
+        img = Image.open(io.BytesIO(content))
+        img = img.convert("RGBA")
+        img = img.resize((64, 64), Image.Resampling.LANCZOS)
+        
+        # Save as icon.png in root (for Isopod)
+        icon_path = os.path.join(path, "icon.png")
+        img.save(icon_path, "PNG")
+        
+        # Save as server-icon.png in data/ (for Minecraft)
+        data_dir = os.path.join(path, "data")
+        os.makedirs(data_dir, exist_ok=True)
+        mc_icon_path = os.path.join(data_dir, "server-icon.png")
+        img.save(mc_icon_path, "PNG")
+            
+    except Exception as e:
+        print(f"Error processing uploaded icon: {e}")
+        # Fallback to copy file without resizing if PIL fails
+        file.file.seek(0)
+        icon_path = os.path.join(path, "icon.png")
+        with open(icon_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        data_dir = os.path.join(path, "data")
+        os.makedirs(data_dir, exist_ok=True)
+        file.file.seek(0)
+        mc_icon_path = os.path.join(data_dir, "server-icon.png")
+        with open(mc_icon_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+                
+    return {"message": "Icon updated", "icon_url": f"/api/instances/{instance_id}/icon"}
+
+@app.get("/api/instances/{instance_id}/icon")
+def get_icon(instance_id: str):
+    """Get the instance icon."""
+    path = get_instance_path(instance_id)
+    icon_path = os.path.join(path, "icon.png")
+    if os.path.exists(icon_path):
+        return FileResponse(icon_path)
+    raise HTTPException(status_code=404, detail="Icon not found")
+
+@app.get("/api/settings")
+def get_settings():
+    settings_path = os.path.join(SERVERS_DIR, "isopod_settings.json")
+    if os.path.exists(settings_path):
+        with open(settings_path, "r") as f:
+            return json.load(f)
+    return {
+        "language": "English",
+        "theme": "Dark",
+        "defaultPort": "25565",
+        "defaultLoader": "VANILLA",
+        "defaultMemory": "1G",
+        "autoRefresh": True,
+        "showSnapshots": False,
+        "defaultWhitelistEnabled": False,
+        "defaultWhitelistUsers": []
+    }
+
+@app.put("/api/settings")
+def update_settings(new_settings: Dict[str, Any]):
+    settings_path = os.path.join(SERVERS_DIR, "isopod_settings.json")
+    os.makedirs(SERVERS_DIR, exist_ok=True)
+    with open(settings_path, "w") as f:
+        json.dump(new_settings, f, indent=4)
+    return {"message": "Settings updated"}
 
 # Meta & Mod Proxy Endpoints
 VERSION_MANIFEST_URL = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
@@ -394,8 +690,9 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
         
     facets = [
         [f"project_type:{class_type}"],
-        ["server_side:required", "server_side:optional"] # Skip "unsupported" (client-only)
     ]
+    if class_type == "mod":
+        facets.append(["server_side:required", "server_side:optional"])
     if mc_version:
         facets.append([f"versions:{mc_version}"])
     if loader:
@@ -405,7 +702,7 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
     params = {
         "query": q,
         "facets": json.dumps(facets),
-        "limit": 20
+        "limit": 120
     }
     
     async with httpx.AsyncClient() as client:
@@ -433,8 +730,12 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
     mc_version = None if mc_version == "undefined" or not mc_version else mc_version
     loader = None if loader == "undefined" or not loader else loader
     
-    # Using '6' for mods, '4471' for modpacks
-    class_id = 4471 if class_type == "modpack" else 6
+    # Using '6' for mods, '4471' for modpacks, '12' for resource packs
+    class_id = 6
+    if class_type == "modpack":
+        class_id = 4471
+    elif class_type == "resourcepack":
+        class_id = 12
     
     # If query is empty, we browse via parameters
     query_str = q if q else ""
@@ -457,7 +758,7 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
         "searchFilter": q,
         "classId": class_id, 
         "excludeCategoryIds": "4764" if class_id == 6 else None, # Client Side only for mods
-        "pageSize": 20
+        "pageSize": 120
     }
     if mc_version:
         params["gameVersion"] = mc_version
@@ -525,9 +826,16 @@ def create_instance(req: CreateInstanceRequest):
                     "EULA=TRUE",
                     f"TYPE={req.template.upper()}",
                     f"VERSION={req.version or 'latest'}",
+                    f"MEMORY={req.memory or '1G'}",
                     f"MOTD={req.name} Hosted by Isopod",
                     "ENABLE_RCON=true",
-                    "RCON_PASSWORD=isopod"
+                    "RCON_PASSWORD=isopod",
+                    f"SEED={req.seed or ''}",
+                    f"LEVEL_TYPE={req.level_type or 'DEFAULT'}",
+                    f"DIFFICULTY={req.difficulty or 'easy'}",
+                    f"MODE={req.gamemode or 'survival'}",
+                    f"GENERATE_STRUCTURES={'true' if req.generate_structures else 'false'}",
+                    "JVM_OPTS=--add-opens java.base/sun.misc=ALL-UNNAMED"
                 ],
                 "volumes": ["./data:/data"],
                 "restart": "unless-stopped"
@@ -562,16 +870,359 @@ def create_instance(req: CreateInstanceRequest):
     
     with open(os.path.join(path, "docker-compose.yml"), "w") as f:
         yaml.dump(compose_content, f, default_flow_style=False)
+    
+    # Save metadata
+    save_instance_meta(path, {"group": req.group or "No group"})
+
+    # Download Icon if provided
+    if req.icon_url:
+        try:
+            from PIL import Image
+            import io
+            print(f"DEBUG: Attempting to download icon from {req.icon_url}")
+            # Use headers to avoid being blocked by CDNs
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+            res = httpx.get(req.icon_url, headers=headers, timeout=15.0, follow_redirects=True)
+            if res.status_code == 200:
+                print(f"DEBUG: Got response: {len(res.content)} bytes, Content-Type: {res.headers.get('Content-Type')}")
+                img = Image.open(io.BytesIO(res.content))
+                img = img.convert("RGBA")
+                img = img.resize((64, 64), Image.Resampling.LANCZOS)
+                icon_save_path = os.path.join(path, "icon.png")
+                img.save(icon_save_path, "PNG")
+                print(f"DEBUG: Saved icon to {icon_save_path}")
+                
+                # Save to data/server-icon.png for Minecraft
+                data_dir = os.path.join(path, "data")
+                os.makedirs(data_dir, exist_ok=True)
+                mc_icon_path = os.path.join(data_dir, "server-icon.png")
+                img.save(mc_icon_path, "PNG")
+                print(f"DEBUG: Saved server icon to {mc_icon_path}")
+            else:
+                print(f"DEBUG: Icon download failed with status {res.status_code}")
+        except Exception as e:
+            print(f"DEBUG: Failed to set instance icon: {e}")
+            import traceback
+            traceback.print_exc()
         
     return {"id": slug, "message": "Instance created"}
 
 @app.delete("/api/instances/{instance_id}")
 def delete_instance(instance_id: str):
     path = get_instance_path(instance_id)
-    # Safely stop containers before purging
-    subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True)
-    shutil.rmtree(path, ignore_errors=True)
+    # Safely stop and remove containers and volumes before purging
+    # Use --volumes to ensure bind mounts or volumes are handled, --remove-orphans for completeness
+    subprocess.run(["docker", "compose", "down", "-v", "--remove-orphans", "--timeout", "5"], cwd=path, capture_output=True)
+    
+    # Direct fallback: Try to remove by name in case compose lost track
+    if docker_client:
+        try:
+            # The naming convention is isopod_{slug} 
+            # Note: rename_instance also updates this, but instance_id is always the current slug.
+            c_name = f"isopod_{instance_id}"
+            try:
+                c = docker_client.containers.get(c_name)
+                c.remove(force=True)
+            except: pass
+        except: pass
+
+    # Try to remove the directory. On Windows, Docker might be slow to release file locks
+    # even after 'down', so we retry a few times.
+    for i in range(5):
+        try:
+            if os.path.exists(path):
+                shutil.rmtree(path)
+            break
+        except Exception as e:
+            if i == 4:
+                print(f"Failed to delete {path} after multiple attempts: {e}")
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                time.sleep(0.5)
+                
     return {"message": "Instance deleted"}
+
+@app.post("/api/instances/{instance_id}/rename")
+def rename_instance(instance_id: str, req: RenameInstanceRequest):
+    old_path = get_instance_path(instance_id)
+    new_slug = generate_slug(req.name)
+    new_path = os.path.join(SERVERS_DIR, new_slug)
+    
+    if os.path.exists(new_path):
+        raise HTTPException(status_code=400, detail="Instance with that name already exists")
+
+    # Rename the directory
+    try:
+        os.rename(old_path, new_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    # Update docker-compose.yml
+    compose_path = os.path.join(new_path, "docker-compose.yml")
+    if os.path.exists(compose_path):
+        try:
+            with open(compose_path, "r") as f:
+                config = yaml.safe_load(f)
+            
+            services = config.get("services", {})
+            if services:
+                # Assuming first or "mc" service is the primary
+                service_name = "mc" if "mc" in services else list(services.keys())[0]
+                service = services[service_name]
+                service["container_name"] = f"isopod_{new_slug}"
+                
+                # Update MOTD in environment if it exists
+                env = service.get("environment", [])
+                if isinstance(env, list):
+                    for i, item in enumerate(env):
+                        if item.startswith("MOTD="):
+                            env[i] = f"MOTD={req.name} Hosted by Isopod"
+                            break
+                elif isinstance(env, dict):
+                    if "MOTD" in env:
+                        env["MOTD"] = f"{req.name} Hosted by Isopod"
+            
+            with open(compose_path, "w") as f:
+                yaml.dump(config, f, default_flow_style=False)
+        except Exception as e:
+            # Revert folder name if compose update radically fails?
+            # Or just continue since directory rename is the main thing
+            print(f"Error updating compose after rename: {e}")
+            
+    return {"id": new_slug, "message": "Instance renamed"}
+
+@app.post("/api/instances/{instance_id}/duplicate")
+def duplicate_instance(instance_id: str, req: DuplicateInstanceRequest):
+    old_path = get_instance_path(instance_id)
+    
+    # Use provided name or default to "Copy of <original>"
+    original_display_name = instance_id.replace('-', ' ').title()
+    new_display_name = req.name or f"Copy of {original_display_name}"
+    
+    new_slug = generate_slug(new_display_name)
+    base_slug = new_slug
+    counter = 1
+    while os.path.exists(os.path.join(SERVERS_DIR, new_slug)):
+        new_slug = f"{base_slug}-{counter}"
+        counter += 1
+        
+    new_path = os.path.join(SERVERS_DIR, new_slug)
+    
+    # Clone the entire directory
+    try:
+        shutil.copytree(old_path, new_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to copy directory: {str(e)}")
+        
+    # Update docker-compose.yml to avoid conflicts
+    compose_path = os.path.join(new_path, "docker-compose.yml")
+    if os.path.exists(compose_path):
+        try:
+            with open(compose_path, "r") as f:
+                config = yaml.safe_load(f)
+            
+            services = config.get("services", {})
+            if services:
+                # Find all currently used host ports to pick a new one
+                used_ports = set()
+                for entry in os.scandir(SERVERS_DIR):
+                    if entry.is_dir() and entry.name != new_slug:
+                        try:
+                            other_compose = os.path.join(entry.path, "docker-compose.yml")
+                            if os.path.exists(other_compose):
+                                with open(other_compose, 'r') as of:
+                                    odata = yaml.safe_load(of)
+                                    for _, oservice in odata.get("services", {}).items():
+                                        for p in oservice.get("ports", []):
+                                            used_ports.add(int(str(p).split(':')[0]))
+                        except: pass
+
+                # Pick the first service for container rename
+                service_name = "mc" if "mc" in services else list(services.keys())[0]
+                service = services[service_name]
+                service["container_name"] = f"isopod_{new_slug}"
+                
+                # Update ports
+                if "ports" in service:
+                    try:
+                        p = service["ports"][0] or "25565:25565"
+                        current_port = int(str(p).split(':')[0])
+                        new_port = current_port
+                        # Try to find a new free port
+                        while new_port in used_ports or new_port < 1024:
+                            new_port += 1
+                        service["ports"] = [f"{new_port}:25565"]
+                    except: pass
+                
+                # Update MOTD in environment
+                env = service.get("environment", [])
+                if isinstance(env, list):
+                    for i, item in enumerate(env):
+                        if item.startswith("MOTD="):
+                            env[i] = f"MOTD={new_display_name} Hosted by Isopod"
+                            break
+                elif isinstance(env, dict):
+                    if "MOTD" in env:
+                        env["MOTD"] = f"{new_display_name} Hosted by Isopod"
+            
+            with open(compose_path, "w") as f:
+                yaml.dump(config, f, default_flow_style=False)
+        except Exception as e:
+            print(f"Error updating compose after duplication: {e}")
+            
+    return {"id": new_slug, "message": "Instance duplicated"}
+
+@app.get("/api/instances/{instance_id}/export")
+def export_instance(
+    instance_id: str,
+    world: bool = True,
+    mods: bool = True,
+    configs: bool = True,
+    plugins: bool = True,
+    logs: bool = True
+):
+    path = get_instance_path(instance_id)
+    
+    # Create a temporary zip file
+    tmp_dir = tempfile.gettempdir()
+    zip_filename = f"{instance_id}.zip"
+    zip_path = os.path.join(tmp_dir, zip_filename)
+    
+    try:
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(file_path, path)
+                    
+                    # Classification logic
+                    parts = rel_path.split(os.sep)
+                    include = False
+                    
+                    if len(parts) == 1:
+                        # Root files like docker-compose.yml, icon.png, metadata.json
+                        if configs:
+                            include = True
+                    elif parts[0] == "data":
+                        if len(parts) == 2:
+                            # Files directly under data/, e.g. server.properties, ops.json
+                            if configs:
+                                include = True
+                        else:
+                            # Subfolders inside data/
+                            subfolder = parts[1]
+                            if subfolder.startswith("world"):
+                                if world:
+                                    include = True
+                            elif subfolder == "mods":
+                                if mods:
+                                    include = True
+                            elif subfolder == "config":
+                                if configs:
+                                    include = True
+                            elif subfolder == "plugins":
+                                if plugins:
+                                    include = True
+                            elif subfolder == "logs":
+                                if logs:
+                                    include = True
+                            else:
+                                # Other custom directories (e.g. mod-specific storage)
+                                if configs:
+                                    include = True
+                    else:
+                        # Other root folders
+                        if configs:
+                            include = True
+                            
+                    if include:
+                        zipf.write(file_path, rel_path)
+        
+        return FileResponse(
+            zip_path, 
+            media_type='application/zip', 
+            filename=zip_filename
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/instances/import")
+async def import_instance(file: UploadFile = File(...)):
+    if not file.filename.endswith('.zip'):
+        raise HTTPException(status_code=400, detail="Only .zip files are supported")
+        
+    # Generate a unique slug for the new instance
+    base_name = file.filename.rsplit('.', 1)[0]
+    new_slug = generate_slug(base_name)
+    
+    # Avoid collisions
+    base_slug = new_slug
+    counter = 1
+    while os.path.exists(os.path.join(SERVERS_DIR, new_slug)):
+        new_slug = f"{base_slug}-{counter}"
+        counter += 1
+        
+    target_path = os.path.join(SERVERS_DIR, new_slug)
+    os.makedirs(target_path, exist_ok=True)
+    
+    # Save the file temporarily
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = tmp.name
+        
+    try:
+        with zipfile.ZipFile(tmp_path, 'r') as zipf:
+            zipf.extractall(target_path)
+            
+        # Update docker-compose.yml to match the new slug and avoid port conflict
+        compose_path = os.path.join(target_path, "docker-compose.yml")
+        if os.path.exists(compose_path):
+            try:
+                with open(compose_path, "r") as f:
+                    config = yaml.safe_load(f)
+                
+                services = config.get("services", {})
+                if services:
+                    # Find used ports
+                    used_ports = set()
+                    for entry in os.scandir(SERVERS_DIR):
+                        if entry.is_dir() and entry.name != new_slug:
+                            try:
+                                other_compose = os.path.join(entry.path, "docker-compose.yml")
+                                if os.path.exists(other_compose):
+                                    with open(other_compose, 'r') as of:
+                                        odata = yaml.safe_load(of)
+                                        for _, oservice in odata.get("services", {}).items():
+                                            for p in oservice.get("ports", []):
+                                                used_ports.add(int(str(p).split(':')[0]))
+                            except: pass
+
+                    service_name = "mc" if "mc" in services else list(services.keys())[0]
+                    service = services[service_name]
+                    service["container_name"] = f"isopod_{new_slug}"
+                    
+                    if "ports" in service:
+                        try:
+                            p = service["ports"][0] or "25565:25565"
+                            current_port = int(str(p).split(':')[0])
+                            new_port = current_port
+                            while new_port in used_ports or new_port < 1024:
+                                new_port += 1
+                            service["ports"] = [f"{new_port}:25565"]
+                        except: pass
+                
+                with open(compose_path, "w") as f:
+                    yaml.dump(config, f, default_flow_style=False)
+            except Exception as e:
+                print(f"Error updating compose after import: {e}")
+                
+        return {"id": new_slug, "message": "Instance imported successfully"}
+    except Exception as e:
+        shutil.rmtree(target_path, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 @app.get("/api/instances/{instance_id}/logs")
 def get_instance_logs(instance_id: str, tail: int = 200):
@@ -629,10 +1280,12 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
                                 "name": project["title"],
                                 "summary": project["description"],
                                 "icon_url": project.get("icon_url"),
-                                "author": "-", # Needs another call or deeper parsing
+                                "author": "-", 
                                 "downloads": project.get("downloads", 0),
                                 "url": f"https://modrinth.com/mod/{project['slug']}",
-                                "provider": "modrinth"
+                                "provider": "modrinth",
+                                "mc_versions": project.get("game_versions", [])[:3],
+                                "latest_version": project.get("latest_version", "Unknown")
                             }
                             mod_metadata_cache[project["slug"]] = meta
                             mod_metadata_cache[project["id"]] = meta
@@ -647,7 +1300,7 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
                 else:
                     results.append({"id": mid, "name": mid, "provider": "modrinth", "unknown": True, "requested_id": mid})
 
-        # CurseForge lookup (One by one since proxy doesn't support bulk well)
+        # CurseForge lookup
         if c_ids:
             for cid in c_ids:
                 if cid in mod_metadata_cache:
@@ -659,6 +1312,7 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
                     res = await client.get(f"https://api.curse.tools/v1/cf/mods/{cid}")
                     if res.status_code == 200:
                         item = res.json()["data"]
+                        latest_file = item.get("latestFiles", [{}])[0]
                         meta = {
                             "id": str(item["id"]),
                             "name": item["name"],
@@ -667,7 +1321,9 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
                             "author": item.get("authors", [{}])[0].get("name", "Unknown"),
                             "downloads": int(item.get("downloadCount", 0)),
                             "url": item.get("links", {}).get("websiteUrl", ""),
-                            "provider": "curseforge"
+                            "provider": "curseforge",
+                            "mc_versions": latest_file.get("gameVersions", [])[:3],
+                            "latest_version": latest_file.get("displayName", "Unknown")
                         }
                         mod_metadata_cache[cid] = meta
                         meta_copy = meta.copy()
@@ -784,6 +1440,58 @@ async def get_mod_conflicts(provider: str, project_id: str, current_mods: str = 
     """Check for obvious loader/engine conflicts."""
     return {"conflicts": []}
 
+
+@app.get("/api/files")
+def list_global_files(path: str = "."):
+    """List files within the SERVERS_DIR."""
+    base_path = os.path.abspath(SERVERS_DIR)
+    target_path = os.path.abspath(os.path.join(base_path, path))
+    
+    if not target_path.startswith(base_path):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    if not os.path.exists(target_path):
+        # Gracefully handle non-existent path
+        if path == ".":
+            os.makedirs(base_path, exist_ok=True)
+        else:
+            raise HTTPException(status_code=404, detail="Path not found")
+        
+    items = []
+    for entry in os.scandir(target_path):
+        st = entry.stat()
+        items.append({
+            "name": entry.name,
+            "is_dir": entry.is_dir(),
+            "size": st.st_size,
+            "modified": st.st_mtime,
+            "ext": os.path.splitext(entry.name)[1].lower() if entry.is_file() else ""
+        })
+    
+    items.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
+    return {"path": path, "items": items}
+
+@app.get("/api/file/content")
+def get_global_file_content(path: str):
+    """Get text content of a file in SERVERS_DIR."""
+    base_path = os.path.abspath(SERVERS_DIR)
+    target_path = os.path.abspath(os.path.join(base_path, path))
+    
+    if not target_path.startswith(base_path):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if not os.path.isfile(target_path):
+        raise HTTPException(status_code=400, detail="Not a file")
+        
+    if os.path.getsize(target_path) > 1 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large to view (Max 1MB)")
+        
+    try:
+        with open(target_path, 'r', encoding='utf-8', errors='replace') as f:
+            return {"content": f.read()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/instances/{instance_id}/files")
 def list_instance_files(instance_id: str, path: str = "."):
     """List files within an instance directory."""
@@ -834,7 +1542,120 @@ def get_file_content(instance_id: str, path: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/system/info", response_model=SystemInfo)
+def get_system_info():
+    return {
+        "version": ISOPOD_VERSION,
+        "is_docker": os.path.exists("/.dockerenv")
+    }
+
+async def get_latest_release():
+    """Fetches the latest release info from GitHub API."""
+    try:
+        async with httpx.AsyncClient() as client:
+            headers = {"Accept": "application/vnd.github.v3+json"}
+            res = await client.get(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", headers=headers, timeout=10)
+            
+            if res.status_code == 200:
+                data = res.json()
+                latest_v = data.get("tag_name", "Unknown")
+                return {
+                    "current_version": ISOPOD_VERSION,
+                    "latest_version": latest_v,
+                    "has_update": latest_v != ISOPOD_VERSION,
+                    "release_notes": data.get("body", "No release notes available."),
+                    "published_at": data.get("published_at")
+                }
+            return None
+    except Exception as e:
+        print(f"Error fetching release: {e}")
+        return None
+
+async def update_check_loop():
+    """Background task to check for updates every 12 hours."""
+    global cached_update_info
+    while True:
+        info = await get_latest_release()
+        if info:
+            cached_update_info = info
+        # Sleep for 12 hours
+        await asyncio.sleep(12 * 3600)
+
+@app.on_event("startup")
+async def startup_event():
+    # Start the periodic update check in the background
+    asyncio.create_task(update_check_loop())
+
+@app.get("/api/system/check-updates", response_model=UpdateInfo)
+async def check_updates(force: bool = False):
+    """
+    Returns update information. Uses cached data unless 'force' is True 
+    or no cache exists yet.
+    """
+    global cached_update_info
+    if force or not cached_update_info:
+        info = await get_latest_release()
+        if info:
+            cached_update_info = info
+            return info
+        else:
+             # Fallback if GitHub is down but we want to return something valid
+             return {
+                "current_version": ISOPOD_VERSION,
+                "latest_version": ISOPOD_VERSION,
+                "has_update": False,
+                "release_notes": "Could not connect to the update server."
+             }
+    
+    return cached_update_info
+
+@app.post("/api/system/update")
+async def perform_update():
+    """
+    Attempts to update the launcher by pulling the latest code/images 
+    and restarting the container via the mounted Docker socket.
+    """
+    if not os.path.exists("/var/run/docker.sock"):
+        raise HTTPException(status_code=500, detail="Docker socket not found. Cannot perform self-update.")
+
+    # In a real environment, we'd trigger a background process to pull and restart
+    # Since this container will be killed when restarted, we need to run it in a way that continues
+    
+    # Example command to update if using compose:
+    # docker compose -f isopod-compose.yml pull && docker compose -f isopod-compose.yml up -d
+    
+    # For now, we'll provide a response and then attempt to trigger a restart
+    # We'll use a small delay so the response reaches the client
+    
+    async def trigger_restart():
+        await asyncio.sleep(2)
+        # We try to determine the compose file name.
+        compose_file = "isopod-compose.yml" if os.path.exists("isopod-compose.yml") else "docker-compose.yml"
+        
+        # Pull (if possible) and up -d
+        # If built from source, this only works if 'git pull' happened, which we haven't implemented yet.
+        # But if the user uses a pre-built image, 'pull' is exactly what they need.
+        try:
+            # If we are in a git repository, pull the latest code first
+            if os.path.exists(".git"):
+                print("Git repository detected. Pulling latest code...")
+                subprocess.run(["git", "pull"], check=True, timeout=30)
+
+            # We run this in the background using subprocess.Popen to avoid being killed immediately
+            subprocess.Popen(
+                ["docker", "compose", "-f", compose_file, "up", "-d", "--pull", "always"],
+                start_new_session=True
+            )
+        except Exception as e:
+            print(f"Self-update trigger failed: {e}")
+
+
+    asyncio.create_task(trigger_restart())
+    
+    return {"message": "Update sequence initiated. The application will restart automatically. Please refresh the page in a few moments."}
+
 # Mount the compiled frontend to be served statically
+
 
 # Ensure '/app/frontend/dist' exists or gracefully ignore if not fully built locally
 dist_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")

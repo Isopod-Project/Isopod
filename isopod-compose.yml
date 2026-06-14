@@ -3,6 +3,7 @@ version: '3.8'
 services:
   isopod:
     build: .
+    image: isopod:latest
     container_name: isopod
     restart: unless-stopped
     ports:
