@@ -1387,12 +1387,12 @@ def export_instance(
 async def import_instance(
     file: UploadFile = File(...),
     name: Optional[str] = Form(None),
-    port: Optional[int] = Form(None),
+    port: Optional[str] = Form(None),
     difficulty: Optional[str] = Form(None),
     gamemode: Optional[str] = Form(None),
     seed: Optional[str] = Form(None),
     level_type: Optional[str] = Form(None),
-    generate_structures: Optional[bool] = Form(None),
+    generate_structures: Optional[str] = Form(None),
     memory: Optional[str] = Form(None)
 ):
     if not file.filename.endswith('.zip'):
@@ -1418,6 +1418,17 @@ async def import_instance(
         tmp_path = tmp.name
         
     try:
+        port_val = None
+        if port:
+            try:
+                port_val = int(port)
+            except ValueError:
+                pass
+                
+        gen_struct_bool = True
+        if generate_structures is not None:
+            gen_struct_bool = generate_structures.lower() == 'true'
+
         is_server_export = False
         is_single_player_world = False
         level_dat_path = None
@@ -1505,7 +1516,7 @@ async def import_instance(
                             try:
                                 p = service["ports"][0] or "25565:25565"
                                 current_port = int(str(p).split(':')[0])
-                                new_port = port if port else current_port
+                                new_port = port_val if port_val else current_port
                                 while new_port in used_ports or new_port < 1024:
                                     new_port += 1
                                 service["ports"] = [f"{new_port}:25565"]
@@ -1525,14 +1536,14 @@ async def import_instance(
                             if gamemode: set_env_list("MODE", gamemode)
                             if seed: set_env_list("SEED", seed)
                             if level_type: set_env_list("LEVEL_TYPE", level_type)
-                            if generate_structures is not None: set_env_list("GENERATE_STRUCTURES", "true" if generate_structures else "false")
+                            if generate_structures is not None: set_env_list("GENERATE_STRUCTURES", "true" if gen_struct_bool else "false")
                             if memory: set_env_list("MEMORY", memory)
                         elif isinstance(env, dict):
                             if difficulty: env["DIFFICULTY"] = difficulty
                             if gamemode: env["MODE"] = gamemode
                             if seed: env["SEED"] = seed
                             if level_type: env["LEVEL_TYPE"] = level_type
-                            if generate_structures is not None: env["GENERATE_STRUCTURES"] = "true" if generate_structures else "false"
+                            if generate_structures is not None: env["GENERATE_STRUCTURES"] = "true" if gen_struct_bool else "false"
                             if memory: env["MEMORY"] = memory
                     
                     with open(compose_path, "w") as f:
@@ -1586,7 +1597,7 @@ async def import_instance(
                                         used_ports.add(int(str(p).split(':')[0]))
                     except: pass
             
-            new_port = port if port else 25565
+            new_port = port_val if port_val else 25565
             while new_port in used_ports or new_port < 1024:
                 new_port += 1
                 
@@ -1608,7 +1619,7 @@ async def import_instance(
                             f"LEVEL_TYPE={level_type or 'DEFAULT'}",
                             f"DIFFICULTY={difficulty or 'easy'}",
                             f"MODE={gamemode or 'survival'}",
-                            f"GENERATE_STRUCTURES={'true' if generate_structures else 'false'}",
+                            f"GENERATE_STRUCTURES={'true' if gen_struct_bool else 'false'}",
                             "JVM_OPTS=--add-opens java.base/sun.misc=ALL-UNNAMED"
                         ],
                         "volumes": ["./data:/data"],
