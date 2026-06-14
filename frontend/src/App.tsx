@@ -2209,9 +2209,16 @@ export default function App() {
 
              {/* Bottom Actions */}
              <div className="p-4 bg-[#2D2D2D] border-t border-[#3A3A3A] flex justify-between items-center px-6">
-                <button className="flex items-center gap-2 text-neutral-500 hover:text-white transition-colors text-xs font-medium">
-                   <AlertCircle className="w-4 h-4" /> Help
-                </button>
+                <div className="flex items-center gap-4">
+                   <button className="flex items-center gap-2 text-neutral-500 hover:text-white transition-colors text-xs font-medium">
+                      <AlertCircle className="w-4 h-4" /> Help
+                   </button>
+                   {isCreating && addTab === 'import' && (
+                      <span className="text-xs text-amber-500 font-medium animate-pulse">
+                         Uploading & extracting zip... Please wait, this may take a moment for large worlds.
+                      </span>
+                   )}
+                </div>
                 <div className="flex gap-2">
                    {addStep === 2 && (
                       <button 
