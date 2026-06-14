@@ -1184,6 +1184,18 @@ export default function App() {
    }, [serverLogs, manualLogs, editTab, autoScrollEnabled]);
 
    useEffect(() => {
+      const root = document.documentElement;
+      root.classList.remove('theme-dark', 'theme-light', 'theme-oled');
+      if (globalSettings.theme === 'Light') {
+         root.classList.add('theme-light');
+      } else if (globalSettings.theme === 'OLED') {
+         root.classList.add('theme-oled');
+      } else {
+         root.classList.add('theme-dark');
+      }
+   }, [globalSettings.theme]);
+
+   useEffect(() => {
       fetchInstances();
       fetchMcVersions();
       fetchGlobalSettings();
