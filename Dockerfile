@@ -4,6 +4,7 @@ WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
+COPY assets/ ../assets/
 RUN npm run build
 
 # Stage 2: Serve via Python FastAPI

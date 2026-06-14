@@ -73,6 +73,12 @@ export default function App() {
     });
   };
 
+  // System Update States
+  const [updateInfo, setUpdateInfo] = useState<any>(null);
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
+  const [isUpdatingSystem, setIsUpdatingSystem] = useState(false);
+  const [isVerbose, setIsVerbose] = useState(false);
+
   // Modal states
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newName, setNewName] = useState("");
@@ -158,6 +164,7 @@ export default function App() {
      defaultLoader: 'VANILLA',
      autoRefresh: true,
      showSnapshots: false,
+     autoCheckUpdates: true,
      defaultWhitelistEnabled: false,
      defaultWhitelistUsers: [] as string[]
   });
@@ -322,6 +329,26 @@ export default function App() {
     } catch (e) {
       console.error(e);
       await showAlert(`Stop Error: ${e instanceof Error ? e.message : String(e)}`, "Stop Failed");
+      fetchStatus(id);
+    }
+  };
+
+  const handleKill = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      setStatuses((prev: Record<string, InstanceStatus>) => ({
+        ...prev, 
+        [id]: { ...prev[id], is_running: false, is_ready: false } // Optimistic update
+      }));
+      const res = await fetch(`/api/instances/${id}/kill`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || "Failed to kill container");
+      }
+      setTimeout(() => fetchStatus(id), 1000);
+    } catch (e) {
+      console.error(e);
+      await showAlert(`Kill Error: ${e instanceof Error ? e.message : String(e)}`, "Kill Failed");
       fetchStatus(id);
     }
   };
@@ -508,7 +535,11 @@ export default function App() {
     try {
       const res = await fetch(`/api/instances/${id}/logs`);
       const data = await res.json();
-      setLogs(data.logs);
+      
+      // We strip ANSI codes here because they never look good in <pre>
+      // but we keep all lines; filtering happens in the UI based on isVerbose
+      const cleanLogs = (data.logs || "").replace(/\x1B\[[0-9;]*[mK]/g, "");
+      setLogs(cleanLogs);
     } catch (e) {
       console.error(e);
       setLogs("Failed to load logs.");
@@ -786,6 +817,37 @@ export default function App() {
     }
   };
 
+  const checkSystemUpdates = async (force: boolean = false) => {
+    setIsCheckingUpdates(true);
+    try {
+      const res = await fetch(`/api/system/check-updates?force=${force}`);
+      const data = await res.json();
+      setUpdateInfo(data);
+    } catch (e) {
+      console.error("Failed to check for updates", e);
+    } finally {
+      setIsCheckingUpdates(false);
+    }
+  };
+
+  const performSystemUpdate = async () => {
+    const confirmed = await showConfirm("This will update Isopod to the latest version and restart the application. All your instance data is safe. Proceed?", "Update Isopod");
+    if (!confirmed) return;
+
+    setIsUpdatingSystem(true);
+    try {
+      const res = await fetch("/api/system/update", { method: "POST" });
+      const data = await res.json();
+      await showAlert(data.message, "Update Started");
+      // Reload after a delay
+      setTimeout(() => window.location.reload(), 5000);
+    } catch (e) {
+      await showAlert("Failed to start update", "Error");
+    } finally {
+      setIsUpdatingSystem(false);
+    }
+  };
+
   const handleSendCommand = async (id: string, cmd: string) => {
     if (!cmd.trim()) return;
     setIsExecuting(true);
@@ -854,6 +916,7 @@ export default function App() {
   useEffect(() => {
     fetchInstances();
     fetchMcVersions();
+    checkSystemUpdates();
     
     const interval = setInterval(() => {
         setInstances((prevInstances: Instance[]) => {
@@ -1018,18 +1081,30 @@ export default function App() {
           </button>
           <button 
              onClick={openSettings}
-             className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium"
+             className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium relative"
           >
             <Settings className="w-4 h-4 text-neutral-300" />
             Settings
+            {updateInfo?.has_update && (
+               <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+               </span>
+            )}
           </button>
-          <button 
-            onClick={fetchInstances}
-            className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium ml-auto"
-          >
-            <RefreshCw className="w-4 h-4 text-sky-400" />
-            Refresh
-          </button>
+          <div className="ml-auto flex items-center gap-4">
+             <div className="flex flex-col items-end">
+                <span className="text-[9px] font-black text-neutral-500 uppercase tracking-tighter leading-none mb-0.5">Version</span>
+                <span className="text-[11px] font-mono font-bold text-neutral-400 leading-none">{updateInfo?.current_version || "..."}</span>
+             </div>
+             <button 
+               onClick={fetchInstances}
+               className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium"
+             >
+               <RefreshCw className="w-4 h-4 text-sky-400" />
+               Refresh
+             </button>
+          </div>
         </header>
         
         <main className="flex-1 overflow-auto p-6 bg-[#2B2B2B]">
@@ -1113,13 +1188,24 @@ export default function App() {
 
             <div className="p-4 flex flex-col gap-1.5 flex-1 overflow-auto">
               {selectedStatus?.is_running ? (
-                <button 
-                  onClick={(e: React.MouseEvent) => handleStop(selectedInstance.id, e)}
-                  className="flex items-center gap-3 px-3 py-2.5 rounded bg-[#402020] hover:bg-[#5A2525] border border-[#502020] text-red-400 transition-colors"
-                >
-                  <Square className="w-4 h-4 fill-current" />
-                  <span className="font-semibold">Kill</span>
-                </button>
+                <div className="flex gap-1.5">
+                  <button 
+                    onClick={(e: React.MouseEvent) => handleStop(selectedInstance.id, e)}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-500 transition-all font-bold text-sm"
+                    title="Safe Stop (Sends /stop, saves world progress)"
+                  >
+                    <Square className="w-3.5 h-3.5 fill-current" />
+                    Stop
+                  </button>
+                  <button 
+                    onClick={(e: React.MouseEvent) => handleKill(selectedInstance.id, e)}
+                    className="flex items-center justify-center px-4 py-2.5 rounded bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-500 transition-all font-bold text-sm"
+                    title="Force Kill (Immediate power-off, UNSAFE)"
+                  >
+                    <X className="w-4 h-4" />
+                    Kill
+                  </button>
+                </div>
               ) : (
                 <button 
                   onClick={(e: React.MouseEvent) => handleStart(selectedInstance.id, e)}
@@ -1785,9 +1871,25 @@ export default function App() {
                 {editTab === "logs" && (
                   <div className="flex flex-col h-full p-6">
                     <div className="flex justify-between items-center mb-4">
-                      <div className="flex items-center gap-2">
-                         <Terminal className="w-5 h-5 text-neutral-500" />
-                         <span className="text-lg font-semibold text-neutral-300">Console Output</span>
+                      <div className="flex items-center gap-4">
+                         <div className="flex items-center gap-2">
+                           <Terminal className="w-5 h-5 text-neutral-500" />
+                           <span className="text-lg font-semibold text-neutral-300">Console Output</span>
+                         </div>
+                         <div className="flex bg-[#0D0D0D] border border-[#333] p-1 rounded-lg ml-4">
+                            <button 
+                               onClick={() => setIsVerbose(false)}
+                               className={`px-3 py-1 rounded-md text-[10px] font-bold transition-all ${!isVerbose ? 'bg-[#3E8ED0] text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+                            >
+                               Simplified
+                            </button>
+                            <button 
+                               onClick={() => setIsVerbose(true)}
+                               className={`px-3 py-1 rounded-md text-[10px] font-bold transition-all ${isVerbose ? 'bg-[#3E8ED0] text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+                            >
+                               Verbose
+                            </button>
+                         </div>
                       </div>
                       <button 
                         onClick={() => selectedInstance && fetchLogs(selectedInstance.id)}
@@ -1799,9 +1901,31 @@ export default function App() {
                     </div>
                     <pre 
                        ref={scrollRef}
-                       className="flex-1 bg-[#0D0D0D] rounded-t-lg border border-[#333] p-5 overflow-auto text-xs font-mono text-emerald-400/90 whitespace-pre-wrap selection:bg-[#3E8ED0]/40 shadow-inner"
+                       className="flex-1 bg-[#0D0D0D] rounded-t-lg border border-[#333] p-5 overflow-auto text-xs font-mono text-emerald-400/90 whitespace-pre-wrap selection:bg-[#3E8ED0]/40 shadow-inner scroll-smooth"
                     >
-                       {logs || "Waiting for output..."}
+                       {(() => {
+                          if (!logs) return "Waiting for output...";
+                          if (isVerbose) return logs;
+                          
+                          const allowedPatterns = [
+                            /ERROR/, /FATAL/, /Exception/,
+                            /Loading \d+ mods/, / - /, / \\-- /,
+                            /Done \(/,
+                            /> /, 
+                            /issued (server )?command/,
+                            /joined the game/, /left the game/,
+                            /\[Server thread\/INFO\]: </,
+                            /Starting minecraft server version/,
+                            /\[Server thread\/INFO\]: \[(?!Rcon: Stopping)/ 
+                          ];
+
+                          return logs.split('\n').filter(line => {
+                             // Always keep manual commands
+                             if (line.includes('> ')) return true;
+                             // Check against strict allowlist
+                             return allowedPatterns.some(p => p.test(line));
+                          }).join('\n');
+                       })()}
                     </pre>
                     <div className="flex bg-[#1A1A1A] border-x border-b border-[#333] rounded-b-lg p-3 gap-3">
                        <input 
@@ -2787,11 +2911,15 @@ export default function App() {
                   <h5 className="px-3 text-[10px] font-bold text-neutral-600 uppercase tracking-widest mb-1 mt-4">System</h5>
                   {[
                      { id: "defaults", name: "Server Defaults", icon: Database },
-                     { id: "advanced", name: "Advanced", icon: Shield }
+                     { id: "advanced", name: "Advanced", icon: Shield },
+                     { id: "updates", name: "Updates", icon: RefreshCw }
                   ].map((tab) => (
                      <button 
                         key={tab.id}
-                        onClick={() => setSettingsTab(tab.id)}
+                        onClick={() => {
+                           setSettingsTab(tab.id);
+                           if (tab.id === "updates") checkSystemUpdates();
+                        }}
                         className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${settingsTab === tab.id ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
                      >
                         <tab.icon className="w-4 h-4" />
@@ -3067,6 +3195,90 @@ export default function App() {
                         </div>
                      </div>
                   )}
+
+                  {settingsTab === "updates" && (
+                     <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
+                        <div className="flex justify-between items-start">
+                           <div>
+                              <h3 className="text-lg font-bold mb-1">Updates</h3>
+                              <p className="text-sm text-neutral-500">Manage Isopod application updates.</p>
+                           </div>
+                           <button 
+                              onClick={() => checkSystemUpdates(true)}
+                              disabled={isCheckingUpdates}
+                              className="p-2 hover:bg-[#333] rounded-lg transition-colors text-[#3E8ED0] disabled:opacity-50"
+                           >
+                              <RefreshCw className={`w-5 h-5 ${isCheckingUpdates ? 'animate-spin' : ''}`} />
+                           </button>
+                        </div>
+
+                        {updateInfo && (
+                           <div className="space-y-6">
+                              <div className="bg-[#242424] border border-[#3A3A3A] rounded-xl overflow-hidden shadow-sm">
+                                 <div className="p-6 flex items-center justify-between bg-gradient-to-r from-[#242424] to-[#2A2A2A]">
+                                    <div className="flex items-center gap-6">
+                                       <div className="flex flex-col items-center">
+                                          <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-1">Current</span>
+                                          <div className="bg-[#1A1A1A] border border-[#333] px-4 py-2 rounded-lg font-mono text-xs font-bold text-neutral-400">{updateInfo.current_version}</div>
+                                       </div>
+                                       <ChevronRight className="w-5 h-5 text-neutral-700 mt-4" />
+                                       <div className="flex flex-col items-center">
+                                          <span className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${updateInfo.has_update ? 'text-emerald-500' : 'text-neutral-500'}`}>Latest</span>
+                                          <div className={`px-4 py-2 rounded-lg font-mono text-xs font-bold border transition-all ${updateInfo.has_update ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'bg-[#1A1A1A] border-[#333] text-neutral-400'}`}>
+                                             {updateInfo.latest_version}
+                                          </div>
+                                       </div>
+                                    </div>
+
+                                    {updateInfo.has_update ? (
+                                       <button 
+                                          onClick={performSystemUpdate}
+                                          disabled={isUpdatingSystem}
+                                          className="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-bold text-sm shadow-xl shadow-emerald-500/10 transition-all flex items-center gap-2"
+                                       >
+                                          {isUpdatingSystem ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                                          Update Now
+                                       </button>
+                                    ) : (
+                                       <div className="flex items-center gap-2 text-emerald-500 text-xs font-bold bg-emerald-500/10 px-4 py-2 rounded-lg border border-emerald-500/20">
+                                          <Check className="w-4 h-4" /> Up to date
+                                       </div>
+                                    )}
+                                 </div>
+
+                                 {updateInfo.has_update && (
+                                    <div className="p-6 border-t border-[#3A3A3A] bg-[#1E1E1E]">
+                                       <div className="flex items-center gap-2 mb-4">
+                                          <FileText className="w-4 h-4 text-[#3E8ED0]" />
+                                          <h4 className="text-xs font-bold text-neutral-300 uppercase tracking-wider">Release Notes</h4>
+                                       </div>
+                                       <div className="bg-[#141414] border border-[#333] p-4 rounded-lg text-xs text-neutral-400 font-sans leading-relaxed whitespace-pre-wrap max-h-[200px] overflow-auto scrollbar-custom">
+                                          {updateInfo.release_notes}
+                                       </div>
+                                       <div className="mt-4 flex items-center gap-2 text-[10px] text-neutral-600">
+                                          <Globe className="w-3 h-3" /> Published on {new Date(updateInfo.published_at).toLocaleDateString()}
+                                       </div>
+                                    </div>
+                                 )}
+                              </div>
+                              
+                              <div className="bg-[#3E8ED0]/5 border border-[#3E8ED0]/20 p-4 rounded-lg flex gap-3 items-start">
+                                 <AlertCircle className="w-5 h-5 text-[#3E8ED0] mt-0.5" />
+                                 <p className="text-[11px] text-neutral-500 leading-relaxed">
+                                    Updates will preserve all your instance data, world files, and configurations. The application will experience a brief downtime while it restarts with the new version.
+                                 </p>
+                              </div>
+                           </div>
+                        )}
+                        
+                        {!updateInfo && isCheckingUpdates && (
+                           <div className="flex flex-col items-center justify-center p-12 gap-4">
+                              <RefreshCw className="w-8 h-8 text-[#3E8ED0] animate-spin" />
+                              <span className="text-sm font-medium text-neutral-500">Retrieving update information...</span>
+                           </div>
+                        )}
+                     </div>
+                  )}
                </div>
             </div>
 
@@ -3128,7 +3340,7 @@ export default function App() {
           >
             <Pencil className="w-4 h-4" /> Rename
           </button>
-          <button onClick={(e) => { e.stopPropagation(); setPendingIconId(contextMenu.instanceId); iconInputRef.current?.click(); setContextMenu(null); }} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
+          <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
             <span className="w-4 h-4 bg-neutral-700 rounded-sm flex items-center justify-center text-[8px] font-bold">F0</span> Change Icon
           </button>
 
@@ -3145,12 +3357,17 @@ export default function App() {
           </button>
           <button 
             onClick={(e) => { handleStop(contextMenu.instanceId, e as any); setContextMenu(null); }}
-            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-400 hover:bg-red-500 hover:text-white transition-colors text-left"
+            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-amber-500 hover:bg-amber-500 hover:text-white transition-colors text-left"
+            title="Saves world first"
           >
-            <div className="w-4 h-4 bg-red-500/20 rounded-sm flex items-center justify-center">
-              <X className="w-3 h-3 text-red-500" />
-            </div> 
-            Kill
+            <Square className="w-4 h-4" /> Stop (Safe)
+          </button>
+          <button 
+            onClick={(e) => { handleKill(contextMenu.instanceId, e as any); setContextMenu(null); }}
+            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-400 hover:bg-red-600 hover:text-white transition-colors text-left"
+            title="Force immediate stop"
+          >
+            <X className="w-4 h-4" /> Kill (Unsafe)
           </button>
 
           <div className="h-px bg-[#3A3A3A] my-1"></div>
@@ -3161,7 +3378,7 @@ export default function App() {
           >
             <List className="w-4 h-4" /> Edit...
           </button>
-          <button onClick={() => { handleChangeGroup(contextMenu.instanceId); setContextMenu(null); }} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
+          <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
             <Tag className="w-4 h-4" /> Change Group...
           </button>
           <button 
@@ -3176,13 +3393,13 @@ export default function App() {
           >
             <Folder className="w-4 h-4" /> Folder
           </button>
-          <button onClick={() => { handleExport(contextMenu.instanceId); setContextMenu(null); }} className="w-full flex items-center justify-between px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
+          <button className="w-full flex items-center justify-between px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
             <div className="flex items-center gap-3">
               <Share className="w-4 h-4" /> Export...
             </div>
             <ChevronRight className="w-3.5 h-3.5 opacity-50" />
           </button>
-          <button onClick={() => { handleDuplicate(contextMenu.instanceId); setContextMenu(null); }} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
+          <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
             <Copy className="w-4 h-4" /> Copy...
           </button>
           <button 
