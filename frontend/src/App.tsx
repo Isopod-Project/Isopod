@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown } from "lucide-react";
 
 interface Instance {
   id: string;
@@ -110,11 +110,13 @@ export default function App() {
   const [newDifficulty, setNewDifficulty] = useState("easy");
   const [newGamemode, setNewGamemode] = useState("survival");
   const [newGenerateStructures, setNewGenerateStructures] = useState(true);
-  
+  const [newMemory, setNewMemory] = useState("1G");
+
   // Edit Modal states
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editTab, setEditTab] = useState("logs");
-  const [logs, setLogs] = useState("");
+  const [serverLogs, setServerLogs] = useState<Record<string, string>>({});
+  const [manualLogs, setManualLogs] = useState<Record<string, { anchor: string, content: string }[]>>({});
   const [isLogsLoading, setIsLogsLoading] = useState(false);
   // Instance Config States
   const [config, setConfig] = useState<{image: string, environment: Record<string, string>}>({image: "", environment: {}});
@@ -145,7 +147,10 @@ export default function App() {
   const [installedModsMeta, setInstalledModsMeta] = useState<any[]>([]);
   const [isMetaLoading, setIsMetaLoading] = useState(false);
   const [consoleCommand, setConsoleCommand] = useState("");
+  const [commandHistory, setCommandHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number>(-1);
   const [isExecuting, setIsExecuting] = useState(false);
+  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const scrollRef = useRef<HTMLPreElement>(null);
   
   // Version Change Handling
@@ -171,6 +176,7 @@ export default function App() {
      theme: 'Dark',
      defaultPort: '25565',
      defaultLoader: 'VANILLA',
+     defaultMemory: '1G',
      autoRefresh: true,
      showSnapshots: false,
      autoCheckUpdates: true,
@@ -187,6 +193,15 @@ export default function App() {
   // Instance Whitelist States
   const [instanceWhitelistUser, setInstanceWhitelistUser] = useState("");
   const [instanceWhitelistPreview, setInstanceWhitelistPreview] = useState<{name: string, uuid: string} | null>(null);
+
+  // Resource Pack States
+  const [resourcePackQuery, setResourcePackQuery] = useState("");
+  const [resourcePackProvider, setResourcePackProvider] = useState<"modrinth" | "curseforge">("modrinth");
+  const [resourcePackResults, setResourcePackResults] = useState<any[]>([]);
+  const [isResourcePackSearching, setIsResourcePackSearching] = useState(false);
+  const [resourcePackListView, setResourcePackListView] = useState<"list" | "search">("list");
+  const [installedResourcePacksMeta, setInstalledResourcePacksMeta] = useState<any[]>([]);
+  const [isResourcePackMetaLoading, setIsResourcePackMetaLoading] = useState(false);
 
   // Bootstrap seenPlayers with defaults and common entries
   useEffect(() => {
@@ -226,14 +241,14 @@ export default function App() {
              body: JSON.stringify({ name: newName })
           });
           if (res.ok) {
-            await fetchInstances();
-    fetchGroups();
-            if (id === selectedId) {
-               const data = await res.json();
-               setSelectedId(data.id);
-            }
+             await fetchInstances();
+             fetchGroups();
+             if (id === selectedId) {
+                const data = await res.json();
+                setSelectedId(data.id);
+             }
           } else {
-            await showAlert("Failed to rename instance", "Error");
+             await showAlert("Failed to rename instance", "Error");
           }
        } catch (e) {
           await showAlert("Error renaming instance", "Error");
@@ -402,7 +417,8 @@ export default function App() {
         level_type: newLevelType,
         difficulty: newDifficulty,
         gamemode: newGamemode,
-        generate_structures: newGenerateStructures
+        generate_structures: newGenerateStructures,
+        memory: newMemory
       };
 
       const res = await fetch("/api/instances", {
@@ -427,6 +443,7 @@ export default function App() {
       setNewDifficulty("easy");
       setNewGamemode("survival");
       setNewGenerateStructures(true);
+      setNewMemory(globalSettings.defaultMemory);
       
       fetchInstances();
     } catch (e) {
@@ -541,20 +558,6 @@ export default function App() {
       } catch (e) {}
   };
 
-  const getSimplifiedLogs = (raw: string) => {
-     return raw.split('\n').filter((l: string) => {
-        const low = l.toLowerCase();
-        if (low.includes("error") || low.includes("exception") || low.includes("crash") || low.includes("fatal")) return true;
-        if (l.includes("Done (") && l.includes("s)!")) return true;
-        if (l.includes("[main/INFO]: Loading") && l.includes("mods")) return true;
-        if (low.includes("joined the game") || low.includes("left the game")) return true;
-        if (l.includes("> /")) return true; 
-        if (l.includes("[Server thread/INFO]: [") && l.includes("]")) return true;
-        if (l.includes("[Rcon:") && l.includes("]")) return true;
-        return false;
-     }).join('\n');
-  };
-
   const handleDelete = async (id: string) => {
     const confirmed = await showConfirm("Are you sure you want to permanently delete this instance and all its files?", "Delete Instance");
     if (!confirmed) return;
@@ -568,23 +571,23 @@ export default function App() {
     }
   };
 
-  const fetchLogs = async (id: string) => {
-    setIsLogsLoading(true);
-    try {
-      const res = await fetch(`/api/instances/${id}/logs`);
-      const data = await res.json();
-      
-      // We strip ANSI codes here because they never look good in <pre>
-      // but we keep all lines; filtering happens in the UI based on isVerbose
-      const cleanLogs = (data.logs || "").replace(/\x1B\[[0-9;]*[mK]/g, "");
-      setLogs(cleanLogs);
-    } catch (e) {
-      console.error(e);
-      setLogs("Failed to load logs.");
-    } finally {
-      setIsLogsLoading(false);
-    }
-  };
+   const fetchLogs = React.useCallback(async (id: string) => {
+      setIsLogsLoading(true);
+      try {
+         const res = await fetch(`/api/instances/${id}/logs`);
+         const data = await res.json();
+
+         // We strip ANSI codes here because they never look good in <pre>
+         // but we keep all lines; filtering happens in the UI based on isVerbose
+         const cleanLogs = (data.logs || "").replace(/\x1B\[[0-9;]*[mK]/g, "");
+         setServerLogs(prev => ({ ...prev, [id]: cleanLogs }));
+      } catch (e) {
+         console.error(e);
+         setServerLogs(prev => ({ ...prev, [id]: "Failed to load logs." }));
+      } finally {
+         setIsLogsLoading(false);
+      }
+   }, []);
 
   const fetchConfig = async (id: string) => {
     try {
@@ -636,79 +639,119 @@ export default function App() {
   };
 
 
-   const handleSaveConfig = async () => {
-    if (!selectedId || !config) return;
-    if (JSON.stringify(config) === originalConfig) {
-      await showAlert("No changes to save.", "Settings");
-      return;
-    }
+    const handleSaveConfig = async () => {
+      if (!selectedId || !config) return;
 
-    const status = statuses[selectedId];
-    const isRunning = status && status.is_running;
-
-    let proceed = false;
-    let shouldRestartAfter = false;
-
-    if (isRunning) {
-      const confirmed = await showConfirm("Apply changes and restart the server now?", "Apply Configuration");
-      if (confirmed) {
-        proceed = true;
-        shouldRestartAfter = true;
-      }
-    } else {
-      const confirmed = await showConfirm("Save changes to instance configuration?", "Save Configuration");
-      if (confirmed) {
-        proceed = true;
-      }
-    }
-
-    if (!proceed) return;
-    
-    setIsSaving(true);
-    try {
-      const res = await fetch(`/api/instances/${selectedId}/config`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config)
-      });
-      if (!res.ok) throw new Error("Failed to save config");
-      setOriginalConfig(JSON.stringify(config));
+      // IMPORTANT: Do NOT delete RESOURCE_PACK_ID — set it to empty string instead.
+      // The itzg image only overwrites server.properties values for env vars that are present.
+      // If we delete the env var, the old stale value (e.g. "fresh-animations") persists in server.properties.
+      // Create a copy of the environment for final processing
+      const finalEnv: Record<string, string> = { ...config.environment };
       
-      if (shouldRestartAfter) {
-        setIsEditModalOpen(false); // Exit to main screen
-        handleRestart(selectedId);
-      } else {
-        await showAlert("Changes saved explicitly.", "Configuration");
+      // Explicitly clear legacy problematic keys but KEEP internal tracking
+      delete finalEnv["ISOPOD_PACK_ID"];
+      
+      // Force-reset RESOURCE_PACK_ID to empty so itzg clears it from server.properties
+      finalEnv["RESOURCE_PACK_ID"] = "";
+      
+      // The itzg image does NOT have a built-in RESOURCE_PACK_ID env var.
+      // Use CUSTOM_SERVER_PROPERTIES to explicitly clear the stale resource-pack-id 
+      // that was previously written to server.properties.
+      const customProps: string[] = [];
+      customProps.push("resource-pack-id=");
+      
+      // Merge with any existing custom properties
+      if (finalEnv["CUSTOM_SERVER_PROPERTIES"]) {
+         const existing = finalEnv["CUSTOM_SERVER_PROPERTIES"].split("\n")
+            .filter(l => !l.trim().startsWith("resource-pack-id"));
+         customProps.push(...existing);
+      }
+      finalEnv["CUSTOM_SERVER_PROPERTIES"] = customProps.join("\n");
+      
+      // Safety check for uppercase policy — only RESOURCE_PACK_ENFORCE is recognized by itzg image
+      if (finalEnv["RESOURCE_PACK_ENFORCE"] === "true") finalEnv["RESOURCE_PACK_ENFORCE"] = "TRUE";
+      // Remove REQUIRE_RESOURCE_PACK — it's not a real itzg env var and may cause conflicts
+      delete finalEnv["REQUIRE_RESOURCE_PACK"];
+      
+      // Final prompt safety
+      if (finalEnv["RESOURCE_PACK_PROMPT"] && !finalEnv["RESOURCE_PACK_PROMPT"].trim().startsWith('{')) {
+         finalEnv["RESOURCE_PACK_PROMPT"] = JSON.stringify({ text: finalEnv["RESOURCE_PACK_PROMPT"] });
+      }
+      
+      const updatedConfig = { ...config, environment: finalEnv };
+
+      if (JSON.stringify(updatedConfig) === originalConfig) {
+         await showAlert("No changes to save.", "Settings");
+         return;
       }
 
-    } catch (e: any) {
-      await showAlert("Save Error: " + e.message, "Save Failed");
-    } finally {
-      setIsSaving(true); // Small delay to prevent double save
-      setTimeout(() => setIsSaving(false), 500);
-    }
-  };
+      const status = statuses[selectedId];
+      const isRunning = status && status.is_running;
 
-  const handleRestart = async (id: string) => {
-    try {
-        setStatuses((prev: Record<string, InstanceStatus>) => ({
-            ...prev, 
+      let proceed = false;
+      let shouldRestartAfter = false;
+
+      if (isRunning) {
+         const confirmed = await showConfirm("Apply changes and restart the server now?", "Apply Configuration");
+         if (confirmed) {
+            proceed = true;
+            shouldRestartAfter = true;
+         }
+      } else {
+         const confirmed = await showConfirm("Save changes to instance configuration?", "Save Configuration");
+         if (confirmed) {
+            proceed = true;
+         }
+      }
+
+      if (!proceed) return;
+
+      setIsSaving(true);
+      try {
+         const res = await fetch(`/api/instances/${selectedId}/config`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(updatedConfig)
+         });
+         if (!res.ok) throw new Error("Failed to save config");
+         setOriginalConfig(JSON.stringify(updatedConfig));
+         setConfig(updatedConfig); // Also update live state
+
+         if (shouldRestartAfter) {
+            setIsEditModalOpen(false); // Exit to main screen
+            handleRestart(selectedId);
+         } else {
+            await showAlert("Changes saved explicitly.", "Configuration");
+         }
+
+      } catch (e: any) {
+         await showAlert("Save Error: " + e.message, "Save Failed");
+      } finally {
+         setIsSaving(true); // Small delay to prevent double save
+         setTimeout(() => setIsSaving(false), 500);
+      }
+   };
+
+   const handleRestart = async (id: string) => {
+      try {
+         setStatuses((prev: Record<string, InstanceStatus>) => ({
+            ...prev,
             [id]: { ...prev[id], is_running: false, is_ready: false }
-        }));
-        // We use stop then start for a clean reload of compose
-        await fetch(`/api/instances/${id}/stop`, { method: "POST" });
-        await fetch(`/api/instances/${id}/start`, { method: "POST" });
-        
-        // Modal closure already handled by handleSaveConfig if coming from there
-        
-        setTimeout(() => {
-          fetchStatus(id);
-        }, 2000);
-    } catch (e) {
-        console.error("Restart failed", e);
-        fetchStatus(id);
-    }
-  };
+         }));
+         // We use stop then start for a clean reload of compose
+         await fetch(`/api/instances/${id}/stop`, { method: "POST" });
+         await fetch(`/api/instances/${id}/start`, { method: "POST" });
+         
+         // Modal closure already handled by handleSaveConfig if coming from there
+         
+         setTimeout(() => {
+           fetchStatus(id);
+         }, 2000);
+      } catch (e) {
+         console.error("Restart failed", e);
+         fetchStatus(id);
+      }
+   };
 
   const fetchFileList = async (id: string | null, path: string = ".") => {
     setIsFilesLoading(true);
@@ -818,269 +861,372 @@ export default function App() {
     }
   };
 
-  const fetchInstalledModsMeta = async () => {
-    if (!config || !config.environment) return;
-    const mIdsEnv = config.environment["MODRINTH_PROJECTS"] || "";
-    const cIdsEnv = config.environment["CF_PROJECTS"] || "";
-    if (!mIdsEnv && !cIdsEnv) {
-      setInstalledModsMeta([]);
-      return;
-    }
-    
-    setIsMetaLoading(true);
-    try {
-      const res = await fetch(`/api/mods/metadata?modrinth_ids=${mIdsEnv}&cf_ids=${cIdsEnv}`);
-      const data = await res.json();
-      setInstalledModsMeta(data);
+   const fetchInstalledModsMeta = async () => {
+      if (!config || !config.environment) return;
+      const mIdsEnv = config.environment["MODRINTH_PROJECTS"] || "";
+      const cIdsEnv = config.environment["CF_PROJECTS"] || "";
+      if (!mIdsEnv && !cIdsEnv) {
+         setInstalledModsMeta([]);
+         return;
+      }
+
+      setIsMetaLoading(true);
+      try {
+         const res = await fetch(`/api/mods/metadata?modrinth_ids=${mIdsEnv}&cf_ids=${cIdsEnv}`);
+         const data = await res.json();
+         setInstalledModsMeta(data);
+
+         // Auto-normalize Modrinth IDs (resolve UUIDs to slugs)
+         const currentListM = (config.environment["MODRINTH_PROJECTS"] || "").split(',').map(s => s.trim()).filter(Boolean);
+         if (currentListM.length > 0) {
+            const normalizedM = currentListM.map(id => {
+               const match = data.find((m: any) => m.provider === 'modrinth' && (m.id === id || m.requested_id === id));
+               return match && !match.unknown ? match.id : id;
+            });
+            const uniqM = [...new Set(normalizedM)];
+            if (uniqM.join(',') !== currentListM.join(',')) {
+               setConfig(prev => ({
+                  ...prev,
+                  environment: { ...prev.environment, MODRINTH_PROJECTS: uniqM.join(',') }
+               }));
+            }
+         }
+      } catch (e) {
+         console.error("Failed to fetch mod metadata", e);
+      } finally {
+         setIsMetaLoading(false);
+      }
+   };
+
+   const handleResourcePackSearch = async (query: string, provider: string) => {
+      setIsResourcePackSearching(true);
+      try {
+         const mc_version = config?.environment ? (config.environment["VERSION"] || "") : "";
+         const res = await fetch(`/api/mods/search/${provider}?q=${encodeURIComponent(query)}&class_type=resourcepack&mc_version=${mc_version}`);
+         if (!res.ok) throw new Error(`Server returned ${res.status}`);
+         const data = await res.json();
+         setResourcePackResults(data);
+      } catch (e: any) {
+         console.error("Resource pack search failed", e);
+      } finally {
+         setIsResourcePackSearching(false);
+      }
+   };
+
+   const fetchInstalledResourcePacksMeta = async () => {
+      if (!config || !config.environment) return;
+      const mIdsEnv = config.environment["RESOURCE_PACKS_MODRINTH"] || "";
+      const cIdsEnv = config.environment["RESOURCE_PACKS_CF"] || "";
+      if (!mIdsEnv && !cIdsEnv) {
+         setInstalledResourcePacksMeta([]);
+         return;
+      }
       
-      // Auto-normalize Modrinth IDs (resolve UUIDs to slugs)
-      const currentListM = (config.environment["MODRINTH_PROJECTS"] || "").split(',').map(s => s.trim()).filter(Boolean);
-      if (currentListM.length > 0) {
-        const normalizedM = currentListM.map(id => {
+      setIsResourcePackMetaLoading(true);
+      try {
+         const res = await fetch(`/api/mods/metadata?modrinth_ids=${mIdsEnv}&cf_ids=${cIdsEnv}`);
+         const data = await res.json();
+         setInstalledResourcePacksMeta(data);
+         
+         // Auto-normalize
+         const currentListM = (config.environment["RESOURCE_PACKS_MODRINTH"] || "").split(',').map(s => s.trim()).filter(Boolean);
+         const normalizedM = currentListM.map(id => {
             const match = data.find((m: any) => m.provider === 'modrinth' && (m.id === id || m.requested_id === id));
             return match && !match.unknown ? match.id : id;
-        });
-        const uniqM = [...new Set(normalizedM)];
-        if (uniqM.join(',') !== currentListM.join(',')) {
-          setConfig(prev => ({
-            ...prev,
-            environment: { ...prev.environment, MODRINTH_PROJECTS: uniqM.join(',') }
-          }));
-        }
+         });
+         const uniqM = [...new Set(normalizedM)];
+         if (uniqM.join(',') !== currentListM.join(',')) {
+            setConfig(prev => ({
+               ...prev,
+               environment: { ...prev.environment, RESOURCE_PACKS_MODRINTH: uniqM.join(',') }
+            }));
+         }
+      } catch (e) {
+         console.error("Failed to fetch resource pack metadata", e);
+      } finally {
+         setIsResourcePackMetaLoading(false);
       }
-    } catch (e) {
-      console.error("Failed to fetch mod metadata", e);
-    } finally {
-      setIsMetaLoading(false);
-    }
-  };
+   };
 
-  const checkSystemUpdates = async (force: boolean = false) => {
-    setIsCheckingUpdates(true);
-    try {
-      const res = await fetch(`/api/system/check-updates?force=${force}`);
-      const data = await res.json();
-      setUpdateInfo(data);
-    } catch (e) {
-      console.error("Failed to check for updates", e);
-    } finally {
-      setIsCheckingUpdates(false);
-    }
-  };
+   const checkSystemUpdates = async (force: boolean = false) => {
+      setIsCheckingUpdates(true);
+      try {
+         const res = await fetch(`/api/system/check-updates?force=${force}`);
+         const data = await res.json();
+         setUpdateInfo(data);
+      } catch (e) {
+         console.error("Failed to check for updates", e);
+      } finally {
+         setIsCheckingUpdates(false);
+      }
+   };
 
-  const performSystemUpdate = async () => {
-    const confirmed = await showConfirm("This will update Isopod to the latest version and restart the application. All your instance data is safe. Proceed?", "Update Isopod");
-    if (!confirmed) return;
-
-    setIsUpdatingSystem(true);
-    try {
-      const res = await fetch("/api/system/update", { method: "POST" });
-      const data = await res.json();
-      await showAlert(data.message, "Update Started");
-      // Reload after a delay
-      setTimeout(() => window.location.reload(), 5000);
-    } catch (e) {
-      await showAlert("Failed to start update", "Error");
-    } finally {
-      setIsUpdatingSystem(false);
-    }
-  };
-
-  const handleSendCommand = async (id: string, cmd: string) => {
-    if (!cmd.trim()) return;
-    setIsExecuting(true);
-    try {
-      const res = await fetch(`/api/instances/${id}/command`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: cmd })
+   const handleSendCommand = async (id: string, cmd: string) => {
+      if (!cmd.trim()) return;
+      setIsExecuting(true);
+      
+      // Add to history if not duplicate of last
+      setCommandHistory(prev => {
+         if (prev[prev.length - 1] === cmd) return prev;
+         return [...prev, cmd];
       });
-      const data = await res.json();
-      setLogs(prev => prev + `\n> ${cmd}\n${data.output}`);
-      setConsoleCommand("");
-    } catch (e) {
-      console.error("Failed to send command", e);
-    } finally {
-      setIsExecuting(false);
-    }
-  };
+      setHistoryIndex(-1);
 
-  const addWithDependencies = async (res: any, provider: string) => {
-    const envKey = provider === 'modrinth' ? "MODRINTH_PROJECTS" : "CF_PROJECTS";
-    const currentList: string = config.environment[envKey] || "";
-    const ids = currentList.split(',').map(s => s.trim()).filter(Boolean);
-    
-    if (ids.includes(res.id)) return;
+      try {
+         const res = await fetch(`/api/instances/${id}/command`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ command: cmd })
+         });
+         const data = await res.json();
+         
+         const entry = `\n> ${cmd}\n${data.output}`;
+         const currentLogs = serverLogs[id] || "";
+         const lines = currentLogs.split('\n').filter(Boolean);
+         const lastLine = lines[lines.length - 1] || "";
+         
+         setManualLogs(prev => ({
+            ...prev,
+            [id]: [...(prev[id] || []), { anchor: lastLine, content: entry }]
+         }));
+         setConsoleCommand("");
+      } catch (e) {
+         console.error("Failed to send command", e);
+      } finally {
+         setIsExecuting(false);
+      }
+   };
 
-    try {
-      // Fetch dependencies
-      const depRes = await fetch(`/api/mods/dependencies?provider=${provider}&project_id=${res.id}`);
-      const depIds: string[] = await depRes.json();
-      
-      const toAdd = [res.id, ...depIds];
-      const newIds = [...new Set([...ids, ...toAdd])].join(',');
-      
-      setConfig(prev => ({
-        ...prev,
-        environment: { ...prev.environment, [envKey]: newIds }
-      }));
-    } catch (e) {
-      console.error("Failed to fetch dependencies", e);
-      // Fallback: just add the mod itself
-      const newList = currentList ? `${currentList},${res.id}` : res.id;
-      setConfig(prev => ({
-        ...prev,
-        environment: { ...prev.environment, [envKey]: newList }
-      }));
-    }
-  };
+   const performSystemUpdate = async () => {
+      const confirmed = await showConfirm("This will update Isopod to the latest version and restart the application. All your instance data is safe. Proceed?", "Update Isopod");
+      if (!confirmed) return;
 
-  useEffect(() => {
-    if (scrollRef.current) {
-        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [logs, editTab]);
+      setIsUpdatingSystem(true);
+      try {
+         const res = await fetch("/api/system/update", { method: "POST" });
+         const data = await res.json();
+         await showAlert(data.message, "Update Started");
+         // Reload after a delay
+         setTimeout(() => window.location.reload(), 5000);
+      } catch (e) {
+         await showAlert("Failed to start update", "Error");
+      } finally {
+         setIsUpdatingSystem(false);
+      }
+   };
 
-  const openEditModal = () => {
-    if (!selectedId) return;
-    setIsGlobalBrowser(false);
-    setIsEditModalOpen(true);
-    setEditTab("logs");
-    fetchLogs(selectedId);
-    fetchConfig(selectedId);
-    fetchMcVersions();
-  };
+   const addWithDependencies = async (res: any, provider: string) => {
+      const envKey = provider === 'modrinth' ? "MODRINTH_PROJECTS" : "CF_PROJECTS";
+      const currentList: string = config.environment[envKey] || "";
+      const ids = currentList.split(',').map(s => s.trim()).filter(Boolean);
 
-  useEffect(() => {
-    fetchInstances();
-    fetchMcVersions();
-    checkSystemUpdates();
-    
-    const interval = setInterval(() => {
-        setInstances((prevInstances: Instance[]) => {
-            prevInstances.forEach((inst: Instance) => fetchStatus(inst.id));
-            return prevInstances;
-        });
-    }, 5000);
-    
-    return () => clearInterval(interval);
-  }, []);
+      if (ids.includes(res.id)) return;
 
-  // Live Logs Polling
-  useEffect(() => {
-    let interval: any;
-    if (isEditModalOpen && editTab === "logs" && selectedId) {
-      interval = setInterval(() => {
-        if (!isLogsLoading) {
-            fetchLogs(selectedId);
-        }
-      }, 3000);
-    }
-    return () => interval && clearInterval(interval);
-  }, [isEditModalOpen, editTab, selectedId, isLogsLoading]);
+      try {
+         // Fetch dependencies
+         const depRes = await fetch(`/api/mods/dependencies?provider=${provider}&project_id=${res.id}`);
+         const depIds: string[] = await depRes.json();
 
-  // Sync mod search filters when config is loaded
-  useEffect(() => {
-    if (isEditModalOpen && config.environment) {
-      const v = config.environment["VERSION"] || "";
-      const l = config.environment["TYPE"] || "";
-      setModSearchVersion(v);
-      setModSearchLoader(l);
-      fetchInstalledModsMeta();
-      // Auto-browse when opening search
-      handleModSearch("", modSearchProvider, v, l);
-    }
-  }, [isEditModalOpen, config.environment]);
+         const toAdd = [res.id, ...depIds];
+         const newIds = [...new Set([...ids, ...toAdd])].join(',');
 
-  // Debounced search
-  useEffect(() => {
-    if (modListView === "search") {
-      const timer = setTimeout(() => {
-        handleModSearch(modSearchQuery, modSearchProvider);
-      }, 500);
+         setConfig(prev => ({
+            ...prev,
+            environment: { ...prev.environment, [envKey]: newIds }
+         }));
+      } catch (e) {
+         console.error("Failed to fetch dependencies", e);
+         // Fallback: just add the mod itself
+         const newList = currentList ? `${currentList},${res.id}` : res.id;
+         setConfig(prev => ({
+            ...prev,
+            environment: { ...prev.environment, [envKey]: newList }
+         }));
+      }
+   };
+
+   const openEditModal = () => {
+      if (!selectedId) return;
+      setIsGlobalBrowser(false);
+      setIsEditModalOpen(true);
+      setEditTab("logs");
+      setAutoScrollEnabled(true);
+      fetchLogs(selectedId);
+      fetchConfig(selectedId);
+      fetchMcVersions();
+   };
+
+   const openSettings = () => {
+      setOriginalGlobalSettings(JSON.stringify(globalSettings));
+      setIsSettingsModalOpen(true);
+      setSettingsTab("general");
+   };
+
+   const fetchGlobalSettings = async () => {
+      try {
+         const res = await fetch("/api/settings");
+         if (res.ok) {
+            const data = await res.json();
+            setGlobalSettings(data);
+            setNewMemory(data.defaultMemory || "1G");
+         }
+      } catch (e) {
+         console.error("Failed to fetch settings", e);
+      }
+   };
+
+   const handleSaveGlobalSettings = async () => {
+      setIsSavingGlobal(true);
+      try {
+         const res = await fetch("/api/settings", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(globalSettings)
+         });
+         if (!res.ok) throw new Error("Failed to save settings");
+         setOriginalGlobalSettings(JSON.stringify(globalSettings));
+      } catch (e) {
+         console.error(e);
+         await showAlert("Failed to save global settings", "Error");
+      } finally {
+         setIsSavingGlobal(false);
+      }
+   };
+
+   useEffect(() => {
+      if (autoScrollEnabled && scrollRef.current) {
+         scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+   }, [serverLogs, manualLogs, editTab, autoScrollEnabled]);
+
+   useEffect(() => {
+      fetchInstances();
+      fetchMcVersions();
+      fetchGlobalSettings();
+      checkSystemUpdates();
+   }, []);
+
+   useEffect(() => {
+      if (!globalSettings.autoRefresh) return;
+      const interval = setInterval(() => {
+         instances.forEach((inst: Instance) => fetchStatus(inst.id));
+      }, 5000);
+      return () => clearInterval(interval);
+   }, [instances, globalSettings.autoRefresh]);
+
+   // Live Logs Polling
+   useEffect(() => {
+      let interval: any;
+      if (isEditModalOpen && editTab === "logs" && selectedId) {
+         interval = setInterval(() => {
+            if (!isLogsLoading) {
+               fetchLogs(selectedId);
+            }
+         }, 3000);
+      }
+      return () => interval && clearInterval(interval);
+   }, [isEditModalOpen, editTab, selectedId, isLogsLoading, fetchLogs]);
+
+   // Sync mod search filters when config is loaded
+   useEffect(() => {
+      if (isEditModalOpen && config.environment) {
+         const v = config.environment["VERSION"] || "";
+         const l = config.environment["TYPE"] || "";
+         setModSearchVersion(v);
+         setModSearchLoader(l);
+         fetchInstalledModsMeta();
+         fetchInstalledResourcePacksMeta();
+         // Auto-browse when opening search
+         handleModSearch("", modSearchProvider, v, l);
+         handleResourcePackSearch("", resourcePackProvider);
+      }
+   }, [isEditModalOpen, config.environment]);
+
+   // Debounced Resource Pack search
+   useEffect(() => {
+      if (editTab === "resource-pack") {
+         const timer = setTimeout(() => {
+            handleResourcePackSearch(resourcePackQuery, resourcePackProvider);
+         }, 500);
+         return () => clearTimeout(timer);
+      }
+   }, [resourcePackQuery, resourcePackProvider, editTab]);
+
+   // Debounced search
+   useEffect(() => {
+      if (modListView === "search") {
+         const timer = setTimeout(() => {
+            handleModSearch(modSearchQuery, modSearchProvider);
+         }, 500);
+         return () => clearTimeout(timer);
+      }
+   }, [modSearchQuery, modSearchProvider]);
+
+   // Verify Minecraft User for Global Whitelist
+   useEffect(() => {
+      const timer = setTimeout(async () => {
+         if (newWhitelistUser.length >= 3) {
+            setIsVerifyingUser(true);
+            try {
+               const res = await fetch(`https://playerdb.co/api/player/minecraft/${newWhitelistUser}`);
+               const data = await res.json();
+               if (data.success) {
+                  const p = { name: data.data.player.username, uuid: data.data.player.id };
+                  setWhitelistPreview(p);
+                  setSeenPlayers(prev => {
+                     if (prev.find(x => x.uuid === p.uuid)) return prev;
+                     return [...prev, p].slice(-20); // Keep last 20
+                  });
+               } else {
+                  setWhitelistPreview(null);
+               }
+            } catch (e) { setWhitelistPreview(null); }
+            finally { setIsVerifyingUser(false); }
+         } else {
+            setWhitelistPreview(null);
+         }
+      }, 600);
       return () => clearTimeout(timer);
-    }
-  }, [modSearchQuery, modSearchProvider]);
+   }, [newWhitelistUser]);
 
-  // Verify Minecraft User for Global Whitelist
-  useEffect(() => {
-    const timer = setTimeout(async () => {
-       if (newWhitelistUser.length >= 3) {
-          setIsVerifyingUser(true);
-          try {
-             const res = await fetch(`https://playerdb.co/api/player/minecraft/${newWhitelistUser}`);
-             const data = await res.json();
-             if (data.success) {
-                const p = { name: data.data.player.username, uuid: data.data.player.id };
-                setWhitelistPreview(p);
-                setSeenPlayers(prev => {
-                   if (prev.find(x => x.uuid === p.uuid)) return prev;
-                   return [...prev, p].slice(-20); // Keep last 20
-                });
-             } else {
-                setWhitelistPreview(null);
-             }
-          } catch (e) { setWhitelistPreview(null); }
-          finally { setIsVerifyingUser(false); }
-       } else {
-          setWhitelistPreview(null);
-       }
-    }, 600);
-    return () => clearTimeout(timer);
-  }, [newWhitelistUser]);
+   // Verify Minecraft User for Instance Whitelist
+   useEffect(() => {
+      const timer = setTimeout(async () => {
+         if (instanceWhitelistUser.length >= 3) {
+            try {
+               const res = await fetch(`https://playerdb.co/api/player/minecraft/${instanceWhitelistUser}`);
+               const data = await res.json();
+               if (data.success) {
+                  const p = { name: data.data.player.username, uuid: data.data.player.id };
+                  setInstanceWhitelistPreview(p);
+                  setSeenPlayers(prev => {
+                     if (prev.find(x => x.uuid === p.uuid)) return prev;
+                     return [...prev, p].slice(-20);
+                  });
+               } else {
+                  setInstanceWhitelistPreview(null);
+               }
+            } catch (e) { setInstanceWhitelistPreview(null); }
+         } else {
+            setInstanceWhitelistPreview(null);
+         }
+      }, 600);
+      return () => clearTimeout(timer);
+   }, [instanceWhitelistUser]);
 
-  // Verify Minecraft User for Instance Whitelist
-  useEffect(() => {
-    const timer = setTimeout(async () => {
-       if (instanceWhitelistUser.length >= 3) {
-          try {
-             const res = await fetch(`https://playerdb.co/api/player/minecraft/${instanceWhitelistUser}`);
-             const data = await res.json();
-             if (data.success) {
-                const p = { name: data.data.player.username, uuid: data.data.player.id };
-                setInstanceWhitelistPreview(p);
-                setSeenPlayers(prev => {
-                   if (prev.find(x => x.uuid === p.uuid)) return prev;
-                   return [...prev, p].slice(-20);
-                });
-             } else {
-                setInstanceWhitelistPreview(null);
-             }
-          } catch (e) { setInstanceWhitelistPreview(null); }
-       } else {
-          setInstanceWhitelistPreview(null);
-       }
-    }, 600);
-    return () => clearTimeout(timer);
-  }, [instanceWhitelistUser]);
+   const selectedInstance = instances.find(i => i.id === selectedId);
+   const selectedStatus = selectedId ? statuses[selectedId] : null;
+   const logs = selectedId ? (serverLogs[selectedId] || "") : "";
 
-  const selectedInstance = instances.find(i => i.id === selectedId);
-  const selectedStatus = selectedId ? statuses[selectedId] : null;
-
-  // Fetch loader versions when selection changes
-  useEffect(() => {
-    if (isAddModalOpen && selectedAddLoader !== "VANILLA") {
-       // Only fetch if we have an actual version ID or 'latest'
-       const versionToFetch = selectedAddVersion === "latest" ? "" : selectedAddVersion;
-       fetchLoaderVersions(selectedAddLoader, versionToFetch);
-    } else {
-       setLoaderVersions([]);
-    }
-  }, [selectedAddLoader, selectedAddVersion, isAddModalOpen]);
-
-  const openSettings = () => {
-    setOriginalGlobalSettings(JSON.stringify(globalSettings));
-    setIsSettingsModalOpen(true);
-    setSettingsTab("general");
-  };
-
-  const handleSaveGlobalSettings = async () => {
-    setIsSavingGlobal(true);
-    // Simulation of saving settings
-    await new Promise(r => setTimeout(r, 600));
-    setOriginalGlobalSettings(JSON.stringify(globalSettings));
-    setIsSavingGlobal(false);
-  };
+   // Fetch loader versions when selection changes
+   useEffect(() => {
+      if (isAddModalOpen && selectedAddLoader !== "VANILLA") {
+         const versionToFetch = selectedAddVersion === "latest" ? "" : selectedAddVersion;
+         fetchLoaderVersions(selectedAddLoader, versionToFetch);
+      } else {
+         setLoaderVersions([]);
+      }
+   }, [selectedAddLoader, selectedAddVersion, isAddModalOpen]);
 
   return (
     <div className="flex h-screen bg-[#242424] text-[#E0E0E0] font-sans selection:bg-[#3E8ED0]/40 overflow-hidden">
@@ -2324,7 +2470,7 @@ export default function App() {
                             <div className="space-y-2">
                                <h4 className="font-bold text-neutral-200">World Management Info</h4>
                                <p className="text-xs text-neutral-500 leading-relaxed">
-                                  Seed and Level Type only take effect during initial world creation. To generate a completely 
+                                   Seed and Level Type only take effect during initial world creation. To generate a completely 
                                   new world with these settings, you may need to delete the <span className="font-mono text-neutral-400 bg-black/30 px-1 rounded">world</span> folder 
                                   in the instance files.
                                </p>
@@ -2916,532 +3062,558 @@ export default function App() {
           </div>
         </div>
       )}
-      {isVersionModalOpen && (
-        <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-md p-6">
-          <div className="bg-[#1E1E1E] border border-[#3A3A3A] rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="p-6 border-b border-[#3A3A3A] flex justify-between items-center bg-[#242424]">
-               <div className="flex items-center gap-3">
-                  <Database className="w-6 h-6 text-[#3E8ED0]" />
-                  <h3 className="text-xl font-bold text-white">Change Minecraft Version</h3>
-               </div>
-               <button onClick={() => setIsVersionModalOpen(false)} className="text-neutral-500 hover:text-white transition">
-                  <X className="w-6 h-6" />
-               </button>
-            </div>
-
-            <div className="p-8 space-y-8">
-               <div className="flex items-center justify-center gap-8 py-4">
-                  <div className="flex flex-col items-center gap-2">
-                     <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Current</span>
-                     <div className="px-4 py-2 bg-[#2D2D2D] rounded border border-[#3A3A3A] font-mono text-[#3E8ED0] font-bold shadow-inner">
-                        {config.environment["VERSION"] || "latest"}
+         {isVersionModalOpen && (
+            <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-md p-6">
+               <div className="bg-[#1E1E1E] border border-[#3A3A3A] rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+                  <div className="p-6 border-b border-[#3A3A3A] flex justify-between items-center bg-[#242424]">
+                     <div className="flex items-center gap-3">
+                        <Database className="w-6 h-6 text-[#3E8ED0]" />
+                        <h3 className="text-xl font-bold text-white">Change Minecraft Version</h3>
                      </div>
-                  </div>
-                  <ChevronRight className="w-6 h-6 text-neutral-600 mt-6" />
-                  <div className="flex flex-col items-center gap-2">
-                     <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Target</span>
-                     <div className="px-4 py-2 bg-emerald-500/10 rounded border border-emerald-500/30 font-mono text-emerald-400 font-bold shadow-lg animate-pulse">
-                        {pendingVersion}
-                     </div>
-                  </div>
-               </div>
-
-               <div className="space-y-4">
-                  <div className="flex items-center gap-3 p-4 rounded-lg bg-[#242424] border border-[#333] hover:border-[#3E8ED0]/40 transition-colors cursor-pointer group" onClick={() => setUpdateLoader(!updateLoader)}>
-                     <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${updateLoader ? 'bg-[#3E8ED0] border-[#3E8ED0]' : 'border-[#444] group-hover:border-[#555]'}`}>
-                        {updateLoader && <Check className="w-3.5 h-3.5 text-white" />}
-                     </div>
-                     <div className="flex-1">
-                        <p className="text-sm font-bold text-neutral-200">Automatically update Mod Loader</p>
-                        <p className="text-xs text-neutral-500">Pick the latest recommended loader for {pendingVersion}</p>
-                     </div>
-                  </div>
-
-                  <div className="flex items-center gap-3 p-4 rounded-lg bg-[#242424] border border-[#333] hover:border-[#3E8ED0]/40 transition-colors cursor-pointer group" onClick={() => setUpdateMods(!updateMods)}>
-                     <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${updateMods ? 'bg-[#3E8ED0] border-[#3E8ED0]' : 'border-[#444] group-hover:border-[#555]'}`}>
-                        {updateMods && <Check className="w-3.5 h-3.5 text-white" />}
-                     </div>
-                     <div className="flex-1">
-                        <p className="text-sm font-bold text-neutral-200">Verify & Disable incompatible Mods</p>
-                        <p className="text-xs text-neutral-500">Check compatibility and keep only working mods.</p>
-                     </div>
-                  </div>
-               </div>
-
-               {isCheckingCompatibility ? (
-                  <div className="flex flex-col items-center justify-center p-8 bg-[#242424] border border-dashed border-[#333] rounded-lg gap-3">
-                     <RefreshCw className="w-8 h-8 text-[#3E8ED0] animate-spin" />
-                     <p className="text-sm text-neutral-400 font-medium">Checking mod compatibility with {pendingVersion}...</p>
-                  </div>
-               ) : (
-                  <div className="space-y-4 animate-in slide-in-from-top-2 duration-300">
-                     {compatibility.incompatible.length > 0 && (
-                        <div className="p-5 bg-red-500/10 border border-red-500/30 rounded-lg space-y-3 shadow-[0_0_20px_rgba(239,68,68,0.1)]">
-                           <div className="flex items-center gap-2 text-red-400 font-bold">
-                              <AlertCircle className="w-5 h-5" />
-                              <span>{compatibility.incompatible.length} Mods are INCOMPATIBLE!</span>
-                           </div>
-                           <p className="text-xs text-neutral-400 leading-relaxed">
-                              The following mods don't seem to have a version for <span className="font-bold text-white">{pendingVersion}</span> yet. 
-                              If you proceed, they will be <span className="text-red-400 font-bold uppercase underline">automatically disabled</span> to prevent server crashes.
-                           </p>
-                           <div className="flex flex-wrap gap-2 pt-2">
-                              {compatibility.incompatible.map((m: any) => (
-                                 <span key={m.id} className="text-[10px] px-2 py-1 bg-red-500/20 text-red-300 rounded-md border border-red-500/20 font-bold">
-                                    {m.id}
-                                 </span>
-                              ))}
-                           </div>
-                        </div>
-                     )}
-                     
-                     {compatibility.compatible.length > 0 && (
-                        <div className="flex items-center gap-2 text-emerald-500 text-xs font-bold px-1">
-                           <Check className="w-4 h-4" />
-                           <span>{compatibility.compatible.length} Mods verified compatible.</span>
-                        </div>
-                     )}
-                     
-                     {compatibility.incompatible.length === 0 && compatibility.compatible.length === 0 && updateMods && (
-                        <p className="text-xs text-neutral-500 italic text-center py-4">No mods detected to check compatibility for.</p>
-                     )}
-                  </div>
-               )}
-            </div>
-
-            <div className="p-6 bg-[#242424] border-t border-[#3A3A3A] flex gap-3">
-               <button 
-                  onClick={() => setIsVersionModalOpen(false)}
-                  className="flex-1 px-4 py-3 bg-[#323232] hover:bg-[#404040] text-neutral-300 font-bold rounded-lg transition-all"
-               >
-                  Cancel
-               </button>
-               <button 
-                  onClick={applyVersionChange}
-                  disabled={isCheckingCompatibility}
-                  className={`flex-[1.5] px-4 py-3 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white font-bold rounded-lg shadow-xl shadow-[#3E8ED0]/10 transition-all ${isCheckingCompatibility ? 'opacity-50 cursor-not-allowed' : ''}`}
-               >
-                  Change to {pendingVersion}
-               </button>
-             </div>
-          </div>
-        </div>
-      )}
-
-      {isSettingsModalOpen && (
-        <div className="absolute inset-0 z-[110] flex items-center justify-center bg-black/75 backdrop-blur-md p-6">
-          <div className="bg-[#242424] border border-[#3A3A3A] rounded-xl shadow-2xl w-full max-w-4xl h-[70vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200 text-[#E0E0E0]">
-            {/* Header */}
-            <div className="px-6 py-5 border-b border-[#323232] bg-[#2B2B2B] flex justify-between items-center">
-              <div className="flex items-center gap-3">
-                 <div className="p-2 bg-[#3E8ED0]/10 rounded-lg text-[#3E8ED0]">
-                    <Settings className="w-6 h-6" />
-                 </div>
-                 <div>
-                    <h2 className="text-xl font-bold text-white">Application Settings</h2>
-                    <p className="text-[10px] text-neutral-500 uppercase tracking-widest font-bold mt-0.5">Global Configuration & Defaults</p>
-                 </div>
-              </div>
-              <button 
-                onClick={() => setIsSettingsModalOpen(false)}
-                className="p-1.5 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition"
-              >
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-
-            <div className="flex-1 flex overflow-hidden">
-               {/* Sidebar */}
-               <div className="w-56 bg-[#1E1E1E] border-r border-[#323232] p-3 flex flex-col gap-1.5">
-                  <h5 className="px-3 text-[10px] font-bold text-neutral-600 uppercase tracking-widest mb-1 mt-2">Preferences</h5>
-                  {[
-                     { id: "general", name: "General", icon: Monitor },
-                     { id: "language", name: "Language", icon: Languages },
-                     { id: "appearance", name: "Appearance", icon: Moon }
-                  ].map((tab) => (
-                     <button 
-                        key={tab.id}
-                        onClick={() => setSettingsTab(tab.id)}
-                        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${settingsTab === tab.id ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
-                     >
-                        <tab.icon className="w-4 h-4" />
-                        {tab.name}
+                     <button onClick={() => setIsVersionModalOpen(false)} className="text-neutral-500 hover:text-white transition">
+                        <X className="w-6 h-6" />
                      </button>
-                  ))}
+                  </div>
 
-                  <h5 className="px-3 text-[10px] font-bold text-neutral-600 uppercase tracking-widest mb-1 mt-4">System</h5>
-                  {[
-                     { id: "defaults", name: "Server Defaults", icon: Database },
-                     { id: "advanced", name: "Advanced", icon: Shield },
-                     { id: "updates", name: "Updates", icon: RefreshCw }
-                  ].map((tab) => (
-                     <button 
-                        key={tab.id}
-                        onClick={() => {
-                           setSettingsTab(tab.id);
-                           if (tab.id === "updates") checkSystemUpdates();
-                        }}
-                        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${settingsTab === tab.id ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                  <div className="p-8 space-y-8">
+                     <div className="flex items-center justify-center gap-8 py-4">
+                        <div className="flex flex-col items-center gap-2">
+                           <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Current</span>
+                           <div className="px-4 py-2 bg-[#2D2D2D] rounded border border-[#3A3A3A] font-mono text-[#3E8ED0] font-bold shadow-inner">
+                              {config.environment["VERSION"] || "latest"}
+                           </div>
+                        </div>
+                        <ChevronRight className="w-6 h-6 text-neutral-600 mt-6" />
+                        <div className="flex flex-col items-center gap-2">
+                           <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Target</span>
+                           <div className="px-4 py-2 bg-emerald-500/10 rounded border border-emerald-500/30 font-mono text-emerald-400 font-bold shadow-lg animate-pulse">
+                              {pendingVersion}
+                           </div>
+                        </div>
+                     </div>
+
+                     <div className="space-y-4">
+                        <div className="flex items-center gap-3 p-4 rounded-lg bg-[#242424] border border-[#333] hover:border-[#3E8ED0]/40 transition-colors cursor-pointer group" onClick={() => setUpdateLoader(!updateLoader)}>
+                           <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${updateLoader ? 'bg-[#3E8ED0] border-[#3E8ED0]' : 'border-[#444] group-hover:border-[#555]'}`}>
+                              {updateLoader && <Check className="w-3.5 h-3.5 text-white" />}
+                           </div>
+                           <div className="flex-1">
+                              <p className="text-sm font-bold text-neutral-200">Automatically update Mod Loader</p>
+                              <p className="text-xs text-neutral-500">Pick the latest recommended loader for {pendingVersion}</p>
+                           </div>
+                        </div>
+
+                        <div className="flex items-center gap-3 p-4 rounded-lg bg-[#242424] border border-[#333] hover:border-[#3E8ED0]/40 transition-colors cursor-pointer group" onClick={() => setUpdateMods(!updateMods)}>
+                           <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${updateMods ? 'bg-[#3E8ED0] border-[#3E8ED0]' : 'border-[#444] group-hover:border-[#555]'}`}>
+                              {updateMods && <Check className="w-3.5 h-3.5 text-white" />}
+                           </div>
+                           <div className="flex-1">
+                              <p className="text-sm font-bold text-neutral-200">Verify & Disable incompatible Mods</p>
+                              <p className="text-xs text-neutral-500">Check compatibility and keep only working mods.</p>
+                           </div>
+                        </div>
+                     </div>
+
+                     {isCheckingCompatibility ? (
+                        <div className="flex flex-col items-center justify-center p-8 bg-[#242424] border border-dashed border-[#333] rounded-lg gap-3">
+                           <RefreshCw className="w-8 h-8 text-[#3E8ED0] animate-spin" />
+                           <p className="text-sm text-neutral-400 font-medium">Checking mod compatibility with {pendingVersion}...</p>
+                        </div>
+                     ) : (
+                        <div className="space-y-4 animate-in slide-in-from-top-2 duration-300">
+                           {compatibility.incompatible.length > 0 && (
+                              <div className="p-5 bg-red-500/10 border border-red-500/30 rounded-lg space-y-3 shadow-[0_0_20px_rgba(239,68,68,0.1)]">
+                                 <div className="flex items-center gap-2 text-red-400 font-bold">
+                                    <AlertCircle className="w-5 h-5" />
+                                    <span>{compatibility.incompatible.length} Mods are INCOMPATIBLE!</span>
+                                 </div>
+                                 <p className="text-xs text-neutral-400 leading-relaxed">
+                                    The following mods don't seem to have a version for <span className="font-bold text-white">{pendingVersion}</span> yet.
+                                    If you proceed, they will be <span className="text-red-400 font-bold uppercase underline">automatically disabled</span> to prevent server crashes.
+                                 </p>
+                                 <div className="flex flex-wrap gap-2 pt-2">
+                                    {compatibility.incompatible.map((m: any) => (
+                                       <span key={m.id} className="text-[10px] px-2 py-1 bg-red-500/20 text-red-300 rounded-md border border-red-500/20 font-bold">
+                                          {m.id}
+                                       </span>
+                                    ))}
+                                 </div>
+                              </div>
+                           )}
+
+                           {compatibility.compatible.length > 0 && (
+                              <div className="flex items-center gap-2 text-emerald-500 text-xs font-bold px-1">
+                                 <Check className="w-4 h-4" />
+                                 <span>{compatibility.compatible.length} Mods verified compatible.</span>
+                              </div>
+                           )}
+
+                           {compatibility.incompatible.length === 0 && compatibility.compatible.length === 0 && updateMods && (
+                              <p className="text-xs text-neutral-500 italic text-center py-4">No mods detected to check compatibility for.</p>
+                           )}
+                        </div>
+                     )}
+                  </div>
+
+                  <div className="p-6 bg-[#242424] border-t border-[#3A3A3A] flex gap-3">
+                     <button
+                        onClick={() => setIsVersionModalOpen(false)}
+                        className="flex-1 px-4 py-3 bg-[#323232] hover:bg-[#404040] text-neutral-300 font-bold rounded-lg transition-all"
                      >
-                        <tab.icon className="w-4 h-4" />
-                        {tab.name}
+                        Cancel
                      </button>
-                  ))}
+                     <button
+                        onClick={applyVersionChange}
+                        disabled={isCheckingCompatibility}
+                        className={`flex-[1.5] px-4 py-3 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white font-bold rounded-lg shadow-xl shadow-[#3E8ED0]/10 transition-all ${isCheckingCompatibility ? 'opacity-50 cursor-not-allowed' : ''}`}
+                     >
+                        Change to {pendingVersion}
+                     </button>
+                  </div>
                </div>
+            </div>
+         )}
 
-               {/* Content Area */}
-               <div className="flex-1 bg-[#1A1A1A] p-8 overflow-auto scrollbar-custom text-[#E0E0E0]">
-                  {settingsTab === "general" && (
-                     <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
-                        <div>
-                           <h3 className="text-lg font-bold mb-1">General Settings</h3>
-                           <p className="text-sm text-neutral-500">Configure basic application behavior.</p>
+         {isSettingsModalOpen && (
+            <div className="absolute inset-0 z-[110] flex items-center justify-center bg-black/75 backdrop-blur-md p-6">
+               <div className="bg-[#242424] border border-[#3A3A3A] rounded-xl shadow-2xl w-full max-w-4xl h-[70vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200 text-[#E0E0E0]">
+                  {/* Header */}
+                  <div className="px-6 py-5 border-b border-[#323232] bg-[#2B2B2B] flex justify-between items-center">
+                     <div className="flex items-center gap-3">
+                        <div className="p-2 bg-[#3E8ED0]/10 rounded-lg text-[#3E8ED0]">
+                           <Settings className="w-6 h-6" />
                         </div>
-                        <div className="space-y-4">
-                           <div className="flex items-center justify-between p-4 bg-[#242424] rounded-lg border border-[#333]">
-                              <div className="flex flex-col">
-                                 <span className="font-bold text-sm">Automatic Refresh</span>
-                                 <span className="text-xs text-neutral-500">Auto-update instance statuses every 5 seconds.</span>
+                        <div>
+                           <h2 className="text-xl font-bold text-white">Application Settings</h2>
+                           <p className="text-[10px] text-neutral-500 uppercase tracking-widest font-bold mt-0.5">Global Configuration & Defaults</p>
+                        </div>
+                     </div>
+                     <button
+                        onClick={() => setIsSettingsModalOpen(false)}
+                        className="p-1.5 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition"
+                     >
+                        <X className="w-6 h-6" />
+                     </button>
+                  </div>
+
+                  <div className="flex-1 flex overflow-hidden">
+                     {/* Sidebar */}
+                     <div className="w-56 bg-[#1E1E1E] border-r border-[#323232] p-3 flex flex-col gap-1.5">
+                        <h5 className="px-3 text-[10px] font-bold text-neutral-600 uppercase tracking-widest mb-1 mt-2">Preferences</h5>
+                        {[
+                           { id: "general", name: "General", icon: Monitor },
+                           { id: "language", name: "Language", icon: Languages },
+                           { id: "appearance", name: "Appearance", icon: Moon }
+                        ].map((tab) => (
+                           <button
+                              key={tab.id}
+                              onClick={() => setSettingsTab(tab.id)}
+                              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${settingsTab === tab.id ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                           >
+                              <tab.icon className="w-4 h-4" />
+                              {tab.name}
+                           </button>
+                        ))}
+
+                        <h5 className="px-3 text-[10px] font-bold text-neutral-600 uppercase tracking-widest mb-1 mt-4">System</h5>
+                        {[
+                           { id: "defaults", name: "Server Defaults", icon: Database },
+                           { id: "updates", name: "Updates", icon: RefreshCw },
+                           { id: "advanced", name: "Advanced", icon: Shield }
+                        ].map((tab) => (
+                           <button
+                              key={tab.id}
+                              onClick={() => {
+                                 setSettingsTab(tab.id);
+                                 if (tab.id === "updates") checkSystemUpdates();
+                              }}
+                              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${settingsTab === tab.id ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                           >
+                              <tab.icon className="w-4 h-4" />
+                              {tab.name}
+                           </button>
+                        ))}
+                     </div>
+
+                     {/* Content Area */}
+                     <div className="flex-1 bg-[#1A1A1A] p-8 overflow-auto scrollbar-custom text-[#E0E0E0]">
+                        {settingsTab === "general" && (
+                           <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
+                              <div>
+                                 <h3 className="text-lg font-bold mb-1">General Settings</h3>
+                                 <p className="text-sm text-neutral-500">Configure basic application behavior.</p>
                               </div>
-                              <button 
-                                 onClick={() => setGlobalSettings({...globalSettings, autoRefresh: !globalSettings.autoRefresh})}
-                                 className={`w-12 h-6 rounded-full transition-all relative ${globalSettings.autoRefresh ? 'bg-emerald-500' : 'bg-[#333]'}`}
-                              >
-                                 <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${globalSettings.autoRefresh ? 'left-7' : 'left-1'}`} />
-                              </button>
-                           </div>
-                           <div className="flex items-center justify-between p-4 bg-[#242424] rounded-lg border border-[#333]">
-                              <div className="flex flex-col">
-                                 <span className="font-bold text-sm">Show Snapshots</span>
-                                 <span className="text-xs text-neutral-500">Show Minecraft snapshots in version selection by default.</span>
-                              </div>
-                              <button 
-                                 onClick={() => setGlobalSettings({...globalSettings, showSnapshots: !globalSettings.showSnapshots})}
-                                 className={`w-12 h-6 rounded-full transition-all relative ${globalSettings.showSnapshots ? 'bg-[#3E8ED0]' : 'bg-[#333]'}`}
-                              >
-                                 <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${globalSettings.showSnapshots ? 'left-7' : 'left-1'}`} />
-                              </button>
-                           </div>
-                        </div>
-                     </div>
-                  )}
-
-                  {settingsTab === "language" && (
-                     <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
-                        <div>
-                           <h3 className="text-lg font-bold mb-1">Language</h3>
-                           <p className="text-sm text-neutral-500">Select your preferred interface language.</p>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                           {['English', 'Spanish', 'French', 'German', 'Russian', 'Chinese', 'Japanese'].map((lang) => (
-                              <button 
-                                 key={lang}
-                                 onClick={() => setGlobalSettings({...globalSettings, language: lang})}
-                                 className={`flex items-center justify-between p-4 rounded-lg border transition-all ${globalSettings.language === lang ? 'border-[#3E8ED0] bg-[#3E8ED0]/10 text-white' : 'border-[#333] bg-[#242424] text-neutral-400 hover:border-[#444]'}`}
-                              >
-                                 <span className="font-bold text-sm">{lang}</span>
-                                 {globalSettings.language === lang && <Check className="w-4 h-4" />}
-                              </button>
-                           ))}
-                        </div>
-                     </div>
-                  )}
-
-                  {settingsTab === "appearance" && (
-                     <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
-                        <div>
-                           <h3 className="text-lg font-bold mb-1">Appearance</h3>
-                           <p className="text-sm text-neutral-500">Customize the look and feel of Isopod.</p>
-                        </div>
-                        <div className="grid grid-cols-3 gap-4">
-                           {[
-                              { id: 'Dark', name: 'Dark Mode', icon: Moon },
-                              { id: 'Light', name: 'Light Mode', icon: Sun },
-                              { id: 'OLED', name: 'OLED Black', icon: Monitor }
-                           ].map((theme) => (
-                              <button 
-                                 key={theme.id}
-                                 onClick={() => setGlobalSettings({...globalSettings, theme: theme.id})}
-                                 className={`flex flex-col items-center gap-3 p-6 rounded-xl border transition-all ${globalSettings.theme === theme.id ? 'border-[#3E8ED0] bg-[#3E8ED0]/15' : 'border-[#333] bg-[#242424] grayscale opacity-60 hover:grayscale-0 hover:opacity-100 hover:border-[#444]'}`}
-                              >
-                                 <theme.icon className={`w-8 h-8 ${globalSettings.theme === theme.id ? 'text-[#3E8ED0]' : 'text-neutral-500'}`} />
-                                 <span className={`font-bold text-sm ${globalSettings.theme === theme.id ? 'text-white' : 'text-neutral-400'}`}>{theme.name}</span>
-                              </button>
-                           ))}
-                        </div>
-                     </div>
-                  )}
-
-                  {settingsTab === "defaults" && (
-                     <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
-                        <div>
-                           <h3 className="text-lg font-bold mb-1">Server Defaults</h3>
-                           <p className="text-sm text-neutral-500">Initial values for new server instances.</p>
-                        </div>
-                        <div className="space-y-6">
-                           <div className="flex flex-col gap-2">
-                              <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Default Port Range Start</label>
-                              <input 
-                                 type="number"
-                                 value={globalSettings.defaultPort}
-                                 onChange={(e) => setGlobalSettings({...globalSettings, defaultPort: e.target.value})}
-                                 className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-[#3E8ED0] text-sm font-mono text-emerald-400"
-                              />
-                           </div>
-                           <div className="flex flex-col gap-2">
-                              <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Default Mod Loader</label>
-                              <div className="grid grid-cols-5 gap-2">
-                                 {['VANILLA', 'FABRIC', 'FORGE', 'QUILT', 'NEOFORGE'].map((loader) => (
-                                    <button 
-                                       key={loader}
-                                       onClick={() => setGlobalSettings({...globalSettings, defaultLoader: loader})}
-                                       className={`py-2 rounded-md border text-[10px] font-bold transition-all ${globalSettings.defaultLoader === loader ? 'border-[#3E8ED0] bg-[#3E8ED0] text-white' : 'border-[#333] bg-[#242424] text-neutral-500 hover:border-[#444]'}`}
+                              <div className="space-y-4">
+                                 <div className="flex items-center justify-between p-4 bg-[#242424] rounded-lg border border-[#333]">
+                                    <div className="flex flex-col">
+                                       <span className="font-bold text-sm">Automatic Refresh</span>
+                                       <span className="text-xs text-neutral-500">Auto-update instance statuses every 5 seconds.</span>
+                                    </div>
+                                    <button
+                                       onClick={() => setGlobalSettings({ ...globalSettings, autoRefresh: !globalSettings.autoRefresh })}
+                                       className={`w-12 h-6 rounded-full transition-all relative ${globalSettings.autoRefresh ? 'bg-emerald-500' : 'bg-[#333]'}`}
                                     >
-                                       {loader}
+                                       <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${globalSettings.autoRefresh ? 'left-7' : 'left-1'}`} />
+                                    </button>
+                                 </div>
+                                 <div className="flex items-center justify-between p-4 bg-[#242424] rounded-lg border border-[#333]">
+                                    <div className="flex flex-col">
+                                       <span className="font-bold text-sm">Show Snapshots</span>
+                                       <span className="text-xs text-neutral-500">Show Minecraft snapshots in version selection by default.</span>
+                                    </div>
+                                    <button
+                                       onClick={() => setGlobalSettings({ ...globalSettings, showSnapshots: !globalSettings.showSnapshots })}
+                                       className={`w-12 h-6 rounded-full transition-all relative ${globalSettings.showSnapshots ? 'bg-[#3E8ED0]' : 'bg-[#333]'}`}
+                                    >
+                                       <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${globalSettings.showSnapshots ? 'left-7' : 'left-1'}`} />
+                                    </button>
+                                 </div>
+                              </div>
+                           </div>
+                        )}
+
+                        {settingsTab === "language" && (
+                           <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
+                              <div>
+                                 <h3 className="text-lg font-bold mb-1">Language</h3>
+                                 <p className="text-sm text-neutral-500">Select your preferred interface language.</p>
+                              </div>
+                              <div className="grid grid-cols-2 gap-3">
+                                 {['English', 'Spanish', 'French', 'German', 'Russian', 'Chinese', 'Japanese'].map((lang) => (
+                                    <button
+                                       key={lang}
+                                       onClick={() => setGlobalSettings({ ...globalSettings, language: lang })}
+                                       className={`flex items-center justify-between p-4 rounded-lg border transition-all ${globalSettings.language === lang ? 'border-[#3E8ED0] bg-[#3E8ED0]/10 text-white' : 'border-[#333] bg-[#242424] text-neutral-400 hover:border-[#444]'}`}
+                                    >
+                                       <span className="font-bold text-sm">{lang}</span>
+                                       {globalSettings.language === lang && <Check className="w-4 h-4" />}
                                     </button>
                                  ))}
                               </div>
                            </div>
+                        )}
 
-                           <div className="pt-4 border-t border-[#333] space-y-4">
-                              <div className="flex items-center justify-between">
-                                 <div className="flex flex-col">
-                                    <span className="font-bold text-sm text-neutral-200">Default Whitelist</span>
-                                    <span className="text-xs text-neutral-500">Enable whitelist by default for new servers.</span>
-                                 </div>
-                                 <button 
-                                    onClick={() => setGlobalSettings({...globalSettings, defaultWhitelistEnabled: !globalSettings.defaultWhitelistEnabled})}
-                                    className={`w-12 h-6 rounded-full transition-all relative ${globalSettings.defaultWhitelistEnabled ? 'bg-amber-500' : 'bg-[#333]'}`}
-                                 >
-                                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${globalSettings.defaultWhitelistEnabled ? 'left-7' : 'left-1'}`} />
-                                 </button>
+                        {settingsTab === "appearance" && (
+                           <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
+                              <div>
+                                 <h3 className="text-lg font-bold mb-1">Appearance</h3>
+                                 <p className="text-sm text-neutral-500">Customize the look and feel of Isopod.</p>
                               </div>
+                              <div className="grid grid-cols-3 gap-4">
+                                 {[
+                                    { id: 'Dark', name: 'Dark Mode', icon: Moon },
+                                    { id: 'Light', name: 'Light Mode', icon: Sun },
+                                    { id: 'OLED', name: 'OLED Black', icon: Monitor }
+                                 ].map((theme) => (
+                                    <button
+                                       key={theme.id}
+                                       onClick={() => setGlobalSettings({ ...globalSettings, theme: theme.id })}
+                                       className={`flex flex-col items-center gap-3 p-6 rounded-xl border transition-all ${globalSettings.theme === theme.id ? 'border-[#3E8ED0] bg-[#3E8ED0]/15' : 'border-[#333] bg-[#242424] grayscale opacity-60 hover:grayscale-0 hover:opacity-100 hover:border-[#444]'}`}
+                                    >
+                                       <theme.icon className={`w-8 h-8 ${globalSettings.theme === theme.id ? 'text-[#3E8ED0]' : 'text-neutral-500'}`} />
+                                       <span className={`font-bold text-sm ${globalSettings.theme === theme.id ? 'text-white' : 'text-neutral-400'}`}>{theme.name}</span>
+                                    </button>
+                                 ))}
+                              </div>
+                           </div>
+                        )}
 
-                              {globalSettings.defaultWhitelistEnabled && (
-                                 <div className="space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
-                                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest block">Default Whitelisted Players</label>
-                                    <div className="flex gap-2">
-                                       <div className="relative flex-1">
-                                          <div className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-sm bg-[#1A1A1A] border border-[#333] flex items-center justify-center overflow-hidden">
-                                             {whitelistPreview ? (
-                                                <img 
-                                                   src={`https://crafatar.com/avatars/${whitelistPreview.uuid}?size=32&overlay`} 
-                                                   referrerPolicy="no-referrer"
-                                                   alt="" 
-                                                   className="w-full h-full"
-                                                   onError={(e) => {
-                                                      e.currentTarget.src = `https://minotar.net/avatar/${newWhitelistUser}/32`;
+                        {settingsTab === "defaults" && (
+                           <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
+                              <div>
+                                 <h3 className="text-lg font-bold mb-1">Server Defaults</h3>
+                                 <p className="text-sm text-neutral-500">Initial values for new server instances.</p>
+                              </div>
+                              <div className="space-y-6">
+                                 <div className="flex flex-col gap-2">
+                                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Default Port Range Start</label>
+                                    <input
+                                       type="number"
+                                       value={globalSettings.defaultPort}
+                                       onChange={(e) => setGlobalSettings({ ...globalSettings, defaultPort: e.target.value })}
+                                       className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-[#3E8ED0] text-sm font-mono text-emerald-400"
+                                    />
+                                 </div>
+                                 <div className="flex flex-col gap-2">
+                                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Default Mod Loader</label>
+                                    <div className="grid grid-cols-5 gap-2">
+                                       {['VANILLA', 'FABRIC', 'FORGE', 'QUILT', 'NEOFORGE'].map((loader) => (
+                                          <button
+                                             key={loader}
+                                             onClick={() => setGlobalSettings({ ...globalSettings, defaultLoader: loader })}
+                                             className={`py-2 rounded-md border text-[10px] font-bold transition-all ${globalSettings.defaultLoader === loader ? 'border-[#3E8ED0] bg-[#3E8ED0] text-white' : 'border-[#333] bg-[#242424] text-neutral-500 hover:border-[#444]'}`}
+                                          >
+                                             {loader}
+                                          </button>
+                                       ))}
+                                    </div>
+                                 </div>
+
+                                  <div className="flex flex-col gap-3 pt-2 text-[#E0E0E0]">
+                                     <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">Default RAM Allocation</label>
+                                     <div className="flex gap-3">
+                                        <input 
+                                           type="text"
+                                           value={globalSettings.defaultMemory}
+                                           onChange={(e) => setGlobalSettings({...globalSettings, defaultMemory: e.target.value})}
+                                           placeholder="1G"
+                                           className="flex-1 bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-[#3E8ED0] text-sm font-mono text-[#3E8ED0]"
+                                        />
+                                        <div className="flex bg-[#242424] rounded-lg p-1 border border-[#333] gap-1">
+                                           {['1G', '2G', '4G', '6G', '8G'].map(m => (
+                                              <button 
+                                                 key={m}
+                                                 type="button"
+                                                 onClick={() => setGlobalSettings({...globalSettings, defaultMemory: m})}
+                                                 className={`px-4 py-1.5 rounded-md text-[10px] font-bold transition-all ${globalSettings.defaultMemory === m ? 'bg-[#3E8ED0] text-white' : 'text-neutral-500 hover:text-white'}`}
+                                              >
+                                                 {m}
+                                              </button>
+                                           ))}
+                                        </div>
+                                     </div>
+                                     <p className="text-[10px] text-neutral-600 px-1">Memory allocated to new Minecraft server instances by default.</p>
+                                  </div>
+
+                                 <div className="pt-4 border-t border-[#333] space-y-4">
+                                    <div className="flex items-center justify-between">
+                                       <div className="flex flex-col">
+                                          <span className="font-bold text-sm text-neutral-200">Default Whitelist</span>
+                                          <span className="text-xs text-neutral-500">Enable whitelist by default for new servers.</span>
+                                       </div>
+                                       <button
+                                          onClick={() => setGlobalSettings({ ...globalSettings, defaultWhitelistEnabled: !globalSettings.defaultWhitelistEnabled })}
+                                          className={`w-12 h-6 rounded-full transition-all relative ${globalSettings.defaultWhitelistEnabled ? 'bg-amber-500' : 'bg-[#333]'}`}
+                                       >
+                                          <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${globalSettings.defaultWhitelistEnabled ? 'left-7' : 'left-1'}`} />
+                                       </button>
+                                    </div>
+
+                                    {globalSettings.defaultWhitelistEnabled && (
+                                       <div className="space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
+                                          <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest block">Default Whitelisted Players</label>
+                                          <div className="flex gap-2">
+                                             <div className="relative flex-1">
+                                                <div className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-sm bg-[#1A1A1A] border border-[#333] flex items-center justify-center overflow-hidden">
+                                                   {whitelistPreview ? (
+                                                      <img
+                                                         src={`https://crafatar.com/avatars/${whitelistPreview.uuid}?size=32&overlay`}
+                                                         referrerPolicy="no-referrer"
+                                                         alt=""
+                                                         className="w-full h-full"
+                                                         onError={(e) => {
+                                                            e.currentTarget.src = `https://minotar.net/avatar/${newWhitelistUser}/32`;
+                                                         }}
+                                                      />
+                                                   ) : (
+                                                      <Users className="w-3 h-3 text-neutral-500" />
+                                                   )}
+                                                </div>
+                                                <input
+                                                   type="text"
+                                                   value={newWhitelistUser}
+                                                   onChange={(e) => setNewWhitelistUser(e.target.value)}
+                                                   onKeyDown={(e) => {
+                                                      if (e.key === 'Enter' && newWhitelistUser) {
+                                                         if (!globalSettings.defaultWhitelistUsers.includes(newWhitelistUser.trim())) {
+                                                            setGlobalSettings({
+                                                               ...globalSettings,
+                                                               defaultWhitelistUsers: [...globalSettings.defaultWhitelistUsers, newWhitelistUser.trim()]
+                                                            });
+                                                         }
+                                                         setNewWhitelistUser("");
+                                                         setWhitelistPreview(null);
+                                                      }
                                                    }}
+                                                   placeholder="Add username..."
+                                                   className="w-full bg-[#141414] border border-[#333] pl-10 pr-4 py-2.5 rounded-lg focus:outline-none focus:border-amber-500/50 text-sm placeholder:text-neutral-700"
                                                 />
-                                             ) : (
-                                                <Users className="w-3 h-3 text-neutral-500" />
-                                             )}
-                                          </div>
-                                          <input 
-                                             type="text"
-                                             value={newWhitelistUser}
-                                             onChange={(e) => setNewWhitelistUser(e.target.value)}
-                                             onKeyDown={(e) => {
-                                                if (e.key === 'Enter' && newWhitelistUser) {
-                                                   if (!globalSettings.defaultWhitelistUsers.includes(newWhitelistUser.trim())) {
+                                                {isVerifyingUser && (
+                                                   <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                                      <RefreshCw className="w-3 h-3 animate-spin text-neutral-600" />
+                                                   </div>
+                                                )}
+
+                                                {/* Dropdown Suggestions */}
+                                                {newWhitelistUser.length >= 1 && (
+                                                   <div className="absolute top-full left-0 right-0 mt-1 bg-[#1E1E1E] border border-[#333] rounded-lg shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-200">
+                                                      {seenPlayers.filter(p => p.name.toLowerCase().includes(newWhitelistUser.toLowerCase())).slice(0, 5).map(p => (
+                                                         <div
+                                                            key={p.uuid}
+                                                            onClick={() => {
+                                                               setNewWhitelistUser(p.name);
+                                                               setWhitelistPreview(p);
+                                                            }}
+                                                            className="flex items-center gap-3 px-4 py-2.5 hover:bg-[#333] cursor-pointer border-b border-[#282828] last:border-0 group"
+                                                         >
+                                                            <img src={`https://minotar.net/avatar/${p.name}/16`} alt="" className="w-4 h-4 rounded-sm" />
+                                                            <span className="text-sm font-medium text-neutral-300 group-hover:text-white">{p.name}</span>
+                                                            <span className="text-[10px] text-neutral-600 font-mono ml-auto">RECENT</span>
+                                                         </div>
+                                                      ))}
+                                                   </div>
+                                                )}
+                                             </div>
+                                             <button
+                                                onClick={() => {
+                                                   if (newWhitelistUser.trim() && !globalSettings.defaultWhitelistUsers.includes(newWhitelistUser.trim())) {
                                                       setGlobalSettings({
                                                          ...globalSettings,
                                                          defaultWhitelistUsers: [...globalSettings.defaultWhitelistUsers, newWhitelistUser.trim()]
                                                       });
+                                                      setNewWhitelistUser("");
+                                                      setWhitelistPreview(null);
                                                    }
-                                                   setNewWhitelistUser("");
-                                                   setWhitelistPreview(null);
-                                                }
-                                             }}
-                                             placeholder="Add username..."
-                                             className="w-full bg-[#141414] border border-[#333] pl-10 pr-4 py-2.5 rounded-lg focus:outline-none focus:border-amber-500/50 text-sm placeholder:text-neutral-700"
-                                          />
-                                          {isVerifyingUser && (
-                                             <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                                                <RefreshCw className="w-3 h-3 animate-spin text-neutral-600" />
-                                             </div>
-                                          )}
-
-                                          {/* Dropdown Suggestions */}
-                                          {newWhitelistUser.length >= 1 && (
-                                             <div className="absolute top-full left-0 right-0 mt-1 bg-[#1E1E1E] border border-[#333] rounded-lg shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-200">
-                                                {seenPlayers.filter(p => p.name.toLowerCase().includes(newWhitelistUser.toLowerCase())).slice(0, 5).map(p => (
-                                                   <div 
-                                                      key={p.uuid}
-                                                      onClick={() => {
-                                                         setNewWhitelistUser(p.name);
-                                                         setWhitelistPreview(p);
-                                                      }}
-                                                      className="flex items-center gap-3 px-4 py-2.5 hover:bg-[#333] cursor-pointer border-b border-[#282828] last:border-0 group"
-                                                   >
-                                                      <img src={`https://minotar.net/avatar/${p.name}/16`} alt="" className="w-4 h-4 rounded-sm" />
-                                                      <span className="text-sm font-medium text-neutral-300 group-hover:text-white">{p.name}</span>
-                                                      <span className="text-[10px] text-neutral-600 font-mono ml-auto">RECENT</span>
-                                                   </div>
-                                                ))}
-                                             </div>
-                                          )}
-                                       </div>
-                                       <button 
-                                          onClick={() => {
-                                             if (newWhitelistUser.trim() && !globalSettings.defaultWhitelistUsers.includes(newWhitelistUser.trim())) {
-                                                setGlobalSettings({
-                                                   ...globalSettings,
-                                                   defaultWhitelistUsers: [...globalSettings.defaultWhitelistUsers, newWhitelistUser.trim()]
-                                                });
-                                                setNewWhitelistUser("");
-                                                setWhitelistPreview(null);
-                                             }
-                                          }}
-                                          className="px-4 py-2 bg-[#333] hover:bg-[#444] rounded-lg text-sm font-bold transition-all border border-[#444]"
-                                       >
-                                          Add
-                                       </button>
-                                    </div>
-                                    
-                                    <div className="flex flex-wrap gap-2 min-h-[40px] p-3 bg-[#141414] rounded-lg border border-[#333]">
-                                       {globalSettings.defaultWhitelistUsers.length === 0 ? (
-                                          <span className="text-xs text-neutral-600 italic text-center w-full py-2">No default users added.</span>
-                                       ) : (
-                                          globalSettings.defaultWhitelistUsers.map(user => (
-                                             <div key={user} className="flex items-center gap-2 px-2.5 py-1 bg-[#242424] border border-[#333] rounded-md text-xs group hover:border-amber-500/30 transition-colors">
-                                                <img src={`https://minotar.net/avatar/${user}/16`} alt="" className="w-3 h-3 rounded-sm" />
-                                                <span className="text-neutral-300 font-medium">{user}</span>
-                                                <button 
-                                                   onClick={() => {
-                                                      setGlobalSettings({
-                                                         ...globalSettings,
-                                                         defaultWhitelistUsers: globalSettings.defaultWhitelistUsers.filter(u => u !== user)
-                                                      });
-                                                   }}
-                                                   className="text-neutral-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
-                                                >
-                                                   <X className="w-3 h-3 text-red-400" />
-                                                </button>
-                                             </div>
-                                          ))
-                                       )}
-                                    </div>
-                                 </div>
-                              )}
-                           </div>
-                        </div>
-                     </div>
-                  )}
-
-                  {settingsTab === "advanced" && (
-                     <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
-                        <div className="p-6 bg-amber-500/10 border border-amber-500/20 rounded-xl flex gap-4">
-                           <AlertCircle className="w-8 h-8 text-amber-500 flex-shrink-0" />
-                           <div className="space-y-2">
-                              <h3 className="text-amber-500 font-bold">Advanced Settings</h3>
-                              <p className="text-xs text-neutral-400 leading-relaxed">
-                                 These settings can affect application stability and security. 
-                                 Only modify them if you know what you are doing.
-                              </p>
-                           </div>
-                        </div>
-                        <div className="space-y-4">
-                           <div className="flex flex-col gap-2">
-                              <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Docker Socket Path</label>
-                              <input 
-                                 type="text"
-                                 defaultValue="/var/run/docker.sock"
-                                 className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-red-500/50 text-xs font-mono text-neutral-400"
-                              />
-                           </div>
-                           <button className="w-full py-3 bg-[#333] hover:bg-[#3D2525] text-red-400 font-bold rounded-lg border border-[#444] hover:border-red-500/30 transition-all text-xs">
-                              EXPORT APPLICATION LOGS
-                           </button>
-                        </div>
-                     </div>
-                  )}
-
-                  {settingsTab === "updates" && (
-                     <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
-                        <div className="flex justify-between items-start">
-                           <div>
-                              <h3 className="text-lg font-bold mb-1">Updates</h3>
-                              <p className="text-sm text-neutral-500">Manage Isopod application updates.</p>
-                           </div>
-                           <button 
-                              onClick={() => checkSystemUpdates(true)}
-                              disabled={isCheckingUpdates}
-                              className="p-2 hover:bg-[#333] rounded-lg transition-colors text-[#3E8ED0] disabled:opacity-50"
-                           >
-                              <RefreshCw className={`w-5 h-5 ${isCheckingUpdates ? 'animate-spin' : ''}`} />
-                           </button>
-                        </div>
-
-                        {updateInfo && (
-                           <div className="space-y-6">
-                              <div className="bg-[#242424] border border-[#3A3A3A] rounded-xl overflow-hidden shadow-sm">
-                                 <div className="p-6 flex items-center justify-between bg-gradient-to-r from-[#242424] to-[#2A2A2A]">
-                                    <div className="flex items-center gap-6">
-                                       <div className="flex flex-col items-center">
-                                          <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-1">Current</span>
-                                          <div className="bg-[#1A1A1A] border border-[#333] px-4 py-2 rounded-lg font-mono text-xs font-bold text-neutral-400">{updateInfo.current_version}</div>
-                                       </div>
-                                       <ChevronRight className="w-5 h-5 text-neutral-700 mt-4" />
-                                       <div className="flex flex-col items-center">
-                                          <span className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${updateInfo.has_update ? 'text-emerald-500' : 'text-neutral-500'}`}>Latest</span>
-                                          <div className={`px-4 py-2 rounded-lg font-mono text-xs font-bold border transition-all ${updateInfo.has_update ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'bg-[#1A1A1A] border-[#333] text-neutral-400'}`}>
-                                             {updateInfo.latest_version}
+                                                }}
+                                                className="px-4 py-2 bg-[#333] hover:bg-[#444] rounded-lg text-sm font-bold transition-all border border-[#444]"
+                                             >
+                                                Add
+                                             </button>
                                           </div>
-                                       </div>
-                                    </div>
 
-                                    {updateInfo.has_update ? (
-                                       <button 
-                                          onClick={performSystemUpdate}
-                                          disabled={isUpdatingSystem}
-                                          className="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-bold text-sm shadow-xl shadow-emerald-500/10 transition-all flex items-center gap-2"
-                                       >
-                                          {isUpdatingSystem ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                                          Update Now
-                                       </button>
-                                    ) : (
-                                       <div className="flex items-center gap-2 text-emerald-500 text-xs font-bold bg-emerald-500/10 px-4 py-2 rounded-lg border border-emerald-500/20">
-                                          <Check className="w-4 h-4" /> Up to date
+                                          <div className="flex flex-wrap gap-2 min-h-[40px] p-3 bg-[#141414] rounded-lg border border-[#333]">
+                                             {globalSettings.defaultWhitelistUsers.length === 0 ? (
+                                                <span className="text-xs text-neutral-600 italic text-center w-full py-2">No default users added.</span>
+                                             ) : (
+                                                globalSettings.defaultWhitelistUsers.map(user => (
+                                                   <div key={user} className="flex items-center gap-2 px-2.5 py-1 bg-[#242424] border border-[#333] rounded-md text-xs group hover:border-amber-500/30 transition-colors">
+                                                      <img src={`https://minotar.net/avatar/${user}/16`} alt="" className="w-3 h-3 rounded-sm" />
+                                                      <span className="text-neutral-300 font-medium">{user}</span>
+                                                      <button
+                                                         onClick={() => {
+                                                            setGlobalSettings({
+                                                               ...globalSettings,
+                                                               defaultWhitelistUsers: globalSettings.defaultWhitelistUsers.filter(u => u !== user)
+                                                            });
+                                                         }}
+                                                         className="text-neutral-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+                                                      >
+                                                         <X className="w-3 h-3 text-red-400" />
+                                                      </button>
+                                                   </div>
+                                                ))
+                                             )}
+                                          </div>
                                        </div>
                                     )}
                                  </div>
-
-                                 {updateInfo.has_update && (
-                                    <div className="p-6 border-t border-[#3A3A3A] bg-[#1E1E1E]">
-                                       <div className="flex items-center gap-2 mb-4">
-                                          <FileText className="w-4 h-4 text-[#3E8ED0]" />
-                                          <h4 className="text-xs font-bold text-neutral-300 uppercase tracking-wider">Release Notes</h4>
-                                       </div>
-                                       <div className="bg-[#141414] border border-[#333] p-4 rounded-lg text-xs text-neutral-400 font-sans leading-relaxed whitespace-pre-wrap max-h-[200px] overflow-auto scrollbar-custom">
-                                          {updateInfo.release_notes}
-                                       </div>
-                                       <div className="mt-4 flex items-center gap-2 text-[10px] text-neutral-600">
-                                          <Globe className="w-3 h-3" /> Published on {new Date(updateInfo.published_at).toLocaleDateString()}
-                                       </div>
-                                    </div>
-                                 )}
-                              </div>
-                              
-                              <div className="bg-[#3E8ED0]/5 border border-[#3E8ED0]/20 p-4 rounded-lg flex gap-3 items-start">
-                                 <AlertCircle className="w-5 h-5 text-[#3E8ED0] mt-0.5" />
-                                 <p className="text-[11px] text-neutral-500 leading-relaxed">
-                                    Updates will preserve all your instance data, world files, and configurations. The application will experience a brief downtime while it restarts with the new version.
-                                 </p>
                               </div>
                            </div>
                         )}
-                        
-                        {!updateInfo && isCheckingUpdates && (
-                           <div className="flex flex-col items-center justify-center p-12 gap-4">
-                              <RefreshCw className="w-8 h-8 text-[#3E8ED0] animate-spin" />
-                              <span className="text-sm font-medium text-neutral-500">Retrieving update information...</span>
+
+                        {settingsTab === "advanced" && (
+                           <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
+                              <div className="p-6 bg-amber-500/10 border border-amber-500/20 rounded-xl flex gap-4">
+                                 <AlertCircle className="w-8 h-8 text-amber-500 flex-shrink-0" />
+                                 <div className="space-y-2">
+                                    <h3 className="text-amber-500 font-bold">Advanced Settings</h3>
+                                    <p className="text-xs text-neutral-400 leading-relaxed">
+                                       These settings can affect application stability and security.
+                                       Only modify them if you know what you are doing.
+                                    </p>
+                                 </div>
+                              </div>
+                              <div className="space-y-4">
+                                 <div className="flex flex-col gap-2">
+                                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Docker Socket Path</label>
+                                    <input
+                                       type="text"
+                                       defaultValue="/var/run/docker.sock"
+                                       className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-red-500/50 text-xs font-mono text-neutral-400"
+                                    />
+                                 </div>
+                                 <button className="w-full py-3 bg-[#333] hover:bg-[#3D2525] text-red-400 font-bold rounded-lg border border-[#444] hover:border-red-500/30 transition-all text-xs">
+                                    EXPORT APPLICATION LOGS
+                                 </button>
+                              </div>
+                           </div>
+                        )}
+
+                        {settingsTab === "updates" && (
+                           <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
+                              <div className="flex justify-between items-start">
+                                 <div>
+                                    <h3 className="text-lg font-bold mb-1">Updates</h3>
+                                    <p className="text-sm text-neutral-500">Manage Isopod application updates.</p>
+                                 </div>
+                                 <button 
+                                    onClick={() => checkSystemUpdates(true)}
+                                    disabled={isCheckingUpdates}
+                                    className="p-2 hover:bg-[#333] rounded-lg transition-colors text-[#3E8ED0] disabled:opacity-50"
+                                 >
+                                    <RefreshCw className={`w-5 h-5 ${isCheckingUpdates ? 'animate-spin' : ''}`} />
+                                 </button>
+                              </div>
+
+                              {updateInfo && (
+                                 <div className="space-y-6">
+                                    <div className="bg-[#242424] border border-[#3A3A3A] rounded-xl overflow-hidden shadow-sm">
+                                       <div className="p-6 flex items-center justify-between bg-gradient-to-r from-[#242424] to-[#2A2A2A]">
+                                          <div className="flex items-center gap-6">
+                                             <div className="flex flex-col items-center">
+                                                <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-1">Current</span>
+                                                <div className="bg-[#1A1A1A] border border-[#333] px-4 py-2 rounded-lg font-mono text-xs font-bold text-neutral-400">{updateInfo.current_version}</div>
+                                             </div>
+                                             <ChevronRight className="w-5 h-5 text-neutral-700 mt-4" />
+                                             <div className="flex flex-col items-center">
+                                                <span className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${updateInfo.has_update ? 'text-emerald-500' : 'text-neutral-500'}`}>Latest</span>
+                                                <div className={`px-4 py-2 rounded-lg font-mono text-xs font-bold border transition-all ${updateInfo.has_update ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'bg-[#1A1A1A] border-[#333] text-neutral-400'}`}>
+                                                   {updateInfo.latest_version}
+                                                </div>
+                                             </div>
+                                          </div>
+
+                                          {updateInfo.has_update ? (
+                                             <button 
+                                                onClick={performSystemUpdate}
+                                                disabled={isUpdatingSystem}
+                                                className="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-bold text-sm shadow-xl shadow-emerald-500/10 transition-all flex items-center gap-2"
+                                             >
+                                                {isUpdatingSystem ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                                                Update Now
+                                             </button>
+                                          ) : (
+                                             <div className="flex items-center gap-2 text-emerald-500 text-xs font-bold bg-emerald-500/10 px-4 py-2 rounded-lg border border-emerald-500/20">
+                                                <Check className="w-4 h-4" /> Up to date
+                                             </div>
+                                          )}
+                                       </div>
+
+                                       {updateInfo.has_update && (
+                                          <div className="p-6 border-t border-[#3A3A3A] bg-[#1E1E1E]">
+                                             <div className="flex items-center gap-2 mb-4">
+                                                <FileText className="w-4 h-4 text-[#3E8ED0]" />
+                                                <h4 className="text-xs font-bold text-neutral-300 uppercase tracking-wider">Release Notes</h4>
+                                             </div>
+                                             <div className="bg-[#141414] border border-[#333] p-4 rounded-lg text-xs text-neutral-400 font-sans leading-relaxed whitespace-pre-wrap max-h-[200px] overflow-auto scrollbar-custom">
+                                                {updateInfo.release_notes}
+                                             </div>
+                                             <div className="mt-4 flex items-center gap-2 text-[10px] text-neutral-600">
+                                                <Globe className="w-3 h-3" /> Published on {new Date(updateInfo.published_at).toLocaleDateString()}
+                                             </div>
+                                          </div>
+                                       )}
+                                    </div>
+                                    
+                                    <div className="bg-[#3E8ED0]/5 border border-[#3E8ED0]/20 p-4 rounded-lg flex gap-3 items-start">
+                                       <AlertCircle className="w-5 h-5 text-[#3E8ED0] mt-0.5" />
+                                       <p className="text-[11px] text-neutral-500 leading-relaxed">
+                                          Updates will preserve all your instance data, world files, and configurations. The application will experience a brief downtime while it restarts with the new version.
+                                       </p>
+                                    </div>
+                                 </div>
+                              )}
+                              
+                              {!updateInfo && isCheckingUpdates && (
+                                 <div className="flex flex-col items-center justify-center p-12 gap-4">
+                                    <RefreshCw className="w-8 h-8 text-[#3E8ED0] animate-spin" />
+                                    <span className="text-sm font-medium text-neutral-500">Retrieving update information...</span>
+                                 </div>
+                              )}
                            </div>
                         )}
                      </div>
-                  )}
-               </div>
-            </div>
+                  </div>
 
             {/* Footer */}
             <div className="p-6 bg-[#2D2D2D] border-t border-[#3A3A3A] flex justify-between items-center px-8 shadow-inner">

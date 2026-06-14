@@ -5,7 +5,7 @@ import re
 import zipfile
 import tempfile
 import asyncio
-from fastapi import FastAPI, HTTPException, File, UploadFile
+from fastapi import FastAPI, HTTPException, File, UploadFile, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
@@ -17,6 +17,7 @@ from typing import List, Optional, Dict, Any
 import httpx
 import json
 import time
+from . import resource_packs as rp
 
 load_dotenv()
 
@@ -84,6 +85,7 @@ class CreateInstanceRequest(BaseModel):
     cf_id: Optional[str] = None
     group: Optional[str] = "No group"
     icon_url: Optional[str] = None
+    memory: Optional[str] = "1G"
     # World settings
     seed: Optional[str] = None
     level_type: Optional[str] = "DEFAULT"
@@ -246,7 +248,7 @@ def get_instance_status(instance_id: str):
         try:
             # Check most recent logs for Minecraft heartbeats
             log_result = subprocess.run(
-                ["docker", "compose", "logs", "--tail=100", "mc"],
+                ["docker", "compose", "logs", "--tail=200", "mc"],
                 cwd=get_instance_path(instance_id),
                 capture_output=True, text=True, timeout=5
             )
@@ -294,9 +296,103 @@ def get_instance_status(instance_id: str):
     }
 
 @app.post("/api/instances/{instance_id}/start")
-def start_instance(instance_id: str):
+async def start_instance(instance_id: str):
     path = get_instance_path(instance_id)
-    # Start all services defined in the instance's compose file
+    compose_path = os.path.join(path, "docker-compose.yml")
+    
+    with open(compose_path, "r") as f:
+        config = yaml.safe_load(f)
+    
+    services = config.get("services", {})
+    if not services:
+        raise HTTPException(status_code=400, detail="No services found in compose file")
+        
+    first_service = list(services.keys())[0]
+    raw_env = services[first_service].get("environment", {})
+    
+    # Standardize to dict for easier manipulation
+    if isinstance(raw_env, list):
+        env = {}
+        for item in raw_env:
+            if '=' in item:
+                k, v = item.split('=', 1)
+                env[k] = v
+    else:
+        env = dict(raw_env)
+        
+    # Ensure EULA is accepted
+    changed = False
+    if env.get("EULA") != "TRUE":
+        env["EULA"] = "TRUE"
+        changed = True
+    
+    if changed:
+        # Save back in the format it was
+        if isinstance(raw_env, list):
+            services[first_service]["environment"] = [f"{k}={v}" for k, v in env.items()]
+        else:
+            services[first_service]["environment"] = env
+            
+        with open(compose_path, "w") as f:
+            yaml.dump(config, f, default_flow_style=False)
+
+    mc_version = env.get("VERSION", "1.20.4")
+    
+    # Resource Pack Bundling Logic
+    m_ids_str = env.get("RESOURCE_PACKS_MODRINTH", "")
+    c_ids_str = env.get("RESOURCE_PACKS_CF", "")
+    pack_list_key = f"{m_ids_str}|{c_ids_str}|{mc_version}"
+    
+    if m_ids_str or c_ids_str:
+        cache_dir = os.path.join(SERVERS_DIR, ".cache", "resource_packs")
+        os.makedirs(cache_dir, exist_ok=True)
+        hash_file = os.path.join(cache_dir, f"{instance_id}_key.txt")
+        
+        # Check cache
+        last_key = ""
+        if os.path.exists(hash_file):
+            with open(hash_file, "r") as f: last_key = f.read().strip()
+            
+        if pack_list_key != last_key:
+            print(f"--- Bundling Needed for {instance_id} ---")
+            m_ids = [i.strip() for i in m_ids_str.split(",") if i.strip()]
+            c_ids = [i.strip() for i in c_ids_str.split(",") if i.strip()]
+            
+            try:
+                async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+                    downloaded_zips = []
+                    for mid in m_ids:
+                        url = await rp.get_latest_version_url(client, "modrinth", mid, mc_version)
+                        if url:
+                            z_path = os.path.join(cache_dir, f"{mid}.zip")
+                            if await rp.download_file(client, url, z_path):
+                                downloaded_zips.append(z_path)
+
+                    for cid in c_ids:
+                        url = await rp.get_latest_version_url(client, "curseforge", cid, mc_version)
+                        if url:
+                            z_path = os.path.join(cache_dir, f"{cid}.zip")
+                            if await rp.download_file(client, url, z_path):
+                                downloaded_zips.append(z_path)
+
+                    if downloaded_zips:
+                        bundle_path = os.path.join(cache_dir, f"bundle_{instance_id}.zip")
+                        rp.merge_resource_packs(downloaded_zips, bundle_path)
+                        public_url, sha1 = await rp.upload_to_mcpacks(bundle_path)
+                        if public_url and sha1:
+                            env["RESOURCE_PACK"] = public_url
+                            env["RESOURCE_PACK_SHA1"] = sha1
+                            env["RESOURCE_PACK_ID"] = "" # Clear legacy
+                            # Save back to compose so it persists
+                            config['services'][first_service]['environment'] = env
+                            with open(compose_path, "w") as f:
+                                yaml.dump(config, f, default_flow_style=False)
+                            # Update cache key
+                            with open(hash_file, "w") as f: f.write(pack_list_key)
+            except Exception as e:
+                print(f"Bundling failed during start: {e}")
+
+    # Start all services
     result = subprocess.run(["docker", "compose", "up", "-d"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
@@ -305,7 +401,8 @@ def start_instance(instance_id: str):
 @app.post("/api/instances/{instance_id}/stop")
 def stop_instance(instance_id: str):
     path = get_instance_path(instance_id)
-    result = subprocess.run(["docker", "compose", "stop"], cwd=path, capture_output=True, text=True)
+    # Use 'down' instead of 'stop' to remove the container, which clears Docker logs
+    result = subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
     return {"message": "Stopped"}
@@ -335,23 +432,13 @@ def get_config(instance_id: str):
     first_service_name = list(services.keys())[0]
     service = services[first_service_name]
     
-    env_vars = {}
-    if "environment" in service:
-        if isinstance(service["environment"], list):
-            for item in service["environment"]:
-                if "=" in item:
-                    k, v = item.split("=", 1)
-                    env_vars[k] = v
-        elif isinstance(service["environment"], dict):
-            env_vars = service["environment"]
-            
     return {
         "image": service.get("image", ""),
-        "environment": env_vars,
+        "environment": service.get("environment", {}),
     }
 
 @app.put("/api/instances/{instance_id}/config")
-def update_config(instance_id: str, new_config: InstanceConfig):
+async def update_config(instance_id: str, new_config: InstanceConfig):
     path = get_instance_path(instance_id)
     compose_path = os.path.join(path, "docker-compose.yml")
     if not os.path.exists(compose_path):
@@ -364,7 +451,10 @@ def update_config(instance_id: str, new_config: InstanceConfig):
     if services:
         first_service_name = list(services.keys())[0]
         config['services'][first_service_name]['image'] = new_config.image
-        config['services'][first_service_name]['environment'] = new_config.environment
+        # Ensure EULA is preserved/added
+        env = new_config.environment
+        env["EULA"] = "TRUE"
+        config['services'][first_service_name]['environment'] = env
         
     with open(compose_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False)
@@ -423,6 +513,32 @@ def get_icon(instance_id: str):
     if os.path.exists(icon_path):
         return FileResponse(icon_path)
     raise HTTPException(status_code=404, detail="Icon not found")
+
+@app.get("/api/settings")
+def get_settings():
+    settings_path = os.path.join(SERVERS_DIR, "isopod_settings.json")
+    if os.path.exists(settings_path):
+        with open(settings_path, "r") as f:
+            return json.load(f)
+    return {
+        "language": "English",
+        "theme": "Dark",
+        "defaultPort": "25565",
+        "defaultLoader": "VANILLA",
+        "defaultMemory": "1G",
+        "autoRefresh": True,
+        "showSnapshots": False,
+        "defaultWhitelistEnabled": False,
+        "defaultWhitelistUsers": []
+    }
+
+@app.put("/api/settings")
+def update_settings(new_settings: Dict[str, Any]):
+    settings_path = os.path.join(SERVERS_DIR, "isopod_settings.json")
+    os.makedirs(SERVERS_DIR, exist_ok=True)
+    with open(settings_path, "w") as f:
+        json.dump(new_settings, f, indent=4)
+    return {"message": "Settings updated"}
 
 # Meta & Mod Proxy Endpoints
 VERSION_MANIFEST_URL = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
@@ -546,8 +662,9 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
         
     facets = [
         [f"project_type:{class_type}"],
-        ["server_side:required", "server_side:optional"] # Skip "unsupported" (client-only)
     ]
+    if class_type == "mod":
+        facets.append(["server_side:required", "server_side:optional"])
     if mc_version:
         facets.append([f"versions:{mc_version}"])
     if loader:
@@ -557,7 +674,7 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
     params = {
         "query": q,
         "facets": json.dumps(facets),
-        "limit": 20
+        "limit": 120
     }
     
     async with httpx.AsyncClient() as client:
@@ -585,8 +702,12 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
     mc_version = None if mc_version == "undefined" or not mc_version else mc_version
     loader = None if loader == "undefined" or not loader else loader
     
-    # Using '6' for mods, '4471' for modpacks
-    class_id = 4471 if class_type == "modpack" else 6
+    # Using '6' for mods, '4471' for modpacks, '12' for resource packs
+    class_id = 6
+    if class_type == "modpack":
+        class_id = 4471
+    elif class_type == "resourcepack":
+        class_id = 12
     
     # If query is empty, we browse via parameters
     query_str = q if q else ""
@@ -609,7 +730,7 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
         "searchFilter": q,
         "classId": class_id, 
         "excludeCategoryIds": "4764" if class_id == 6 else None, # Client Side only for mods
-        "pageSize": 20
+        "pageSize": 120
     }
     if mc_version:
         params["gameVersion"] = mc_version
@@ -677,6 +798,7 @@ def create_instance(req: CreateInstanceRequest):
                     "EULA=TRUE",
                     f"TYPE={req.template.upper()}",
                     f"VERSION={req.version or 'latest'}",
+                    f"MEMORY={req.memory or '1G'}",
                     f"MOTD={req.name} Hosted by Isopod",
                     "ENABLE_RCON=true",
                     "RCON_PASSWORD=isopod",
