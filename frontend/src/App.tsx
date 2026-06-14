@@ -3423,29 +3423,51 @@ export default function App() {
 
           <div className="h-px bg-[#3A3A3A] my-1"></div>
 
-          <button 
-            onClick={(e) => { handleStart(contextMenu.instanceId, e as any); setContextMenu(null); }}
-            className="w-full flex items-center justify-between px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left"
-          >
-            <div className="flex items-center gap-3">
-              <Play className="w-4 h-4" /> Launch
-            </div>
-            <ChevronRight className="w-3.5 h-3.5 opacity-50" />
-          </button>
-          <button 
-            onClick={(e) => { handleStop(contextMenu.instanceId, e as any); setContextMenu(null); }}
-            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-amber-500 hover:bg-amber-500 hover:text-white transition-colors text-left"
-            title="Saves world first"
-          >
-            <Square className="w-4 h-4" /> Stop (Safe)
-          </button>
-          <button 
-            onClick={(e) => { handleKill(contextMenu.instanceId, e as any); setContextMenu(null); }}
-            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-400 hover:bg-red-600 hover:text-white transition-colors text-left"
-            title="Force immediate stop"
-          >
-            <X className="w-4 h-4" /> Kill (Unsafe)
-          </button>
+          {(() => {
+            const isRunning = statuses[contextMenu.instanceId]?.is_running;
+            return (
+              <>
+                <button 
+                  disabled={isRunning}
+                  onClick={(e) => { handleStart(contextMenu.instanceId, e as any); setContextMenu(null); }}
+                  className={`w-full flex items-center justify-between px-3 py-2 text-sm transition-colors text-left ${
+                    isRunning 
+                      ? 'text-neutral-600 cursor-not-allowed opacity-40' 
+                      : 'text-neutral-300 hover:bg-[#3E8ED0] hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <Play className="w-4 h-4" /> Launch
+                  </div>
+                  <ChevronRight className="w-3.5 h-3.5 opacity-50" />
+                </button>
+                <button 
+                  disabled={!isRunning}
+                  onClick={(e) => { handleStop(contextMenu.instanceId, e as any); setContextMenu(null); }}
+                  className={`w-full flex items-center gap-3 px-3 py-2 text-sm transition-colors text-left ${
+                    !isRunning 
+                      ? 'text-neutral-600 cursor-not-allowed opacity-40' 
+                      : 'text-amber-500 hover:bg-amber-500 hover:text-white'
+                  }`}
+                  title={isRunning ? "Saves world first" : "Server is offline"}
+                >
+                  <Square className="w-4 h-4" /> Stop (Safe)
+                </button>
+                <button 
+                  disabled={!isRunning}
+                  onClick={(e) => { handleKill(contextMenu.instanceId, e as any); setContextMenu(null); }}
+                  className={`w-full flex items-center gap-3 px-3 py-2 text-sm transition-colors text-left ${
+                    !isRunning 
+                      ? 'text-neutral-600 cursor-not-allowed opacity-40' 
+                      : 'text-red-400 hover:bg-red-600 hover:text-white'
+                  }`}
+                  title={isRunning ? "Force immediate stop" : "Server is offline"}
+                >
+                  <X className="w-4 h-4" /> Kill (Unsafe)
+                </button>
+              </>
+            );
+          })()}
 
           <div className="h-px bg-[#3A3A3A] my-1"></div>
 
