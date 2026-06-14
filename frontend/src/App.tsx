@@ -463,13 +463,16 @@ export default function App() {
      }
   };
 
-  const handleDuplicate = async (id: string) => {
-     const name = await showPrompt("Name for duplicate:");
-     if (name) {
-        await fetch(`/api/instances/${id}/duplicate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
-        fetchInstances();
-     }
-  };
+   const handleDuplicate = async (id: string) => {
+      const originalInstance = instances.find(i => i.id === id);
+      const originalName = originalInstance ? originalInstance.name : id;
+      const defaultName = `Copy of ${originalName}`;
+      const name = await showPrompt("Name for duplicate:", defaultName, "Duplicate Server");
+      if (name) {
+         await fetch(`/api/instances/${id}/duplicate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+         fetchInstances();
+      }
+   };
 
   const handleIconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
      if (!pendingIconId || !e.target.files?.[0]) return;
@@ -3501,8 +3504,11 @@ export default function App() {
             </div>
             <ChevronRight className="w-3.5 h-3.5 opacity-50" />
           </button>
-          <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left">
-            <Copy className="w-4 h-4" /> Copy...
+          <button 
+            onClick={() => { handleDuplicate(contextMenu.instanceId); setContextMenu(null); }}
+            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-neutral-300 hover:bg-[#3E8ED0] hover:text-white transition-colors text-left"
+          >
+            <Copy className="w-4 h-4" /> Duplicate
           </button>
           <button 
             onClick={() => { handleDelete(contextMenu.instanceId); setContextMenu(null); }}
