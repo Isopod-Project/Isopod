@@ -271,7 +271,15 @@ async def get_instance_status(instance_id: str):
                services = cdata.get("services", {})
                # Support both top-level services or nested keys
                mc_config = services.get("mc") or list(services.values())[0]
-               env = mc_config.get("environment", {})
+               raw_env = mc_config.get("environment", {})
+               env = {}
+               if isinstance(raw_env, list):
+                   for item in raw_env:
+                       if '=' in item:
+                           k, v = item.split('=', 1)
+                           env[k] = v
+               elif isinstance(raw_env, dict):
+                   env = raw_env
                version = env.get("VERSION", "Unknown")
                
                # Extract port
@@ -443,9 +451,19 @@ def get_config(instance_id: str):
     first_service_name = list(services.keys())[0]
     service = services[first_service_name]
     
+    raw_env = service.get("environment", {})
+    env = {}
+    if isinstance(raw_env, list):
+        for item in raw_env:
+            if '=' in item:
+                k, v = item.split('=', 1)
+                env[k] = v
+    elif isinstance(raw_env, dict):
+        env = raw_env
+
     return {
         "image": service.get("image", ""),
-        "environment": service.get("environment", {}),
+        "environment": env,
     }
 
 @app.put("/api/instances/{instance_id}/config")
