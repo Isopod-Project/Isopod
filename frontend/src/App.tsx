@@ -93,6 +93,7 @@ export default function App() {
   const [selectedAddVersion, setSelectedAddVersion] = useState("latest");
   const [selectedAddLoader, setSelectedAddLoader] = useState("VANILLA");
   const [searchModpacks, setSearchModpacks] = useState("");
+  const [onlyServerSideModpacks, setOnlyServerSideModpacks] = useState(true);
   const [modpackResults, setModpackResults] = useState<any[]>([]);
   const [isModpackLoading, setIsModpackLoading] = useState(false);
   const [selectedModpack, setSelectedModpack] = useState<any>(null);
@@ -710,7 +711,10 @@ export default function App() {
   const handleModpackSearch = async (query: string, provider: string) => {
     setIsModpackLoading(true);
     try {
-      const res = await fetch(`/api/mods/search/${provider}?q=${encodeURIComponent(query)}&class_type=modpack`);
+      const url = provider === "modrinth"
+        ? `/api/mods/search/${provider}?q=${encodeURIComponent(query)}&class_type=modpack&only_server_side=${onlyServerSideModpacks}`
+        : `/api/mods/search/${provider}?q=${encodeURIComponent(query)}&class_type=modpack`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error(`${provider} search failed`);
       const data = await res.json();
       setModpackResults(Array.isArray(data) ? data : []);
@@ -1248,6 +1252,13 @@ export default function App() {
          return () => clearTimeout(timer);
       }
    }, [modSearchQuery, modSearchProvider]);
+
+   // Re-run modpack search when toggle changes
+   useEffect(() => {
+      if (isAddModalOpen && addTab === "modrinth" && searchModpacks) {
+         handleModpackSearch(searchModpacks, addTab);
+      }
+   }, [onlyServerSideModpacks]);
 
    // Verify Minecraft User for Global Whitelist
    useEffect(() => {
@@ -2005,24 +2016,37 @@ export default function App() {
 
                         {(addTab === "modrinth" || addTab === "curseforge" || addTab === "atlauncher" || addTab === "technic") && (
                            <div className="flex flex-col h-full bg-[#1E1E1E]/50">
-                              <div className="p-4 bg-[#242424] border-b border-[#323232] flex gap-3">
-                                 <div className="flex-1 relative">
-                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
-                                    <input 
-                                       type="text" 
-                                       placeholder={`Search ${addTab} modpacks...`}
-                                       value={searchModpacks}
-                                       onChange={(e) => setSearchModpacks(e.target.value)}
-                                       onKeyDown={(e) => e.key === 'Enter' && handleModpackSearch(searchModpacks, addTab)}
-                                       className="w-full bg-[#141414] border border-[#3A3A3A] pl-10 pr-4 py-2 rounded focus:outline-none focus:border-[#3E8ED0] text-sm"
-                                    />
+                              <div className="p-4 bg-[#242424] border-b border-[#323232] flex flex-col gap-3">
+                                 <div className="flex gap-3 w-full">
+                                    <div className="flex-1 relative">
+                                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
+                                       <input 
+                                          type="text" 
+                                          placeholder={`Search ${addTab} modpacks...`}
+                                          value={searchModpacks}
+                                          onChange={(e) => setSearchModpacks(e.target.value)}
+                                          onKeyDown={(e) => e.key === 'Enter' && handleModpackSearch(searchModpacks, addTab)}
+                                          className="w-full bg-[#141414] border border-[#3A3A3A] pl-10 pr-4 py-2 rounded focus:outline-none focus:border-[#3E8ED0] text-sm"
+                                       />
+                                    </div>
+                                    <button 
+                                       onClick={() => handleModpackSearch(searchModpacks, addTab)}
+                                       className="px-6 py-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white font-bold rounded text-sm transition-all shadow-lg shadow-[#3E8ED0]/15"
+                                    >
+                                       Search
+                                    </button>
                                  </div>
-                                 <button 
-                                    onClick={() => handleModpackSearch(searchModpacks, addTab)}
-                                    className="px-6 py-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white font-bold rounded text-sm transition-all shadow-lg shadow-[#3E8ED0]/15"
-                                 >
-                                    Search
-                                 </button>
+                                 {addTab === "modrinth" && (
+                                    <label className="flex items-center gap-2 cursor-pointer self-start">
+                                       <input 
+                                          type="checkbox" 
+                                          checked={onlyServerSideModpacks} 
+                                          onChange={(e) => setOnlyServerSideModpacks(e.target.checked)}
+                                          className="rounded border-[#3A3A3A] bg-[#141414] text-[#3E8ED0] focus:ring-[#3E8ED0]"
+                                       />
+                                       <span className="text-xs text-neutral-400 select-none">Show only server-side compatible modpacks</span>
+                                    </label>
+                                 )}
                               </div>
                               <div className="flex-1 overflow-auto p-4 grid grid-cols-1 gap-2">
                                  {isModpackLoading ? (

@@ -934,7 +934,7 @@ async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
     return []
 
 @app.get("/api/mods/search/modrinth")
-async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None, class_type: str = "mod"):
+async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None, class_type: str = "mod", only_server_side: bool = True):
     # Handle "undefined" literals from frontend
     q = None if q == "undefined" or not q else q
     mc_version = None if mc_version == "undefined" or not mc_version else mc_version
@@ -946,7 +946,7 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
     facets = [
         [f"project_type:{class_type}"],
     ]
-    if class_type in ("mod", "modpack"):
+    if class_type == "mod" or (class_type == "modpack" and only_server_side):
         facets.append(["server_side:required", "server_side:optional"])
     if mc_version:
         facets.append([f"versions:{mc_version}"])
@@ -1585,7 +1585,8 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = "", modrinth_m
                                 "url": f"https://modrinth.com/mod/{project['slug']}",
                                 "provider": "modrinth",
                                 "mc_versions": project.get("game_versions", [])[:3],
-                                "latest_version": project.get("latest_version", "Unknown")
+                                "latest_version": project.get("latest_version", "Unknown"),
+                                "is_client_only": project.get("server_side") == "unsupported"
                             }
                             mod_metadata_cache[project["slug"]] = meta
                             mod_metadata_cache[project["id"]] = meta
@@ -1594,9 +1595,12 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = "", modrinth_m
             
             for mid in m_ids:
                 if mid in mod_metadata_cache:
-                    meta = mod_metadata_cache[mid].copy()
-                    meta["requested_id"] = mid
-                    results.append(meta)
+                    meta = mod_metadata_cache[mid]
+                    if meta.get("is_client_only"):
+                        continue
+                    meta_copy = meta.copy()
+                    meta_copy["requested_id"] = mid
+                    results.append(meta_copy)
                 else:
                     results.append({"id": mid, "name": mid, "provider": "modrinth", "unknown": True, "requested_id": mid})
 
@@ -1604,15 +1608,20 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = "", modrinth_m
         if c_ids:
             for cid in c_ids:
                 if cid in mod_metadata_cache:
-                    meta = mod_metadata_cache[cid].copy()
-                    meta["requested_id"] = cid
-                    results.append(meta)
+                    meta = mod_metadata_cache[cid]
+                    if meta.get("is_client_only"):
+                        continue
+                    meta_copy = meta.copy()
+                    meta_copy["requested_id"] = cid
+                    results.append(meta_copy)
                     continue
                 try:
                     res = await client.get(f"https://api.curse.tools/v1/cf/mods/{cid}")
                     if res.status_code == 200:
                         item = res.json()["data"]
                         latest_file = item.get("latestFiles", [{}])[0]
+                        categories = item.get("categories", [])
+                        is_client_only = any(c.get("id") == 4764 for c in categories)
                         meta = {
                             "id": str(item["id"]),
                             "name": item["name"],
@@ -1623,9 +1632,12 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = "", modrinth_m
                             "url": item.get("links", {}).get("websiteUrl", ""),
                             "provider": "curseforge",
                             "mc_versions": latest_file.get("gameVersions", [])[:3],
-                            "latest_version": latest_file.get("displayName", "Unknown")
+                            "latest_version": latest_file.get("displayName", "Unknown"),
+                            "is_client_only": is_client_only
                         }
                         mod_metadata_cache[cid] = meta
+                        if is_client_only:
+                            continue
                         meta_copy = meta.copy()
                         meta_copy["requested_id"] = cid
                         results.append(meta_copy)
