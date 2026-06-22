@@ -946,7 +946,7 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
     facets = [
         [f"project_type:{class_type}"],
     ]
-    if class_type == "mod":
+    if class_type in ("mod", "modpack"):
         facets.append(["server_side:required", "server_side:optional"])
     if mc_version:
         facets.append([f"versions:{mc_version}"])
