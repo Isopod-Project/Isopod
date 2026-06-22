@@ -949,14 +949,17 @@ export default function App() {
       if (!config || !config.environment) return;
       const mIdsEnv = config.environment["MODRINTH_PROJECTS"] || "";
       const cIdsEnv = config.environment["CF_PROJECTS"] || "";
-      if (!mIdsEnv && !cIdsEnv) {
+      const modrinthModpack = config.environment["MODRINTH_MODPACK"] || "";
+      const cfModpack = config.environment["CF_SLUG"] || "";
+
+      if (!mIdsEnv && !cIdsEnv && !modrinthModpack && !cfModpack) {
          setInstalledModsMeta([]);
          return;
       }
 
       setIsMetaLoading(true);
       try {
-         const res = await fetch(`/api/mods/metadata?modrinth_ids=${mIdsEnv}&cf_ids=${cIdsEnv}`);
+         const res = await fetch(`/api/mods/metadata?modrinth_ids=${mIdsEnv}&cf_ids=${cIdsEnv}&modrinth_modpack=${modrinthModpack}&cf_modpack=${cfModpack}`);
          const data = await res.json();
          setInstalledModsMeta(data);
 

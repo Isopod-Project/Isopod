@@ -1075,6 +1075,7 @@ def create_instance(req: CreateInstanceRequest):
                     "JVM_OPTS=--add-opens java.base/sun.misc=ALL-UNNAMED"
                 ],
                 "volumes": ["./data:/data"],
+                "dns": ["8.8.8.8", "1.1.1.1"],
                 "restart": "unless-stopped"
             }
         }
@@ -1101,9 +1102,19 @@ def create_instance(req: CreateInstanceRequest):
             env.append(f"LOADER_VERSION={req.loader_version}")
 
     if req.modrinth_id:
-        env.append(f"MODRINTH_PROJECTS={req.modrinth_id}")
+        # Replace TYPE=... with TYPE=MODRINTH for Modrinth modpack
+        for i, val in enumerate(env):
+            if val.startswith("TYPE="):
+                env[i] = "TYPE=MODRINTH"
+                break
+        env.append(f"MODRINTH_MODPACK={req.modrinth_id}")
     if req.cf_id:
-        env.append(f"CF_PROJECTS={req.cf_id}")
+        # Replace TYPE=... with TYPE=AUTO_CURSEFORGE for CurseForge modpack
+        for i, val in enumerate(env):
+            if val.startswith("TYPE="):
+                env[i] = "TYPE=AUTO_CURSEFORGE"
+                break
+        env.append(f"CF_SLUG={req.cf_id}")
     
     with open(os.path.join(path, "docker-compose.yml"), "w") as f:
         yaml.dump(compose_content, f, default_flow_style=False)
@@ -1493,7 +1504,7 @@ def execute_command(instance_id: str, req: CommandRequest):
         return {"output": f"Execution error: {str(e)}", "success": False}
 
 @app.get("/api/mods/metadata")
-async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
+async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = "", modrinth_modpack: str = "", cf_modpack: str = ""):
     """Fetch metadata for multiple mods from Modrinth and CurseForge."""
     results = []
     
@@ -1501,6 +1512,40 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
     c_ids = [i.strip() for i in cf_ids.split(",") if i.strip()]
     
     async with httpx.AsyncClient() as client:
+        # If modrinth_modpack is specified, fetch its dependencies (constituent mods)
+        if modrinth_modpack:
+            try:
+                res = await client.get(f"https://api.modrinth.com/v2/project/{modrinth_modpack}/version")
+                if res.status_code == 200:
+                    versions = res.json()
+                    if versions:
+                        # Grab dependencies from the latest version of the modpack
+                        deps = versions[0].get("dependencies", [])
+                        for d in deps:
+                            p_id = d.get("project_id")
+                            if p_id and p_id not in m_ids:
+                                m_ids.append(p_id)
+            except Exception as e:
+                print(f"Error resolving Modrinth modpack dependencies: {e}")
+
+        # If cf_modpack is specified, fetch its dependencies (constituent mods)
+        if cf_modpack:
+            try:
+                res = await client.get(f"https://api.curse.tools/v1/cf/mods/{cf_modpack}")
+                if res.status_code == 200:
+                    data = res.json().get("data", {})
+                    latest_files = data.get("latestFiles", [])
+                    if latest_files:
+                        deps = latest_files[0].get("dependencies", [])
+                        for d in deps:
+                            # 1 = Embedded, 3 = Required
+                            if d.get("relationType") in (1, 3):
+                                p_id = str(d.get("modId"))
+                                if p_id and p_id not in c_ids:
+                                    c_ids.append(p_id)
+            except Exception as e:
+                print(f"Error resolving CurseForge modpack dependencies: {e}")
+
         # Modrinth bulk lookup
         if m_ids:
             # Check cache first
