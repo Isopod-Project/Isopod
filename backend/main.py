@@ -1434,48 +1434,51 @@ async def import_instance(
         if generate_structures is not None:
             gen_struct_bool = generate_structures.lower() == 'true'
 
-        is_server_export = False
-        is_single_player_world = False
-        level_dat_path = None
-        compose_file_path = None
+        temp_extract_dir = os.path.join(target_path, "temp_extract")
+        os.makedirs(temp_extract_dir, exist_ok=True)
         
         with zipfile.ZipFile(tmp_path, 'r') as zipf:
-            names = zipf.namelist()
-            for name in names:
-                if name.endswith('docker-compose.yml') or name.endswith('docker-compose.yaml'):
-                    is_server_export = True
-                    compose_file_path = name
-                    break
-            
-            if not is_server_export:
-                for name in names:
-                    if name.lower().endswith('level.dat'):
-                        is_single_player_world = True
-                        level_dat_path = name
-                        break
+            for member in zipf.infolist():
+                filename_normalized = member.filename.replace('\\', '/')
+                if filename_normalized.startswith('/') or '..' in filename_normalized:
+                    continue
+                target_file = os.path.join(temp_extract_dir, filename_normalized)
+                if member.is_dir():
+                    os.makedirs(target_file, exist_ok=True)
+                else:
+                    os.makedirs(os.path.dirname(target_file), exist_ok=True)
+                    with zipf.open(member) as source, open(target_file, "wb") as target:
+                        shutil.copyfileobj(source, target)
                         
-        if not is_server_export and not is_single_player_world:
+        compose_file_found = None
+        level_dat_found = None
+        for root, dirs, files in os.walk(temp_extract_dir):
+            for file in files:
+                if file.lower() in ('docker-compose.yml', 'docker-compose.yaml'):
+                    compose_file_found = os.path.join(root, file)
+                    break
+                elif file.lower() == 'level.dat':
+                    level_dat_found = os.path.join(root, file)
+            if compose_file_found:
+                break
+                
+        if not compose_file_found and not level_dat_found:
             raise HTTPException(
                 status_code=400, 
                 detail="Invalid zip structure. Must contain a docker-compose.yml (for server exports) or level.dat (for single-player worlds)."
             )
             
-        if is_server_export:
-            prefix = os.path.dirname(compose_file_path)
-            
-            with zipfile.ZipFile(tmp_path, 'r') as zipf:
-                zipf.extractall(target_path)
+        if compose_file_found:
+            src_dir = os.path.dirname(compose_file_found)
+            for item in os.listdir(src_dir):
+                src_item = os.path.join(src_dir, item)
+                dst_item = os.path.join(target_path, item)
+                if item != "temp_extract":
+                    shutil.move(src_item, dst_item)
+                    
+            if os.path.exists(temp_extract_dir):
+                shutil.rmtree(temp_extract_dir)
                 
-            if prefix:
-                prefix_path = os.path.join(target_path, prefix)
-                for item in os.listdir(prefix_path):
-                    shutil.move(os.path.join(prefix_path, item), os.path.join(target_path, item))
-                try:
-                    shutil.rmtree(prefix_path)
-                except:
-                    pass
-                                
-            # Update docker-compose.yml to match the new slug and avoid port conflict
             compose_path = os.path.join(target_path, "docker-compose.yml")
             if os.path.exists(compose_path):
                 try:
@@ -1541,23 +1544,16 @@ async def import_instance(
                 except Exception as e:
                     print(f"Error updating compose after import: {e}")
         else:
-            # Extract single player world contents to target_path/data/world
-            prefix = os.path.dirname(level_dat_path)
-            
-            with zipfile.ZipFile(tmp_path, 'r') as zipf:
-                zipf.extractall(target_path)
-                
+            src_dir = os.path.dirname(level_dat_found)
             world_dir = os.path.join(target_path, "data", "world")
-            os.makedirs(os.path.dirname(world_dir), exist_ok=True)
-            
-            if prefix:
-                prefix_path = os.path.join(target_path, prefix)
-                shutil.move(prefix_path, world_dir)
-            else:
-                os.makedirs(world_dir, exist_ok=True)
-                for item in os.listdir(target_path):
-                    if item != "data":
-                        shutil.move(os.path.join(target_path, item), os.path.join(world_dir, item))
+            os.makedirs(world_dir, exist_ok=True)
+            for item in os.listdir(src_dir):
+                src_item = os.path.join(src_dir, item)
+                dst_item = os.path.join(world_dir, item)
+                shutil.move(src_item, dst_item)
+                
+            if os.path.exists(temp_extract_dir):
+                shutil.rmtree(temp_extract_dir)
                                 
             # Generate the default docker-compose.yml for this single player world
             used_ports = set()

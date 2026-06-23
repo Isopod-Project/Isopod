@@ -86,6 +86,8 @@ export default function App() {
   const [newName, setNewName] = useState("");
   const [newPort, setNewPort] = useState("25565");
   const [isCreating, setIsCreating] = useState(false);
+  const [importProgress, setImportProgress] = useState<number | null>(null);
+  const [importStatus, setImportStatus] = useState<string>("");
   
   // Prism-like Add Modal States
   const [addStep, setAddStep] = useState<number>(1);
@@ -425,23 +427,58 @@ export default function App() {
          formData.append("generate_structures", String(newGenerateStructures));
          if (newMemory) formData.append("memory", newMemory);
          
-         const res = await fetch("/api/instances/import", {
-          method: "POST",
-          body: formData
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.detail || "Failed to import instance");
-        }
-        const data = await res.json();
-        setInstances((prev: Instance[]) => [...prev, data]);
-        setIsAddModalOpen(false);
-        setImportFile(null);
-        setNewName("");
-        await showAlert("Instance imported successfully!", "Success");
-        fetchInstances();
-        setIsCreating(false);
-        return;
+         setImportProgress(0);
+         setImportStatus("Uploading ZIP file...");
+
+         const xhr = new XMLHttpRequest();
+         
+         const promise = new Promise<any>((resolve, reject) => {
+           xhr.upload.addEventListener("progress", (event) => {
+             if (event.lengthComputable) {
+               const percentage = Math.round((event.loaded / event.total) * 100);
+               setImportProgress(percentage);
+               if (percentage === 100) {
+                 setImportStatus("Extracting ZIP on server...");
+               }
+             }
+           });
+           
+           xhr.addEventListener("load", () => {
+             if (xhr.status >= 200 && xhr.status < 300) {
+               try {
+                 resolve(JSON.parse(xhr.responseText));
+               } catch (e) {
+                 resolve({ message: "Import completed" });
+               }
+             } else {
+               try {
+                 const err = JSON.parse(xhr.responseText);
+                 reject(new Error(err.detail || "Failed to import instance"));
+               } catch (e) {
+                 reject(new Error("Failed to import instance"));
+               }
+             }
+           });
+           
+           xhr.addEventListener("error", () => {
+             reject(new Error("Network upload error"));
+           });
+           
+           xhr.open("POST", "/api/instances/import");
+           xhr.send(formData);
+         });
+
+         const data = await promise;
+         setInstances((prev: Instance[]) => [...prev, data]);
+         setIsAddModalOpen(false);
+         setImportFile(null);
+         setNewName("");
+         setImportProgress(null);
+         setImportStatus("");
+         await showAlert("Instance imported successfully!", "Success");
+         fetchInstances();
+         setIsCreating(false);
+         return;
       }
 
       const body: any = { 
@@ -490,6 +527,8 @@ export default function App() {
       await showAlert("Failed to create instance", "Creation Failed");
     } finally {
       setIsCreating(false);
+      setImportProgress(null);
+      setImportStatus("");
     }
   };
 
@@ -2221,10 +2260,19 @@ export default function App() {
                       <AlertCircle className="w-4 h-4" /> Help
                    </button>
                    {isCreating && addTab === 'import' && (
-                      <span className="text-xs text-amber-500 font-medium animate-pulse">
-                         Uploading & extracting zip... Please wait, this may take a moment for large worlds.
-                      </span>
-                   )}
+                      <div className="flex flex-col gap-1.5 w-64 md:w-80">
+                         <div className="flex justify-between text-xs font-semibold text-neutral-300">
+                            <span className="animate-pulse text-amber-500">{importStatus || "Uploading & extracting..."}</span>
+                            {importProgress !== null && <span>{importProgress}%</span>}
+                         </div>
+                         <div className="w-full h-2 bg-neutral-800 rounded-full overflow-hidden border border-[#3A3A3A]">
+                            <div 
+                               className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-300 ease-out" 
+                               style={{ width: `${importProgress !== null ? importProgress : 50}%` }}
+                            />
+                         </div>
+                      </div>
+                    )}
                 </div>
                 <div className="flex gap-2">
                    {addStep === 2 && (
