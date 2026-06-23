@@ -272,17 +272,25 @@ async def get_instance_status(instance_id: str):
                # Support both top-level services or nested keys
                mc_config = services.get("mc") or list(services.values())[0]
                env = mc_config.get("environment", {})
-               version = env.get("VERSION", "Unknown")
+               if isinstance(env, list):
+                   env_dict = {}
+                   for item in env:
+                       if "=" in item:
+                           k, v = item.split("=", 1)
+                           env_dict[k] = v
+                   env = env_dict
+               version = env.get("VERSION", "Unknown") if isinstance(env, dict) else "Unknown"
                
                # Extract port
                ports = mc_config.get("ports", [])
                if ports:
-                   p_str = ports[0].split(":")[0]
+                   p_str = str(ports[0]).split(":")[0]
                    port = int(p_str)
         
         # Last online from docker-compose.yml mod date
         last_online = os.path.getmtime(compose_path)
-    except: pass
+    except Exception as e:
+        print(f"Error parsing compose for status: {e}")
 
     public_ip = await get_public_ip()
 
