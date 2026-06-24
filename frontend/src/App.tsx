@@ -2016,7 +2016,7 @@ export default function App() {
                                        Mod Loader
                                     </h4>
                                     <div className="flex bg-[#1E1E1E] rounded p-1 border border-[#323232] overflow-x-auto max-w-full">
-                                       {['VANILLA', 'FABRIC'].map(l => (
+                                       {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT', 'PAPER'].map(l => (
                                           <button 
                                              key={l}
                                              onClick={() => setSelectedAddLoader(l)}
@@ -2909,7 +2909,10 @@ export default function App() {
                           <div className="grid grid-cols-2 gap-4">
                              {[
                                 { id: "VANILLA", name: "Vanilla", icon: Gamepad2, desc: "Standard Minecraft experience" },
-                                { id: "FABRIC", name: "Fabric", icon: Cpu, desc: "Lightweight and modular" }
+                                { id: "FABRIC", name: "Fabric", icon: Cpu, desc: "Lightweight and modular" },
+                                { id: "FORGE", name: "Forge", icon: Settings, desc: "Traditional and powerful" },
+                                { id: "QUILT", name: "Quilt", icon: RefreshCw, desc: "The open community loader" },
+                                { id: "NEOFORGE", name: "NeoForge", icon: Layers, desc: "Modern community fork" }
                              ].map((l) => (
                                 <div 
                                    key={l.id}
