@@ -1401,7 +1401,27 @@ export default function App() {
 
    const selectedInstance = instances.find(i => i.id === selectedId);
    const selectedStatus = selectedId ? statuses[selectedId] : null;
-   const logs = selectedId ? (serverLogs[selectedId] || "") : "";
+
+   const getMergedLogs = (id: string) => {
+      const baseLogs = serverLogs[id] || "";
+      const manual = manualLogs[id] || [];
+      if (manual.length === 0) return baseLogs;
+
+      const lines = baseLogs.split('\n');
+      const mergedLines = [...lines];
+      manual.forEach(entry => {
+         if (!entry.content) return;
+         const anchorIdx = mergedLines.lastIndexOf(entry.anchor);
+         if (anchorIdx !== -1) {
+            mergedLines.splice(anchorIdx + 1, 0, ...entry.content.split('\n'));
+         } else {
+            mergedLines.push(...entry.content.split('\n'));
+         }
+      });
+      return mergedLines.join('\n');
+   };
+
+   const logs = selectedId ? getMergedLogs(selectedId) : "";
 
   // Fetch loader versions when selection changes (Add and Edit modals)
   useEffect(() => {
