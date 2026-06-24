@@ -843,6 +843,89 @@ async def get_mc_versions():
         cached_versions = {"time": now, "data": data}
         return data
 
+cached_compat_loaders = {} # { mc_version: {"time": timestamp, "loaders": list} }
+
+@app.get("/api/meta/compatible-loaders/{mc_version}")
+async def get_compatible_loaders(mc_version: str):
+    """Return list of loader IDs compatible with the given Minecraft version."""
+    now = time.time()
+    if mc_version in cached_compat_loaders:
+        entry = cached_compat_loaders[mc_version]
+        if now - entry["time"] < 3600: # 1 hour cache
+            return {"compatible": entry["loaders"]}
+
+    compatible = ["VANILLA"]
+    
+    # Check Fabric
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            res = await client.get("https://meta.fabricmc.net/v2/versions/game")
+            if res.status_code == 200:
+                fabric_versions = [v["version"] for v in res.json()]
+                if mc_version in fabric_versions:
+                    compatible.append("FABRIC")
+    except Exception as e:
+        print(f"Error checking Fabric compatibility: {e}")
+        compatible.append("FABRIC") # Fallback to true
+
+    # Check Quilt
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            res = await client.get("https://meta.quiltmc.org/v3/versions/game")
+            if res.status_code == 200:
+                quilt_versions = [v["version"] for v in res.json()]
+                if mc_version in quilt_versions:
+                    compatible.append("QUILT")
+    except Exception as e:
+        print(f"Error checking Quilt compatibility: {e}")
+
+    # Check Paper
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            res = await client.get("https://api.papermc.io/v2/projects/paper")
+            if res.status_code == 200:
+                paper_versions = res.json().get("versions", [])
+                if mc_version in paper_versions:
+                    compatible.append("PAPER")
+    except Exception as e:
+        print(f"Error checking Paper compatibility: {e}")
+
+    # Check NeoForge
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            res = await client.get("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml")
+            if res.status_code == 200:
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(res.text)
+                versions = [v.text for v in root.findall(".//version") if v.text]
+                prefix = mc_version
+                if mc_version.startswith("1."):
+                    parts = mc_version.split(".")
+                    if len(parts) >= 2:
+                        prefix = f"{parts[1]}.{parts[2]}" if len(parts) >= 3 else parts[1]
+                neoforge_compatible = [v for v in versions if v.startswith(f"{prefix}.")]
+                if neoforge_compatible:
+                    compatible.append("NEOFORGE")
+    except Exception as e:
+        print(f"Error checking NeoForge compatibility: {e}")
+
+    # Check Forge
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            res = await client.get("https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml")
+            if res.status_code == 200:
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(res.text)
+                versions = [v.text for v in root.findall(".//version") if v.text]
+                forge_compatible = [v for v in versions if v.startswith(f"{mc_version}-")]
+                if forge_compatible:
+                    compatible.append("FORGE")
+    except Exception as e:
+        print(f"Error checking Forge compatibility: {e}")
+
+    cached_compat_loaders[mc_version] = {"time": now, "loaders": compatible}
+    return {"compatible": compatible}
+
 @app.get("/api/meta/loaders/{loader}")
 async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
     """Fetch available versions for a specific mod loader since the beginning."""

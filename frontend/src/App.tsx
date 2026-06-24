@@ -158,6 +158,7 @@ export default function App() {
   const [consoleCommand, setConsoleCommand] = useState("");
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
+  const [compatibleLoaders, setCompatibleLoaders] = useState<string[]>(["VANILLA", "FABRIC", "FORGE", "NEOFORGE", "QUILT", "PAPER"]);
   const [isExecuting, setIsExecuting] = useState(false);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const scrollRef = useRef<HTMLPreElement>(null);
@@ -409,6 +410,49 @@ export default function App() {
        setIsLoaderLoading(false);
     }
   };
+
+  const fetchCompatibleLoaders = async (mcVersion: string) => {
+    if (!mcVersion || mcVersion === "latest") {
+       setCompatibleLoaders(["VANILLA", "FABRIC", "FORGE", "NEOFORGE", "QUILT", "PAPER"]);
+       return;
+    }
+    try {
+       const res = await fetch(`/api/meta/compatible-loaders/${mcVersion}`);
+       if (res.ok) {
+          const data = await res.json();
+          setCompatibleLoaders(data.compatible || ["VANILLA"]);
+       }
+    } catch (e) {
+       console.error("Failed to fetch compatible loaders", e);
+    }
+  };
+
+  useEffect(() => {
+     if (isAddModalOpen && selectedAddVersion) {
+        fetchCompatibleLoaders(selectedAddVersion);
+     }
+  }, [selectedAddVersion, isAddModalOpen]);
+
+  useEffect(() => {
+     if (isAddModalOpen && !compatibleLoaders.includes(selectedAddLoader)) {
+        setSelectedAddLoader("VANILLA");
+     }
+  }, [compatibleLoaders, selectedAddLoader, isAddModalOpen]);
+
+  useEffect(() => {
+     if (isEditModalOpen && config?.environment?.VERSION) {
+        fetchCompatibleLoaders(config.environment.VERSION);
+     }
+  }, [config?.environment?.VERSION, isEditModalOpen]);
+
+  useEffect(() => {
+     if (isEditModalOpen && config?.environment?.TYPE && !compatibleLoaders.includes(config.environment.TYPE)) {
+        setConfig(prev => ({
+           ...prev,
+           environment: { ...prev.environment, TYPE: "VANILLA" }
+        }));
+     }
+  }, [compatibleLoaders, config?.environment?.TYPE, isEditModalOpen]);
 
   const fetchModpackVersions = async (packId: string, provider: string) => {
     setIsModpackVersionsLoading(true);
@@ -2059,7 +2103,7 @@ export default function App() {
                                        Mod Loader
                                     </h4>
                                     <div className="flex bg-[#1E1E1E] rounded p-1 border border-[#323232] overflow-x-auto max-w-full">
-                                       {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT', 'PAPER'].map(l => (
+                                       {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT', 'PAPER'].filter(l => compatibleLoaders.includes(l)).map(l => (
                                           <button 
                                              key={l}
                                              onClick={() => setSelectedAddLoader(l)}
@@ -2956,7 +3000,7 @@ export default function App() {
                                 { id: "FORGE", name: "Forge", icon: Settings, desc: "Traditional and powerful" },
                                 { id: "QUILT", name: "Quilt", icon: RefreshCw, desc: "The open community loader" },
                                 { id: "NEOFORGE", name: "NeoForge", icon: Layers, desc: "Modern community fork" }
-                             ].map((l) => (
+                             ].filter(l => compatibleLoaders.includes(l.id)).map((l) => (
                                 <div 
                                    key={l.id}
                                    onClick={() => setConfig(prev => ({
