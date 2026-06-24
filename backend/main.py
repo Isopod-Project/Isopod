@@ -865,31 +865,20 @@ async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
                 return [{"id": v["version"], "stable": v["version"].count('-') == 0} for v in data]
 
             elif loader == "neoforge":
-                url = "https://bmclapi2.bangbang93.com/neoforge/list"
-                res = await client.get(url)
-                data = res.json()
-                versions = []
-                seen = set()
-                for v in reversed(data):
-                    if isinstance(v, dict) and "version" in v:
-                        ver = v["version"]
-                        if ver not in seen:
-                            seen.add(ver)
-                            versions.append({"id": ver, "stable": True})
-                return versions
+                 url = "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
+                 res = await client.get(url)
+                 import xml.etree.ElementTree as ET
+                 root = ET.fromstring(res.text)
+                 versions = [v.text for v in root.findall(".//version") if v.text]
+                 return [{"id": v, "stable": True} for v in reversed(versions)]
 
             elif loader == "forge":
-                url = "https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json"
-                res = await client.get(url)
-                data = res.json()
-                promos = data.get("promos", {})
-                versions = []
-                seen = set()
-                for k, v in reversed(list(promos.items())):
-                    if v not in seen:
-                        seen.add(v)
-                        versions.append({"id": v, "name": k, "stable": "recommended" in k})
-                return versions
+                 url = "https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml"
+                 res = await client.get(url)
+                 import xml.etree.ElementTree as ET
+                 root = ET.fromstring(res.text)
+                 versions = [v.text for v in root.findall(".//version") if v.text]
+                 return [{"id": v, "stable": True} for v in reversed(versions)]
 
             elif loader == "paper":
                 url = "https://api.papermc.io/v2/projects/paper"
