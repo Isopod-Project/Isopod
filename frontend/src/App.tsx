@@ -1439,16 +1439,23 @@ export default function App() {
    const selectedStatus = selectedId ? statuses[selectedId] : null;
    const logs = selectedId ? (serverLogs[selectedId] || "") : "";
 
-  // Fetch loader versions when selection changes
+  // Fetch loader versions when selection changes (Add and Edit modals)
   useEffect(() => {
     if (isAddModalOpen && selectedAddLoader !== "VANILLA") {
-       // Only fetch if we have an actual version ID or 'latest'
        const versionToFetch = selectedAddVersion === "latest" ? "" : selectedAddVersion;
        fetchLoaderVersions(selectedAddLoader, versionToFetch);
+    } else if (isEditModalOpen && editTab === "loader" && config?.environment) {
+       const loader = config.environment["TYPE"];
+       const mcVersion = config.environment["VERSION"] || "";
+       if (loader && loader !== "VANILLA") {
+          fetchLoaderVersions(loader, mcVersion === "latest" ? "" : mcVersion);
+       } else {
+          setLoaderVersions([]);
+       }
     } else {
        setLoaderVersions([]);
     }
-  }, [selectedAddLoader, selectedAddVersion, isAddModalOpen]);
+  }, [selectedAddLoader, selectedAddVersion, isAddModalOpen, isEditModalOpen, editTab, config?.environment?.TYPE, config?.environment?.VERSION]);
 
 
   const copyToClipboard = (text: string, id?: string) => {
@@ -2997,9 +3004,53 @@ export default function App() {
                                     });
                                  }}
                                 placeholder="latest"
-                             />
-                             <p className="text-[10px] text-neutral-500 mt-2 italic">Leave empty for latest recommended version.</p>
-                          </div>
+                              />
+                              <p className="text-[10px] text-neutral-500 mt-2 italic">Leave empty for latest recommended version.</p>
+                              
+                              {isLoaderLoading ? (
+                                 <div className="text-[10px] text-neutral-500 italic mt-2">Loading compatible versions...</div>
+                              ) : loaderVersions.length > 0 ? (
+                                 <div className="mt-3">
+                                    <label className="block text-[9px] font-bold text-neutral-500 uppercase tracking-widest mb-1.5">Compatible Versions</label>
+                                    <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-1">
+                                       {loaderVersions.map(lv => {
+                                          const isSelected = 
+                                             config.environment["LOADER_VERSION"] === lv.id || 
+                                             config.environment["FABRIC_LOADER_VERSION"] === lv.id ||
+                                             config.environment["FORGE_VERSION"] === lv.id ||
+                                             config.environment["NEOFORGE_VERSION"] === lv.id ||
+                                             config.environment["QUILT_LOADER_VERSION"] === lv.id;
+                                          return (
+                                             <button
+                                                key={lv.id}
+                                                type="button"
+                                                onClick={() => setConfig(prev => {
+                                                   const newEnv = { ...prev.environment };
+                                                   delete newEnv["FABRIC_LOADER_VERSION"];
+                                                   delete newEnv["FORGE_VERSION"];
+                                                   delete newEnv["FORGEVERSION"];
+                                                   delete newEnv["NEOFORGE_VERSION"];
+                                                   delete newEnv["NEOFORGEVERSION"];
+                                                   delete newEnv["QUILT_LOADER_VERSION"];
+                                                   newEnv["LOADER_VERSION"] = lv.id;
+                                                   return { ...prev, environment: newEnv };
+                                                })}
+                                                className={`text-[10px] px-2 py-0.5 rounded font-mono border transition-all ${
+                                                   isSelected
+                                                   ? 'bg-[#3E8ED0]/20 border-[#3E8ED0] text-[#3E8ED0] font-bold' 
+                                                   : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:border-neutral-600'
+                                                }`}
+                                             >
+                                                {lv.id} {!lv.stable && '(BETA)'}
+                                             </button>
+                                          );
+                                       })}
+                                    </div>
+                                 </div>
+                              ) : (
+                                 <div className="text-[10px] text-amber-500/80 italic mt-2">No specific compatible loader versions found for this MC version.</div>
+                              )}
+                           </div>
                        </div>
                     </div>
                 )}

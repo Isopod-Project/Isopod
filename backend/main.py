@@ -870,7 +870,14 @@ async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
                  import xml.etree.ElementTree as ET
                  root = ET.fromstring(res.text)
                  versions = [v.text for v in root.findall(".//version") if v.text]
-                 return [{"id": v, "stable": True} for v in reversed(versions)]
+                 if mc_version:
+                     prefix = mc_version
+                     if mc_version.startswith("1."):
+                         parts = mc_version.split(".")
+                         if len(parts) >= 2:
+                             prefix = f"{parts[1]}.{parts[2]}" if len(parts) >= 3 else parts[1]
+                     versions = [v for v in versions if v.startswith(f"{prefix}.")]
+                 return [{"id": v, "stable": "-beta" not in v} for v in reversed(versions)]
 
             elif loader == "forge":
                  url = "https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml"
@@ -878,14 +885,18 @@ async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
                  import xml.etree.ElementTree as ET
                  root = ET.fromstring(res.text)
                  versions = [v.text for v in root.findall(".//version") if v.text]
+                 if mc_version:
+                     versions = [v for v in versions if v.startswith(f"{mc_version}-")]
                  return [{"id": v, "stable": True} for v in reversed(versions)]
 
             elif loader == "paper":
-                url = "https://api.papermc.io/v2/projects/paper"
-                res = await client.get(url)
-                data = res.json()
-                versions = data.get("versions", [])
-                return [{"id": v, "stable": True} for v in reversed(versions)]
+                 url = "https://api.papermc.io/v2/projects/paper"
+                 res = await client.get(url)
+                 data = res.json()
+                 versions = data.get("versions", [])
+                 if mc_version:
+                     versions = [v for v in versions if v == mc_version]
+                 return [{"id": v, "stable": True} for v in reversed(versions)]
 
             elif loader == "spigot":
                 return [{"id": "latest", "stable": True}]
