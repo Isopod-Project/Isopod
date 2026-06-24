@@ -2437,10 +2437,25 @@ export default function App() {
                                <p className="text-xs text-neutral-500">Manage whitelist and player permissions (operator status).</p>
                             </div>
                          </div>
+                         <div className="flex items-center gap-2 bg-[#2D2D2D] border border-[#3A3A3A] px-4 py-2 rounded-lg">
+                            <span className="text-xs font-bold text-neutral-400 uppercase tracking-wider">Whitelist:</span>
+                            <button 
+                               onClick={() => setConfig(prev => ({
+                                  ...prev,
+                                  environment: { 
+                                     ...prev.environment, 
+                                     ENABLE_WHITELIST: prev.environment["ENABLE_WHITELIST"] === "true" ? "false" : "true" 
+                                  }
+                               }))}
+                               className={`px-3 py-1 rounded text-[10px] font-bold transition-all border ${config.environment["ENABLE_WHITELIST"] === "true" ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' : 'bg-neutral-800 border-neutral-700 text-neutral-500'}`}
+                            >
+                               {config.environment["ENABLE_WHITELIST"] === "true" ? 'ENABLED' : 'DISABLED'}
+                            </button>
+                         </div>
                       </div>
 
                       {/* Add Player Section */}
-                      <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg overflow-hidden shadow-xl">
+                      <div className={`bg-[#242424] border border-[#3A3A3A] rounded-lg overflow-hidden shadow-xl transition-all ${config.environment["ENABLE_WHITELIST"] !== "true" ? 'opacity-40 pointer-events-none select-none' : ''}`}>
                          <div className="px-4 py-3 bg-[#2D2D2D] border-b border-[#3A3A3A] flex justify-between items-center bg-gradient-to-r from-[#2D2D2D] to-[#242424]">
                             <span className="text-xs font-bold text-neutral-200 uppercase tracking-wider">Add Player to Whitelist</span>
                          </div>
@@ -2466,6 +2481,7 @@ export default function App() {
                                      type="text"
                                      value={userSearchText}
                                      onChange={(e) => setUserSearchText(e.target.value)}
+                                     disabled={config.environment["ENABLE_WHITELIST"] !== "true"}
                                      onKeyDown={(e) => {
                                         if (e.key === 'Enter' && userSearchText.trim()) {
                                            const targetName = userSearchPreview ? userSearchPreview.name : userSearchText.trim();
@@ -2521,6 +2537,7 @@ export default function App() {
                                         setUserSearchPreview(null);
                                      }
                                   }}
+                                  disabled={config.environment["ENABLE_WHITELIST"] !== "true"}
                                   className="px-6 py-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] rounded-lg text-sm font-bold transition-all text-white shadow-md shadow-[#3E8ED0]/10"
                                >
                                   Add Player
@@ -2578,9 +2595,17 @@ export default function App() {
                                                  onClick={() => {
                                                     setInstanceUsers(prev => prev.map((u, i) => i === idx ? { ...u, whitelisted: !u.whitelisted } : u));
                                                  }}
-                                                 className={`px-3 py-1 rounded text-[10px] font-bold transition-all border ${user.whitelisted ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' : 'bg-neutral-800 border-neutral-700 text-neutral-500'}`}
+                                                 disabled={config.environment["ENABLE_WHITELIST"] !== "true"}
+                                                 className={`px-3 py-1 rounded text-[10px] font-bold transition-all border ${
+                                                    config.environment["ENABLE_WHITELIST"] === "true"
+                                                    ? (user.whitelisted ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' : 'bg-neutral-800 border-neutral-700 text-neutral-500')
+                                                    : 'bg-neutral-900 border-neutral-800 text-neutral-600 opacity-50 cursor-not-allowed'
+                                                 }`}
                                               >
-                                                 {user.whitelisted ? 'WHITELISTED' : 'BYPASSED'}
+                                                 {config.environment["ENABLE_WHITELIST"] === "true"
+                                                  ? (user.whitelisted ? 'WHITELISTED' : 'BYPASSED')
+                                                  : 'DISABLED'
+                                                 }
                                               </button>
                                            </td>
                                            <td className="px-5 py-3">
@@ -3551,146 +3576,7 @@ export default function App() {
                              </div>
                           </div>
 
-                           <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg overflow-hidden shadow-xl">
-                              <div className="px-4 py-3 bg-[#2D2D2D] border-b border-[#3A3A3A] flex justify-between items-center bg-gradient-to-r from-[#2D2D2D] to-[#242424]">
-                                 <div className="flex items-center gap-2">
-                                    <Shield className="w-4 h-4 text-amber-500" />
-                                    <span className="text-xs font-bold text-neutral-200 uppercase tracking-wider">Access Control: Whitelist</span>
-                                 </div>
-                                 <div className="flex items-center gap-2">
-                                    <span className="text-[10px] text-neutral-500 font-bold uppercase">Status:</span>
-                                    <button 
-                                       onClick={() => setConfig(prev => ({
-                                          ...prev,
-                                          environment: { 
-                                             ...prev.environment, 
-                                             ENABLE_WHITELIST: prev.environment["ENABLE_WHITELIST"] === "true" ? "false" : "true" 
-                                          }
-                                       }))}
-                                       className={`px-3 py-1 rounded text-[10px] font-bold transition-all border ${config.environment["ENABLE_WHITELIST"] === "true" ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' : 'bg-neutral-800 border-neutral-700 text-neutral-500'}`}
-                                    >
-                                       {config.environment["ENABLE_WHITELIST"] === "true" ? 'ENABLED' : 'DISABLED'}
-                                    </button>
-                                 </div>
-                              </div>
-                              <div className={`p-5 space-y-5 transition-all ${config.environment["ENABLE_WHITELIST"] !== "true" ? 'opacity-40 pointer-events-none select-none' : ''}`}>
-                                 <div className="flex flex-col gap-3">
-                                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Add Whitelisted Player</label>
-                                    <div className="flex gap-2">
-                                       <div className="relative flex-1 group">
-                                          <div className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-[#1A1A1A] border border-[#333] flex items-center justify-center overflow-hidden">
-                                             {instanceWhitelistPreview ? (
-                                                <img 
-                                                   src={`https://crafatar.com/avatars/${instanceWhitelistPreview.uuid}?size=32&overlay`} 
-                                                   referrerPolicy="no-referrer"
-                                                   alt="" 
-                                                   className="w-full h-full"
-                                                   onError={(e) => {
-                                                      e.currentTarget.src = `https://minotar.net/avatar/${instanceWhitelistUser}/32`;
-                                                   }}
-                                                />
-                                             ) : (
-                                                <Users className="w-3 h-3 text-neutral-600" />
-                                             )}
-                                          </div>
-                                          <input 
-                                             type="text"
-                                             value={instanceWhitelistUser}
-                                             onChange={(e) => setInstanceWhitelistUser(e.target.value)}
-                                             disabled={config.environment["ENABLE_WHITELIST"] !== "true"}
-                                             onKeyDown={(e) => {
-                                                if (e.key === 'Enter' && instanceWhitelistUser) {
-                                                   const current = (config.environment["WHITELIST"] || "").split(',').map(s => s.trim()).filter(Boolean);
-                                                   if (!current.includes(instanceWhitelistUser.trim())) {
-                                                      const newList = [...current, instanceWhitelistUser.trim()].join(',');
-                                                      setConfig(prev => ({ ...prev, environment: { ...prev.environment, WHITELIST: newList } }));
-                                                   }
-                                                   setInstanceWhitelistUser("");
-                                                   setInstanceWhitelistPreview(null);
-                                                }
-                                             }}
-                                             placeholder="Minecraft Gamertag..."
-                                             className="w-full bg-[#1A1A1A] border border-[#333] pl-12 pr-4 py-3 rounded-lg focus:outline-none focus:border-amber-500/30 text-sm placeholder:text-neutral-700 transition-all font-medium"
-                                          />
-                                          {instanceWhitelistPreview && (
-                                             <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-amber-500/80 bg-amber-500/5 px-2 py-0.5 rounded border border-amber-500/20">
-                                                FOUND
-                                             </div>
-                                          )}
-                                          
-                                          {/* Dropdown Suggestions */}
-                                          {instanceWhitelistUser.length >= 1 && (
-                                             <div className="absolute top-full left-0 right-0 mt-1 bg-[#1E1E1E] border border-[#333] rounded-lg shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-200">
-                                                {seenPlayers.filter(p => p.name.toLowerCase().includes(instanceWhitelistUser.toLowerCase())).slice(0, 5).map(p => (
-                                                   <div 
-                                                      key={p.uuid}
-                                                      onClick={() => {
-                                                         setInstanceWhitelistUser(p.name);
-                                                         setInstanceWhitelistPreview(p);
-                                                      }}
-                                                      className="flex items-center gap-3 px-4 py-2.5 hover:bg-[#333] cursor-pointer border-b border-[#282828] last:border-0 group"
-                                                   >
-                                                      <img src={`https://minotar.net/avatar/${p.name}/16`} alt="" className="w-4 h-4 rounded-sm" />
-                                                      <span className="text-sm font-medium text-neutral-300 group-hover:text-white">{p.name}</span>
-                                                      <span className="text-[10px] text-neutral-600 font-mono ml-auto">RECENT</span>
-                                                   </div>
-                                                ))}
-                                                {seenPlayers.filter(p => p.name.toLowerCase().includes(instanceWhitelistUser.toLowerCase())).length === 0 && !instanceWhitelistPreview && !isVerifyingUser && (
-                                                   <div className="px-4 py-2.5 text-xs text-neutral-600 italic">No matches found in history.</div>
-                                                )}
-                                             </div>
-                                          )}
-                                       </div>
-                                       <button 
-                                          onClick={() => {
-                                             if (instanceWhitelistUser.trim()) {
-                                                const current = (config.environment["WHITELIST"] || "").split(',').map(s => s.trim()).filter(Boolean);
-                                                if (!current.includes(instanceWhitelistUser.trim())) {
-                                                   const newList = [...current, instanceWhitelistUser.trim()].join(',');
-                                                   setConfig(prev => ({ ...prev, environment: { ...prev.environment, WHITELIST: newList } }));
-                                                }
-                                                setInstanceWhitelistUser("");
-                                                setInstanceWhitelistPreview(null);
-                                             }
-                                          }}
-                                          disabled={config.environment["ENABLE_WHITELIST"] !== "true"}
-                                          className="px-6 py-2 bg-neutral-800 hover:bg-neutral-700 rounded-lg text-sm font-bold transition-all border border-neutral-700 text-neutral-300"
-                                       >
-                                          Add
-                                       </button>
-                                    </div>
-                                    
-                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 min-h-[60px] p-4 bg-[#141414] rounded-xl border border-[#2D2D2D] shadow-inner">
-                                       {(config.environment["WHITELIST"] || "").split(',').filter(Boolean).length === 0 ? (
-                                          <div className="col-span-full flex flex-col items-center justify-center p-4 text-neutral-700 text-xs gap-2">
-                                             <Shield className="w-5 h-5 opacity-20" />
-                                             <span className="italic">No users specifically whitelisted in environment.</span>
-                                          </div>
-                                       ) : (
-                                          (config.environment["WHITELIST"] || "").split(',').map(s => s.trim()).filter(Boolean).map(user => (
-                                             <div key={user} className="flex items-center justify-between gap-2 px-3 py-2 bg-[#1A1A1A] border border-[#2D2D2D] rounded-lg group hover:border-amber-500/30 transition-all">
-                                                <div className="flex items-center gap-2 min-w-0">
-                                                   <img src={`https://minotar.net/avatar/${user}/16`} alt="" className="w-4 h-4 rounded-sm" />
-                                                   <span className="text-[11px] font-bold text-neutral-300 truncate">{user}</span>
-                                                </div>
-                                                <button 
-                                                   onClick={() => {
-                                                      const current = (config.environment["WHITELIST"] || "").split(',').map(s => s.trim()).filter(Boolean);
-                                                      const newList = current.filter(u => u !== user).join(',');
-                                                      setConfig(prev => ({ ...prev, environment: { ...prev.environment, WHITELIST: newList } }));
-                                                   }}
-                                                   disabled={config.environment["ENABLE_WHITELIST"] !== "true"}
-                                                   className="text-neutral-600 hover:text-red-500 transition-colors"
-                                                >
-                                                   <X className="w-3.5 h-3.5" />
-                                                </button>
-                                             </div>
-                                          ))
-                                       )}
-                                    </div>
-                                 </div>
-                              </div>
-                           </div>
+
 
                           <div className="bg-[#3D2525]/10 border border-[#4D2525] p-4 rounded-lg">
                              <div className="flex items-center gap-2 text-red-400 mb-2 font-bold text-sm">
