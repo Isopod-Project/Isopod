@@ -83,6 +83,7 @@ class CreateInstanceRequest(BaseModel):
     loader_version: Optional[str] = "latest"
     modrinth_id: Optional[str] = None
     cf_id: Optional[str] = None
+    modpack_version: Optional[str] = None
     group: Optional[str] = "No group"
     icon_url: Optional[str] = None
     memory: Optional[str] = "1G"
@@ -933,6 +934,93 @@ async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
 
     return []
 
+def get_java_tag_for_mc_version(mc_version: str) -> str:
+    if not mc_version:
+        return "java21"
+    
+    parts = mc_version.split(".")
+    try:
+        if len(parts) >= 2:
+            minor = int(parts[1])
+            if minor >= 21:
+                return "java21"
+            elif minor >= 20:
+                if len(parts) >= 3 and int(parts[2]) >= 5:
+                    return "java21"
+                return "java17"
+            elif minor >= 18:
+                return "java17"
+            elif minor >= 17:
+                return "java17"
+            else:
+                return "java8"
+    except Exception as e:
+        print(f"Error parsing MC version '{mc_version}' for Java mapping: {e}")
+    
+    if "1.21" in mc_version or "1.20.5" in mc_version or "1.20.6" in mc_version:
+        return "java21"
+    if "1.20" in mc_version or "1.19" in mc_version or "1.18" in mc_version:
+        return "java17"
+    
+    return "java21"
+
+@app.get("/api/mods/modrinth/{project_id}/versions")
+async def get_modrinth_project_versions(project_id: str):
+    url = f"https://api.modrinth.com/v2/project/{project_id}/version"
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url)
+            if res.status_code == 200:
+                versions = res.json()
+                results = []
+                for v in versions:
+                    results.append({
+                        "id": v["id"],
+                        "version_number": v["version_number"],
+                        "name": v["name"],
+                        "game_versions": v["game_versions"],
+                        "loaders": v["loaders"],
+                        "version_type": v["version_type"]
+                    })
+                return results
+            else:
+                raise HTTPException(status_code=res.status_code, detail="Failed to fetch Modrinth versions")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Modrinth API error: {str(e)}")
+
+@app.get("/api/mods/curseforge/{project_id}/versions")
+async def get_curseforge_project_versions(project_id: str):
+    url = f"https://api.curse.tools/v1/cf/mods/{project_id}/files"
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url)
+            if res.status_code == 200:
+                files = res.json().get("data", [])
+                results = []
+                for f in files:
+                    game_versions = []
+                    loaders = []
+                    for ver in f.get("gameVersions", []):
+                        ver_lower = ver.lower()
+                        if ver_lower in ["fabric", "forge", "quilt", "neoforge"]:
+                            loaders.append(ver_lower)
+                        elif ver and ver[0].isdigit():
+                            game_versions.append(ver)
+                    
+                    results.append({
+                        "id": str(f["id"]),
+                        "version_number": f.get("displayName", f.get("fileName", "Unknown")),
+                        "name": f.get("displayName", f.get("fileName", "Unknown")),
+                        "game_versions": game_versions,
+                        "loaders": loaders,
+                        "version_type": "release" if f.get("releaseType") == 1 else ("beta" if f.get("releaseType") == 2 else "alpha")
+                    })
+                return results
+            else:
+                raise HTTPException(status_code=res.status_code, detail="Failed to fetch CurseForge versions")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"CurseForge API error: {str(e)}")
+
 @app.get("/api/mods/search/modrinth")
 async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None, class_type: str = "mod", only_server_side: bool = True):
     # Handle "undefined" literals from frontend
@@ -1062,7 +1150,7 @@ def generate_slug(text: str) -> str:
     return slug.strip('-')
 
 @app.post("/api/instances")
-def create_instance(req: CreateInstanceRequest):
+async def create_instance(req: CreateInstanceRequest):
     slug = generate_slug(req.name)
     path = os.path.join(SERVERS_DIR, slug)
     if os.path.exists(path):
@@ -1119,20 +1207,87 @@ def create_instance(req: CreateInstanceRequest):
         else:
             env.append(f"LOADER_VERSION={req.loader_version}")
 
+    mc_version = None
+
     if req.modrinth_id:
+        # Resolve Modrinth version metadata for Java version & Minecraft version
+        try:
+            async with httpx.AsyncClient() as client:
+                if req.modpack_version:
+                    res = await client.get(f"https://api.modrinth.com/v2/version/{req.modpack_version}")
+                    if res.status_code == 200:
+                        vdata = res.json()
+                        if vdata.get("game_versions"):
+                            mc_version = vdata["game_versions"][0]
+                else:
+                    res = await client.get(f"https://api.modrinth.com/v2/project/{req.modrinth_id}/version")
+                    if res.status_code == 200:
+                        versions = res.json()
+                        if versions:
+                            vdata = versions[0]
+                            req.modpack_version = vdata["id"]
+                            if vdata.get("game_versions"):
+                                mc_version = vdata["game_versions"][0]
+        except Exception as e:
+            print(f"Error fetching Modrinth version details: {e}")
+
         # Replace TYPE=... with TYPE=MODRINTH for Modrinth modpack
         for i, val in enumerate(env):
             if val.startswith("TYPE="):
                 env[i] = "TYPE=MODRINTH"
                 break
         env.append(f"MODRINTH_MODPACK={req.modrinth_id}")
+        if req.modpack_version:
+            env.append(f"MODRINTH_VERSION={req.modpack_version}")
+
     if req.cf_id:
+        file_id = None
+        # If curseforge, req.modpack_version is the file ID
+        try:
+            async with httpx.AsyncClient() as client:
+                if req.modpack_version:
+                    file_id = req.modpack_version
+                else:
+                    res = await client.get(f"https://api.curse.tools/v1/cf/mods/{req.cf_id}")
+                    if res.status_code == 200:
+                        data = res.json().get("data", {})
+                        latest_files = data.get("latestFiles", [])
+                        if latest_files:
+                            file_id = str(latest_files[0]["id"])
+                            req.modpack_version = file_id
+                            for ver in latest_files[0].get("gameVersions", []):
+                                if ver and ver[0].isdigit():
+                                    mc_version = ver
+                                    break
+                
+                if file_id and not mc_version:
+                    res = await client.get(f"https://api.curse.tools/v1/cf/mods/{req.cf_id}/files/{file_id}")
+                    if res.status_code == 200:
+                        fdata = res.json().get("data", {})
+                        for ver in fdata.get("gameVersions", []):
+                            if ver and ver[0].isdigit():
+                                mc_version = ver
+                                break
+        except Exception as e:
+            print(f"Error fetching CurseForge version details: {e}")
+
         # Replace TYPE=... with TYPE=AUTO_CURSEFORGE for CurseForge modpack
         for i, val in enumerate(env):
             if val.startswith("TYPE="):
                 env[i] = "TYPE=AUTO_CURSEFORGE"
                 break
         env.append(f"CF_SLUG={req.cf_id}")
+        if req.modpack_version:
+            env.append(f"CF_FILE_ID={req.modpack_version}")
+
+    # Set correct java version and Minecraft version based on resolved version
+    if mc_version:
+        java_tag = get_java_tag_for_mc_version(mc_version)
+        compose_content["services"]["mc"]["image"] = f"itzg/minecraft-server:{java_tag}"
+        for i, val in enumerate(env):
+            if val.startswith("VERSION="):
+                env[i] = f"VERSION={mc_version}"
+                break
     
     with open(os.path.join(path, "docker-compose.yml"), "w") as f:
         yaml.dump(compose_content, f, default_flow_style=False)

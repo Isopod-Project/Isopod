@@ -97,6 +97,9 @@ export default function App() {
   const [modpackResults, setModpackResults] = useState<any[]>([]);
   const [isModpackLoading, setIsModpackLoading] = useState(false);
   const [selectedModpack, setSelectedModpack] = useState<any>(null);
+  const [modpackVersions, setModpackVersions] = useState<any[]>([]);
+  const [selectedModpackVersion, setSelectedModpackVersion] = useState<string>("");
+  const [isModpackVersionsLoading, setIsModpackVersionsLoading] = useState(false);
   const [versionSearch, setVersionSearch] = useState("");
   const [versionFilters, setVersionFilters] = useState({
     Releases: true,
@@ -421,6 +424,28 @@ export default function App() {
     }
   };
 
+  const fetchModpackVersions = async (packId: string, provider: string) => {
+    setIsModpackVersionsLoading(true);
+    try {
+      const res = await fetch(`/api/mods/${provider}/${packId}/versions`);
+      if (!res.ok) throw new Error("Failed to fetch modpack versions");
+      const data = await res.json();
+      setModpackVersions(data);
+      if (data && data.length > 0) {
+        const latestRelease = data.find((v: any) => v.version_type === "release") || data[0];
+        setSelectedModpackVersion(latestRelease.id);
+      } else {
+        setSelectedModpackVersion("");
+      }
+    } catch (e) {
+      console.error("Failed to fetch modpack versions", e);
+      setModpackVersions([]);
+      setSelectedModpackVersion("");
+    } finally {
+      setIsModpackVersionsLoading(false);
+    }
+  };
+
   const handleAddInstance = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsCreating(true);
@@ -433,6 +458,7 @@ export default function App() {
         loader_version: selectedAddLoaderVersion,
         modrinth_id: addTab === 'modrinth' && selectedModpack ? selectedModpack.id : null,
         cf_id: addTab === 'curseforge' && selectedModpack ? selectedModpack.id : null,
+        modpack_version: (addTab === 'modrinth' || addTab === 'curseforge') && selectedModpack ? selectedModpackVersion : null,
         seed: newSeed,
         level_type: newLevelType,
         difficulty: newDifficulty,
@@ -455,6 +481,8 @@ export default function App() {
       // Reset states
       setNewName("");
       setSelectedModpack(null);
+      setModpackVersions([]);
+      setSelectedModpackVersion("");
       setSelectedAddVersion("latest");
       setSelectedAddLoader("VANILLA");
       setSelectedAddLoaderVersion("latest");
@@ -2066,6 +2094,7 @@ export default function App() {
                                           onClick={() => {
                                              setSelectedModpack(pack);
                                              if (!newName) setNewName(pack.name);
+                                             fetchModpackVersions(pack.id, addTab);
                                           }}
                                           className={`flex items-center gap-4 p-3 rounded-lg border cursor-pointer transition-all ${selectedModpack?.id === pack.id ? 'bg-[#3E8ED0]/20 border-[#3E8ED0] shadow-lg shadow-[#3E8ED0]/5' : 'bg-[#222] border-[#333] hover:bg-[#282828] hover:border-[#444]'}`}
                                        >
@@ -2081,6 +2110,51 @@ export default function App() {
                                              <div className="flex items-center gap-4 mt-1">
                                                 <span className="text-[9px] font-bold text-neutral-500 uppercase flex items-center gap-1"><RefreshCw className="w-2.5 h-2.5" /> {(pack.downloads || 0).toLocaleString()} DL</span>
                                              </div>
+                                             {selectedModpack?.id === pack.id && (
+                                                <div className="mt-3 pt-3 border-t border-[#3E8ED0]/20 flex flex-col gap-2" onClick={(e) => e.stopPropagation()}>
+                                                   <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">Select Version</label>
+                                                   {isModpackVersionsLoading ? (
+                                                      <div className="flex items-center gap-2 text-xs text-neutral-500">
+                                                         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                                         <span>Loading versions...</span>
+                                                      </div>
+                                                   ) : (
+                                                      <div className="flex flex-col gap-1.5">
+                                                         <select 
+                                                            value={selectedModpackVersion}
+                                                            onChange={(e) => setSelectedModpackVersion(e.target.value)}
+                                                            className="w-full bg-[#141414] border border-[#3E8ED0]/40 rounded p-1.5 text-xs text-[#E0E0E0] focus:outline-none focus:border-[#3E8ED0] font-medium"
+                                                         >
+                                                            {modpackVersions.map((v: any) => (
+                                                               <option key={v.id} value={v.id}>
+                                                                  {v.name} ({v.game_versions?.join(', ') || 'unknown MC'})
+                                                               </option>
+                                                            ))}
+                                                         </select>
+                                                         {(() => {
+                                                            const activeVer = modpackVersions.find((v: any) => v.id === selectedModpackVersion);
+                                                            if (!activeVer) return null;
+                                                            return (
+                                                               <div className="flex flex-wrap gap-x-3 gap-y-1 mt-0.5 text-[10px] text-neutral-500">
+                                                                  <span className="flex items-center gap-1">
+                                                                     <span className="font-semibold text-neutral-400">Minecraft:</span> {activeVer.game_versions?.join(', ') || 'N/A'}
+                                                                  </span>
+                                                                  <span className="flex items-center gap-1">
+                                                                     <span className="font-semibold text-neutral-400">Loader:</span> {activeVer.loaders?.join(', ') || 'N/A'}
+                                                                  </span>
+                                                                  <span className="flex items-center gap-1">
+                                                                     <span className="font-semibold text-neutral-400">Type:</span> 
+                                                                     <span className={`px-1 rounded text-[9px] uppercase font-bold ${activeVer.version_type === 'release' ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400'}`}>
+                                                                        {activeVer.version_type || 'N/A'}
+                                                                     </span>
+                                                                  </span>
+                                                               </div>
+                                                            );
+                                                         })()}
+                                                      </div>
+                                                   )}
+                                                </div>
+                                             )}
                                           </div>
                                        </div>
                                     ))
@@ -2214,9 +2288,9 @@ export default function App() {
                    {addStep === 1 ? (
                       <button 
                         onClick={() => setAddStep(2)}
-                        disabled={!newName || (addTab !== 'custom' && addTab !== 'import' && !selectedModpack)}
+                        disabled={!newName || (addTab !== 'custom' && addTab !== 'import' && (!selectedModpack || !selectedModpackVersion))}
                         className={`flex items-center gap-2 px-8 py-2 rounded font-bold text-sm shadow-xl transition-all ${
-                          !newName || (addTab !== 'custom' && addTab !== 'import' && !selectedModpack) ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed border border-[#333]' : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white shadow-[#3E8ED0]/10'
+                          !newName || (addTab !== 'custom' && addTab !== 'import' && (!selectedModpack || !selectedModpackVersion)) ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed border border-[#333]' : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white shadow-[#3E8ED0]/10'
                         }`}
                       >
                         Next <ChevronRight className="w-4 h-4" />
