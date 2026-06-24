@@ -86,6 +86,8 @@ export default function App() {
   const [newName, setNewName] = useState("");
   const [newPort, setNewPort] = useState("25565");
   const [isCreating, setIsCreating] = useState(false);
+  const [importProgress, setImportProgress] = useState<number | null>(null);
+  const [importStatus, setImportStatus] = useState<string>("");
   
   // Prism-like Add Modal States
   const [addStep, setAddStep] = useState<number>(1);
@@ -100,6 +102,7 @@ export default function App() {
   const [modpackVersions, setModpackVersions] = useState<any[]>([]);
   const [selectedModpackVersion, setSelectedModpackVersion] = useState<string>("");
   const [isModpackVersionsLoading, setIsModpackVersionsLoading] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
   const [versionSearch, setVersionSearch] = useState("");
   const [versionFilters, setVersionFilters] = useState({
     Releases: true,
@@ -312,30 +315,13 @@ export default function App() {
     }
   };
 
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      setIsCreating(true);
-      try {
-         const formData = new FormData();
-         formData.append("file", file);
-         const res = await fetch("/api/instances/import", { method: "POST", body: formData });
-         if (res.ok) {
-            const data = await res.json();
-            await fetchInstances();
-            setSelectedId(data.id);
-            setIsAddModalOpen(false);
-            await showAlert("Instance imported successfully!", "Success");
-         } else {
-            const err = await res.json().catch(() => ({}));
-            await showAlert(`Failed to import: ${err.detail || 'Server error'}`, "Error");
-         }
-      } catch (err) {
-         await showAlert("Error uploading instance zip.", "Error");
-      } finally {
-         setIsCreating(false);
-         if (e.target) e.target.value = '';
-      }
+      setImportFile(file);
+      const baseName = file.name.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ");
+      setNewName(baseName);
+      e.target.value = '';
   };
 
   const handleStart = async (id: string, e: React.MouseEvent) => {
@@ -450,6 +436,77 @@ export default function App() {
     e.preventDefault();
     setIsCreating(true);
     try {
+      if (addTab === 'import') {
+        if (!importFile) {
+          await showAlert("Please select a ZIP file first.", "Error");
+          setIsCreating(false);
+          return;
+        }
+         const formData = new FormData();
+         formData.append("file", importFile);
+         if (newName) formData.append("name", newName);
+         if (newPort) formData.append("port", newPort);
+         if (newDifficulty) formData.append("difficulty", newDifficulty);
+         if (newGamemode) formData.append("gamemode", newGamemode);
+         if (newSeed) formData.append("seed", newSeed);
+         if (newLevelType) formData.append("level_type", newLevelType);
+         formData.append("generate_structures", String(newGenerateStructures));
+         if (newMemory) formData.append("memory", newMemory);
+         
+         setImportProgress(0);
+         setImportStatus("Uploading ZIP file...");
+
+         const xhr = new XMLHttpRequest();
+         
+         const promise = new Promise<any>((resolve, reject) => {
+           xhr.upload.addEventListener("progress", (event) => {
+             if (event.lengthComputable) {
+               const percentage = Math.round((event.loaded / event.total) * 100);
+               setImportProgress(percentage);
+               if (percentage === 100) {
+                 setImportStatus("Extracting ZIP on server...");
+               }
+             }
+           });
+           
+           xhr.addEventListener("load", () => {
+             if (xhr.status >= 200 && xhr.status < 300) {
+               try {
+                 resolve(JSON.parse(xhr.responseText));
+               } catch (e) {
+                 resolve({ message: "Import completed" });
+               }
+             } else {
+               try {
+                 const err = JSON.parse(xhr.responseText);
+                 reject(new Error(err.detail || "Failed to import instance"));
+               } catch (e) {
+                 reject(new Error("Failed to import instance"));
+               }
+             }
+           });
+           
+           xhr.addEventListener("error", () => {
+             reject(new Error("Network upload error"));
+           });
+           
+           xhr.open("POST", "/api/instances/import");
+           xhr.send(formData);
+         });
+
+         const data = await promise;
+         setInstances((prev: Instance[]) => [...prev, data]);
+         setIsAddModalOpen(false);
+         setImportFile(null);
+         setNewName("");
+         setImportProgress(null);
+         setImportStatus("");
+         await showAlert("Instance imported successfully!", "Success");
+         fetchInstances();
+         setIsCreating(false);
+         return;
+      }
+
       const body: any = { 
         name: newName, 
         template: selectedAddLoader.toLowerCase(), 
@@ -499,6 +556,8 @@ export default function App() {
       await showAlert("Failed to create instance", "Creation Failed");
     } finally {
       setIsCreating(false);
+      setImportProgress(null);
+      setImportStatus("");
     }
   };
 
@@ -1410,6 +1469,7 @@ export default function App() {
                 setSelectedAddVersion("latest");
                 setSelectedAddLoader("VANILLA");
                 setSelectedModpack(null);
+                setImportFile(null);
              }}
             className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium"
           >
@@ -2032,13 +2092,36 @@ export default function App() {
                                  <Database className="w-10 h-10 text-[#3E8ED0]" />
                               </div>
                               <div className="space-y-2">
-                                 <h3 className="text-xl font-bold text-white">Import Existing Server</h3>
-                                 <p className="text-sm text-neutral-400 max-w-sm">Place your server files in a folder within your servers directory, then select it here to begin configuration.</p>
+                                 <h3 className="text-xl font-bold text-white">
+                                    {importFile ? "File Selected" : "Import Server / World"}
+                                 </h3>
+                                 <p className="text-sm text-neutral-400 max-w-sm">
+                                    {importFile ? (
+                                       <span className="font-mono text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20 block truncate max-w-xs mx-auto">
+                                          {importFile.name}
+                                       </span>
+                                    ) : (
+                                       "Upload an Isopod server export (.zip) or a Minecraft singleplayer world (.zip containing level.dat) to create a new server instance."
+                                    )}
+                                 </p>
                               </div>
-                              <label className="px-8 py-3 bg-[#333] hover:bg-[#444] rounded-lg font-bold text-white transition-all cursor-pointer">
-                                  Browse Zip File
-                                  <input type="file" className="hidden" accept=".zip" onChange={handleImport} />
-                              </label>
+                              <div className="flex gap-2">
+                                 <label className="px-6 py-2.5 bg-[#3E8ED0] hover:bg-[#2B6A9E] rounded-lg font-bold text-white transition-all cursor-pointer shadow-lg shadow-[#3E8ED0]/15 text-sm">
+                                     {importFile ? "Change Zip File" : "Browse Zip File"}
+                                     <input type="file" className="hidden" accept=".zip" onChange={handleImport} />
+                                 </label>
+                                 {importFile && (
+                                    <button 
+                                       onClick={() => {
+                                          setImportFile(null);
+                                          setNewName("");
+                                       }}
+                                       className="px-6 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-500 rounded-lg font-bold transition-all text-sm"
+                                    >
+                                       Clear
+                                    </button>
+                                 )}
+                              </div>
                            </div>
                         )}
 
@@ -2267,9 +2350,25 @@ export default function App() {
 
              {/* Bottom Actions */}
              <div className="p-4 bg-[#2D2D2D] border-t border-[#3A3A3A] flex justify-between items-center px-6">
-                <button className="flex items-center gap-2 text-neutral-500 hover:text-white transition-colors text-xs font-medium">
-                   <AlertCircle className="w-4 h-4" /> Help
-                </button>
+                <div className="flex items-center gap-4">
+                   <button className="flex items-center gap-2 text-neutral-500 hover:text-white transition-colors text-xs font-medium">
+                      <AlertCircle className="w-4 h-4" /> Help
+                   </button>
+                   {isCreating && addTab === 'import' && (
+                      <div className="flex flex-col gap-1.5 w-64 md:w-80">
+                         <div className="flex justify-between text-xs font-semibold text-neutral-300">
+                            <span className="animate-pulse text-amber-500">{importStatus || "Uploading & extracting..."}</span>
+                            {importProgress !== null && <span>{importProgress}%</span>}
+                         </div>
+                         <div className="w-full h-2 bg-neutral-800 rounded-full overflow-hidden border border-[#3A3A3A]">
+                            <div 
+                               className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-300 ease-out" 
+                               style={{ width: `${importProgress !== null ? importProgress : 50}%` }}
+                            />
+                         </div>
+                      </div>
+                    )}
+                </div>
                 <div className="flex gap-2">
                    {addStep === 2 && (
                       <button 
@@ -2288,9 +2387,9 @@ export default function App() {
                    {addStep === 1 ? (
                       <button 
                         onClick={() => setAddStep(2)}
-                        disabled={!newName || (addTab !== 'custom' && addTab !== 'import' && (!selectedModpack || !selectedModpackVersion))}
+                        disabled={!newName || (addTab === 'import' && !importFile) || (addTab !== 'custom' && addTab !== 'import' && (!selectedModpack || !selectedModpackVersion))}
                         className={`flex items-center gap-2 px-8 py-2 rounded font-bold text-sm shadow-xl transition-all ${
-                          !newName || (addTab !== 'custom' && addTab !== 'import' && (!selectedModpack || !selectedModpackVersion)) ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed border border-[#333]' : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white shadow-[#3E8ED0]/10'
+                          !newName || (addTab === 'import' && !importFile) || (addTab !== 'custom' && addTab !== 'import' && (!selectedModpack || !selectedModpackVersion)) ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed border border-[#333]' : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white shadow-[#3E8ED0]/10'
                         }`}
                       >
                         Next <ChevronRight className="w-4 h-4" />
