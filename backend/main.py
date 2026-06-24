@@ -976,6 +976,36 @@ def get_java_tag_for_mc_version(mc_version: str) -> str:
     
     return "java21"
 
+def is_client_only_mod(filename: str) -> bool:
+    fn = filename.lower()
+    if fn.endswith(".jar"):
+        fn = fn[:-4]
+    
+    # Normalize: strip all non-alphanumeric chars
+    import re
+    norm = re.sub(r'[^a-z0-9]', '', fn)
+    
+    # Common client-side indicators
+    client_indicators = [
+        "sodium", "rubidium", "embeddium", "iris", "oculus", "modmenu", "continuity",
+        "entityculling", "immediatelyfast", "dynamicfps", "e4mc", "controlify",
+        "reesessodiumoptions", "sodiumextra", "bettergrassify", "cubeswithoutborders",
+        "animatica", "skyboxify", "puzzle", "presencefootsteps", "soundphysics",
+        "borderlessfullscreen", "languagereload", "morechathistory", "mainmenucredits",
+        "crashassistant", "bettermounthud", "capeprovider", "zoomify", "debugify",
+        "fastquit", "nochatreports", "optigui", "litematica", "minihud", "tweakeroo",
+        "lambdynamiclights", "bobby", "distanthorizons", "fancymenu", "konkrete",
+        "controlling", "searchables", "customskinloader", "fabrishot", "perspectivemod",
+        "chunkfade", "shulboxtooltip", "itemphysics", "ambience", "visuality",
+        "skinlayers", "3dskinlayers", "wavesurfer", "legendarytooltips"
+    ]
+    
+    for indicator in client_indicators:
+        if norm.startswith(indicator):
+            return True
+            
+    return False
+
 @app.get("/api/mods/modrinth/{project_id}/versions")
 async def get_modrinth_project_versions(project_id: str):
     url = f"https://api.modrinth.com/v2/project/{project_id}/version"
@@ -1260,9 +1290,9 @@ async def create_instance(req: CreateInstanceRequest):
                                     excludes = []
                                     for f in index_data.get("files", []):
                                         env_cfg = f.get("env", {})
-                                        if env_cfg.get("server") == "unsupported":
-                                            filename = f.get("path", "").split("/")[-1]
-                                            if filename:
+                                        filename = f.get("path", "").split("/")[-1]
+                                        if filename:
+                                            if env_cfg.get("server") == "unsupported" or is_client_only_mod(filename):
                                                 excludes.append(filename)
                                     
                                     if excludes:
@@ -1320,6 +1350,22 @@ async def create_instance(req: CreateInstanceRequest):
         env.append(f"CF_SLUG={req.cf_id}")
         if req.modpack_version:
             env.append(f"CF_FILE_ID={req.modpack_version}")
+        
+        # Exclude common client-only mods from CurseForge downloads
+        cf_excludes = [
+            "sodium", "rubidium", "embeddium", "iris-shaders", "oculus", "modmenu", "continuity",
+            "entityculling", "immediatelyfast", "dynamic-fps", "e4mc", "controlify",
+            "reeses-sodium-options", "sodium-extra", "bettergrassify", "cubes-without-borders",
+            "animatica", "skyboxify", "puzzle", "presence-footsteps", "sound-physics-remastered",
+            "borderlessfullscreen", "language-reload", "morechathistory", "mainmenucredits",
+            "crashassistant", "better-mount-hud", "cape-provider", "zoomify", "debugify",
+            "fastquit", "no-chat-reports", "optigui", "litematica", "minihud", "tweakeroo",
+            "lambdynamiclights", "bobby", "distant-horizons", "fancymenu", "konkrete",
+            "controlling", "searchables", "custom-skin-loader", "fabrishot", "perspectivemod",
+            "chunk-fade", "shulbox-tooltip", "itemphysics-lite", "ambience", "visuality",
+            "skinlayers-3d", "wavesurfer", "legendary-tooltips"
+        ]
+        env.append(f"CF_EXCLUDE_MODS={','.join(cf_excludes)}")
 
     # Set correct java version and Minecraft version based on resolved version
     if mc_version:
