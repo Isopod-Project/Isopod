@@ -2967,8 +2967,8 @@ export default function App() {
                              </div>
 
                              <div className="flex-1 overflow-auto p-4">
-                                <div className="bg-[#242424] border border-[#323232] rounded-lg overflow-hidden">
-                                   <table className="w-full text-left border-collapse">
+                                <div className="bg-[#242424] border border-[#323232] rounded-lg overflow-x-auto scrollbar-custom">
+                                   <table className="w-full text-left border-collapse min-w-[700px]">
                                       <thead>
                                          <tr className="bg-[#2D2D2D] border-b border-[#323232] text-[11px] font-bold text-neutral-500 uppercase tracking-widest">
                                             <th className="px-4 py-2 w-12 text-center">Enable</th>
@@ -3031,7 +3031,7 @@ export default function App() {
                                                         <span className="text-[10px] font-bold bg-[#333] px-2 py-0.5 rounded text-neutral-400 capitalize">{mod.provider}</span>
                                                   </td>
                                                   <td className="px-4 py-3 text-right">
-                                                     <div className="flex justify-end gap-2 group-hover:opacity-100 opacity-0 transition-opacity">
+                                                     <div className="flex justify-end gap-2 items-center opacity-70 group-hover:opacity-100 transition-opacity">
                                                         <a href={mod.url} target="_blank" className="p-1.5 hover:text-white text-neutral-500"><ExternalLink className="w-4 h-4" /></a>
                                                         <button 
                                                            onClick={() => {
@@ -3246,9 +3246,9 @@ export default function App() {
                                  </div>
                               </div>
 
-                              <div className="flex-1 overflow-auto p-4">
-                                 <div className="bg-[#242424] border border-[#323232] rounded-lg overflow-hidden">
-                                    <table className="w-full text-left border-collapse">
+                              <div className="flex-1 overflow-x-auto p-4">
+                                 <div className="bg-[#242424] border border-[#323232] rounded-lg overflow-x-auto scrollbar-custom">
+                                    <table className="w-full text-left border-collapse min-w-[700px]">
                                        <thead>
                                           <tr className="bg-[#2D2D2D] border-b border-[#323232] text-[11px] font-bold text-neutral-500 uppercase tracking-widest">
                                              <th className="px-4 py-2 w-16">Image</th>
