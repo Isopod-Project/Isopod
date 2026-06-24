@@ -594,6 +594,38 @@ def get_instance_users(instance_id: str):
     # Return as list
     return list(users.values())
 
+def format_uuid(raw_uuid: str) -> str:
+    if len(raw_uuid) == 32:
+        return f"{raw_uuid[:8]}-{raw_uuid[8:12]}-{raw_uuid[12:16]}-{raw_uuid[16:20]}-{raw_uuid[20:]}"
+    return raw_uuid
+
+def get_minecraft_uuid(username: str) -> str:
+    import urllib.request
+    import hashlib
+    
+    url = f"https://api.mojang.com/users/profiles/minecraft/{username}"
+    try:
+        req = urllib.request.Request(
+            url, 
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        )
+        with urllib.request.urlopen(req, timeout=3) as response:
+            if response.status == 200:
+                data = json.loads(response.read().decode())
+                raw_id = data.get("id")
+                if raw_id:
+                    return format_uuid(raw_id)
+    except Exception as e:
+        print(f"Error fetching UUID from Mojang API: {e}")
+        
+    # Fallback to offline UUID generation (MD5-based offline UUID)
+    hash_bytes = hashlib.md5(f"OfflinePlayer:{username}".encode('utf-8')).digest()
+    hash_list = list(hash_bytes)
+    hash_list[6] = (hash_list[6] & 0x0f) | 0x30  # Version 3 UUID
+    hash_list[8] = (hash_list[8] & 0x3f) | 0x80  # Variant 1
+    hex_str = ''.join(f'{b:02x}' for b in hash_list)
+    return f"{hex_str[:8]}-{hex_str[8:12]}-{hex_str[12:16]}-{hex_str[16:20]}-{hex_str[20:]}"
+
 @app.put("/api/instances/{instance_id}/users")
 def update_instance_users(instance_id: str, users: List[WhitelistUser]):
     path = get_instance_path(instance_id)
@@ -603,6 +635,19 @@ def update_instance_users(instance_id: str, users: List[WhitelistUser]):
     whitelist_path = os.path.join(data_dir, "whitelist.json")
     ops_path = os.path.join(data_dir, "ops.json")
     
+    # Read existing ops to know who was previously opped
+    old_ops = set()
+    if os.path.exists(ops_path):
+        try:
+            with open(ops_path, "r") as f:
+                ops_data_old = json.load(f)
+                if isinstance(ops_data_old, list):
+                    for entry in ops_data_old:
+                        if isinstance(entry, dict) and "name" in entry:
+                            old_ops.add(entry["name"].lower())
+        except Exception as e:
+            print(f"Error reading existing ops.json: {e}")
+            
     whitelist_data = []
     ops_data = []
     
@@ -618,6 +663,9 @@ def update_instance_users(instance_id: str, users: List[WhitelistUser]):
         
         if not name:
             continue
+            
+        if not uuid:
+            uuid = get_minecraft_uuid(name)
             
         if whitelisted:
             whitelist_data.append({
@@ -691,7 +739,7 @@ def update_instance_users(instance_id: str, users: List[WhitelistUser]):
         except Exception as e:
             print(f"Error syncing environment variables to docker-compose.yml: {e}")
             
-    # If container is running, execute command to reload whitelist
+    # If container is running, execute commands to sync whitelist and ops
     is_running = False
     if docker_client:
         try:
@@ -701,11 +749,30 @@ def update_instance_users(instance_id: str, users: List[WhitelistUser]):
         except: pass
         
     if is_running:
-        cmd = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", "whitelist reload"]
+        # 1. Reload Whitelist
+        cmd_wl = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", "whitelist reload"]
         try:
-            subprocess.run(cmd, cwd=path, capture_output=True, text=True, timeout=5)
+            subprocess.run(cmd_wl, cwd=path, capture_output=True, text=True, timeout=5)
         except Exception as e:
             print(f"RCON whitelist reload failed: {e}")
+            
+        # 2. Deop players who are no longer ops
+        new_ops_lower = {n.lower() for n in ops_names}
+        for name in old_ops:
+            if name not in new_ops_lower:
+                cmd_deop = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", f"deop {name}"]
+                try:
+                    subprocess.run(cmd_deop, cwd=path, capture_output=True, text=True, timeout=5)
+                except Exception as e:
+                    print(f"RCON deop failed for {name}: {e}")
+                    
+        # 3. Op players who are now ops
+        for name in ops_names:
+            cmd_op = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", f"op {name}"]
+            try:
+                subprocess.run(cmd_op, cwd=path, capture_output=True, text=True, timeout=5)
+            except Exception as e:
+                print(f"RCON op failed for {name}: {e}")
             
     return {"message": "Users updated successfully"}
 

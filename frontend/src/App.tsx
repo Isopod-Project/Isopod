@@ -3573,7 +3573,7 @@ export default function App() {
                                     </button>
                                  </div>
                               </div>
-                              <div className="p-5 space-y-5">
+                              <div className={`p-5 space-y-5 transition-all ${config.environment["ENABLE_WHITELIST"] !== "true" ? 'opacity-40 pointer-events-none select-none' : ''}`}>
                                  <div className="flex flex-col gap-3">
                                     <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Add Whitelisted Player</label>
                                     <div className="flex gap-2">
@@ -3597,6 +3597,7 @@ export default function App() {
                                              type="text"
                                              value={instanceWhitelistUser}
                                              onChange={(e) => setInstanceWhitelistUser(e.target.value)}
+                                             disabled={config.environment["ENABLE_WHITELIST"] !== "true"}
                                              onKeyDown={(e) => {
                                                 if (e.key === 'Enter' && instanceWhitelistUser) {
                                                    const current = (config.environment["WHITELIST"] || "").split(',').map(s => s.trim()).filter(Boolean);
@@ -3652,6 +3653,7 @@ export default function App() {
                                                 setInstanceWhitelistPreview(null);
                                              }
                                           }}
+                                          disabled={config.environment["ENABLE_WHITELIST"] !== "true"}
                                           className="px-6 py-2 bg-neutral-800 hover:bg-neutral-700 rounded-lg text-sm font-bold transition-all border border-neutral-700 text-neutral-300"
                                        >
                                           Add
@@ -3677,6 +3679,7 @@ export default function App() {
                                                       const newList = current.filter(u => u !== user).join(',');
                                                       setConfig(prev => ({ ...prev, environment: { ...prev.environment, WHITELIST: newList } }));
                                                    }}
+                                                   disabled={config.environment["ENABLE_WHITELIST"] !== "true"}
                                                    className="text-neutral-600 hover:text-red-500 transition-colors"
                                                 >
                                                    <X className="w-3.5 h-3.5" />
