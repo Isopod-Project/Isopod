@@ -940,24 +940,36 @@ def get_java_tag_for_mc_version(mc_version: str) -> str:
     
     parts = mc_version.split(".")
     try:
-        if len(parts) >= 2:
-            minor = int(parts[1])
-            if minor >= 21:
-                return "java21"
-            elif minor >= 20:
-                if len(parts) >= 3 and int(parts[2]) >= 5:
-                    return "java21"
-                return "java17"
-            elif minor >= 18:
-                return "java17"
-            elif minor >= 17:
-                return "java17"
+        if len(parts) >= 1:
+            major = int(parts[0])
+            if major == 1:
+                if len(parts) >= 2:
+                    minor = int(parts[1])
+                    if minor >= 21:
+                        return "java21"
+                    elif minor >= 20:
+                        if len(parts) >= 3 and int(parts[2]) >= 5:
+                            return "java21"
+                        return "java17"
+                    elif minor >= 18:
+                        return "java17"
+                    elif minor >= 17:
+                        return "java17"
+                    else:
+                        return "java8"
             else:
-                return "java8"
+                if major >= 25:
+                    return "java25"
+                elif major >= 21:
+                    return "java21"
+                elif major >= 17:
+                    return "java17"
+                else:
+                    return "java8"
     except Exception as e:
         print(f"Error parsing MC version '{mc_version}' for Java mapping: {e}")
     
-    if "1.21" in mc_version or "1.20.5" in mc_version or "1.20.6" in mc_version:
+    if "1.21" in mc_version or "1.20.5" in mc_version or "1.20.6" in mc_version or "26." in mc_version:
         return "java21"
     if "1.20" in mc_version or "1.19" in mc_version or "1.18" in mc_version:
         return "java17"
