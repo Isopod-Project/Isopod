@@ -847,6 +847,16 @@ async def get_mc_versions():
 async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
     """Fetch available versions for a specific mod loader, optionally filtered by MC version."""
     loader = loader.lower()
+    if not mc_version or mc_version == "latest" or mc_version.strip() == "":
+        try:
+            async with httpx.AsyncClient() as client:
+                res = await client.get(VERSION_MANIFEST_URL)
+                if res.is_success:
+                    manifest = res.json()
+                    mc_version = manifest.get("latest", {}).get("release")
+        except Exception as e:
+            print(f"DEBUG: Failed to resolve latest MC version: {e}")
+            mc_version = "1.20.4"
     print(f"DEBUG: Fetching {loader} versions for MC={mc_version}")
     try:
         async with httpx.AsyncClient() as client:
@@ -875,13 +885,13 @@ async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
                     return [{"id": v["version"], "stable": v["version"].count('-') == 0} for v in data]
 
             elif loader == "forge":
-                url = f"https://bmclapi2.bangbang93.com/forge/minecraft/{mc_version}" if mc_version and mc_version != "latest" else "https://bmclapi2.bangbang93.com/forge/promotions"
+                url = f"https://bmclapi2.bangbang93.com/forge/minecraft/{mc_version}" if mc_version and mc_version != "latest" else "https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json"
                 print(f"DEBUG: Fetching Forge from {url}")
                 res = await client.get(url)
                 if not res.is_success and mc_version:
                     # Fallback to promotions
                     print("DEBUG: Forge version-specific fetch failed, falling back to promotions")
-                    res = await client.get("https://bmclapi2.bangbang93.com/forge/promotions")
+                    res = await client.get("https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json")
                     data = res.json()
                     promos = data.get("promos", {})
                     return [{"id": v, "name": k, "stable": "recommended" in k} for k, v in promos.items()]
