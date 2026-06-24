@@ -849,16 +849,18 @@ async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
     loader = loader.lower()
     print(f"DEBUG: Fetching ALL {loader} versions")
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Isopod/1.0"}, timeout=15.0) as client:
             if loader == "fabric":
                 url = "https://meta.fabricmc.net/v2/versions/loader"
                 res = await client.get(url)
+                print(f"DEBUG: Fabric response status={res.status_code}")
                 data = res.json()
                 return [{"id": v["version"], "stable": v["stable"]} for v in data]
 
             elif loader == "quilt":
                 url = "https://meta.quiltmc.org/v3/versions/loader"
                 res = await client.get(url)
+                print(f"DEBUG: Quilt response status={res.status_code}")
                 data = res.json()
                 return [{"id": v["version"], "stable": v["version"].count('-') == 0} for v in data]
 
