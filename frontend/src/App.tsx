@@ -852,6 +852,42 @@ export default function App() {
       if (finalEnv["RESOURCE_PACK_PROMPT"] && !finalEnv["RESOURCE_PACK_PROMPT"].trim().startsWith('{')) {
          finalEnv["RESOURCE_PACK_PROMPT"] = JSON.stringify({ text: finalEnv["RESOURCE_PACK_PROMPT"] });
       }
+
+      // Normalize loader version based on TYPE
+      const loaderType = finalEnv["TYPE"] || "VANILLA";
+      let versionVal = finalEnv["LOADER_VERSION"] || "";
+      if (!versionVal) {
+         versionVal = finalEnv["FABRIC_LOADER_VERSION"] || 
+                      finalEnv["FORGE_VERSION"] || 
+                      finalEnv["FORGEVERSION"] || 
+                      finalEnv["NEOFORGE_VERSION"] || 
+                      finalEnv["NEOFORGEVERSION"] || 
+                      finalEnv["QUILT_LOADER_VERSION"] || 
+                      "";
+      }
+
+      // Clean all old loader version keys
+      delete finalEnv["FABRIC_LOADER_VERSION"];
+      delete finalEnv["FORGE_VERSION"];
+      delete finalEnv["FORGEVERSION"];
+      delete finalEnv["NEOFORGE_VERSION"];
+      delete finalEnv["NEOFORGEVERSION"];
+      delete finalEnv["QUILT_LOADER_VERSION"];
+      delete finalEnv["LOADER_VERSION"];
+
+      if (versionVal && versionVal !== "latest") {
+         if (loaderType === "FABRIC") {
+            finalEnv["FABRIC_LOADER_VERSION"] = versionVal;
+         } else if (loaderType === "FORGE") {
+            finalEnv["FORGE_VERSION"] = versionVal;
+         } else if (loaderType === "NEOFORGE") {
+            finalEnv["NEOFORGE_VERSION"] = versionVal;
+         } else if (loaderType === "QUILT") {
+            finalEnv["QUILT_LOADER_VERSION"] = versionVal;
+         } else {
+            finalEnv["LOADER_VERSION"] = versionVal;
+         }
+      }
       
       const updatedConfig = { ...config, environment: finalEnv };
 
@@ -2936,11 +2972,30 @@ export default function App() {
                              <input 
                                 type="text"
                                 className="w-full bg-[#141414] border border-[#3A3A3A] p-2.5 rounded focus:outline-none focus:border-[#3E8ED0] text-[#E0E0E0] font-mono text-sm"
-                                value={config.environment["LOADER_VERSION"] || ""}
-                                onChange={(e) => setConfig(prev => ({
-                                   ...prev,
-                                   environment: { ...prev.environment, LOADER_VERSION: e.target.value }
-                                }))}
+                                value={
+                                    config.environment["LOADER_VERSION"] ||
+                                    config.environment["FABRIC_LOADER_VERSION"] ||
+                                    config.environment["FORGE_VERSION"] ||
+                                    config.environment["FORGEVERSION"] ||
+                                    config.environment["NEOFORGE_VERSION"] ||
+                                    config.environment["NEOFORGEVERSION"] ||
+                                    config.environment["QUILT_LOADER_VERSION"] ||
+                                    ""
+                                 }
+                                 onChange={(e) => {
+                                    const val = e.target.value;
+                                    setConfig(prev => {
+                                       const newEnv = { ...prev.environment };
+                                       delete newEnv["FABRIC_LOADER_VERSION"];
+                                       delete newEnv["FORGE_VERSION"];
+                                       delete newEnv["FORGEVERSION"];
+                                       delete newEnv["NEOFORGE_VERSION"];
+                                       delete newEnv["NEOFORGEVERSION"];
+                                       delete newEnv["QUILT_LOADER_VERSION"];
+                                       newEnv["LOADER_VERSION"] = val;
+                                       return { ...prev, environment: newEnv };
+                                    });
+                                 }}
                                 placeholder="latest"
                              />
                              <p className="text-[10px] text-neutral-500 mt-2 italic">Leave empty for latest recommended version.</p>

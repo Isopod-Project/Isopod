@@ -1198,9 +1198,9 @@ async def create_instance(req: CreateInstanceRequest):
         if template == "FABRIC":
             env.append(f"FABRIC_LOADER_VERSION={req.loader_version}")
         elif template == "FORGE":
-            env.append(f"FORGEVERSION={req.loader_version}")
+            env.append(f"FORGE_VERSION={req.loader_version}")
         elif template == "NEOFORGE":
-            env.append(f"NEOFORGEVERSION={req.loader_version}")
+            env.append(f"NEOFORGE_VERSION={req.loader_version}")
         elif template == "QUILT":
             env.append(f"QUILT_LOADER_VERSION={req.loader_version}")
         elif template == "PAPER":
