@@ -158,6 +158,7 @@ export default function App() {
   const [consoleCommand, setConsoleCommand] = useState("");
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
+  const [commandDraft, setCommandDraft] = useState("");
   const [isExecuting, setIsExecuting] = useState(false);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const scrollRef = useRef<HTMLPreElement>(null);
@@ -1149,6 +1150,7 @@ export default function App() {
          return [...prev, cmd];
       });
       setHistoryIndex(-1);
+      setCommandDraft("");
 
       try {
          const res = await fetch(`/api/instances/${id}/command`, {
@@ -2651,7 +2653,36 @@ export default function App() {
                           className="flex-1 bg-[#050505] border border-[#333] px-3 py-2 rounded text-emerald-500 font-mono text-sm focus:outline-none focus:border-[#3E8ED0]"
                           value={consoleCommand}
                           onChange={(e) => setConsoleCommand(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && handleSendCommand(selectedInstance?.id || "", consoleCommand)}
+                          onKeyDown={(e) => {
+                             if (e.key === 'Enter') {
+                                handleSendCommand(selectedInstance?.id || "", consoleCommand);
+                             } else if (e.key === 'ArrowUp') {
+                                e.preventDefault();
+                                if (commandHistory.length === 0) return;
+                                
+                                let nextIndex = historyIndex;
+                                if (historyIndex === -1) {
+                                   setCommandDraft(consoleCommand);
+                                   nextIndex = commandHistory.length - 1;
+                                } else if (historyIndex > 0) {
+                                   nextIndex = historyIndex - 1;
+                                }
+                                setHistoryIndex(nextIndex);
+                                setConsoleCommand(commandHistory[nextIndex]);
+                             } else if (e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                if (historyIndex === -1) return;
+                                
+                                if (historyIndex < commandHistory.length - 1) {
+                                   const nextIndex = historyIndex + 1;
+                                   setHistoryIndex(nextIndex);
+                                   setConsoleCommand(commandHistory[nextIndex]);
+                                } else {
+                                   setHistoryIndex(-1);
+                                   setConsoleCommand(commandDraft);
+                                }
+                             }
+                          }}
                           disabled={isExecuting}
                        />
                        <button 
