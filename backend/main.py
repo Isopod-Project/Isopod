@@ -465,6 +465,8 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
         # Ensure EULA is preserved/added
         env = new_config.environment
         env["EULA"] = "TRUE"
+        if "MODRINTH_ALLOWED_VERSION_TYPE" not in env:
+            env["MODRINTH_ALLOWED_VERSION_TYPE"] = "release,beta,alpha"
         config['services'][first_service_name]['environment'] = env
         
     with open(compose_path, "w") as f:
@@ -1139,7 +1141,8 @@ def create_instance(req: CreateInstanceRequest):
                     f"DIFFICULTY={req.difficulty or 'easy'}",
                     f"MODE={req.gamemode or 'survival'}",
                     f"GENERATE_STRUCTURES={'true' if req.generate_structures else 'false'}",
-                    "JVM_OPTS=--add-opens java.base/sun.misc=ALL-UNNAMED"
+                    "JVM_OPTS=--add-opens java.base/sun.misc=ALL-UNNAMED",
+                    "MODRINTH_ALLOWED_VERSION_TYPE=release,beta,alpha"
                 ],
                 "volumes": ["./data:/data"],
                 "restart": "unless-stopped"

@@ -3037,7 +3037,7 @@ export default function App() {
                                                            onClick={() => {
                                                               const envKey = mod.provider === 'modrinth' ? 'MODRINTH_PROJECTS' : 'CF_PROJECTS';
                                                               const current = (config.environment[envKey] || "").split(',').map(s => s.trim()).filter(Boolean);
-                                                              const newList = current.filter(x => x !== mod.id).join(',');
+                                                              const newList = current.filter(x => x !== mod.id && x !== mod.requested_id).join(',');
                                                               setConfig(prev => ({
                                                                  ...prev,
                                                                  environment: { ...prev.environment, [envKey]: newList }
@@ -3289,7 +3289,7 @@ export default function App() {
                                                                 onClick={() => {
                                                                    const envKey = pack.provider === 'modrinth' ? 'RESOURCE_PACKS_MODRINTH' : 'RESOURCE_PACKS_CF';
                                                                    const current = (config.environment[envKey] || "").split(',').map(s => s.trim()).filter(Boolean);
-                                                                   const newList = current.filter(x => x !== pack.id).join(',');
+                                                                   const newList = current.filter(x => x !== pack.id && x !== pack.requested_id).join(',');
                                                                    setConfig(prev => ({
                                                                       ...prev,
                                                                       environment: { ...prev.environment, [envKey]: newList }
