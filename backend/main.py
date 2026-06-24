@@ -863,9 +863,9 @@ async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
                     return [{"id": v["version"], "stable": v["stable"]} for v in data]
 
             elif loader == "quilt":
-                url = f"https://meta.quiltmc.org/v2/versions/loader"
+                url = f"https://meta.quiltmc.org/v3/versions/loader"
                 if mc_version and mc_version != "latest":
-                    url = f"https://meta.quiltmc.org/v2/versions/loader/{mc_version}"
+                    url = f"https://meta.quiltmc.org/v3/versions/loader/{mc_version}"
                 print(f"DEBUG: Fetching Quilt from {url}")
                 res = await client.get(url)
                 data = res.json()
@@ -888,7 +888,7 @@ async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
                 
                 data = res.json()
                 if mc_version and mc_version != "latest" and isinstance(data, list):
-                    return [{"id": v["version"], "stable": v["type"] == "recommended"} for v in data]
+                    return [{"id": v["version"], "stable": v.get("type") == "recommended"} for v in data]
                 else:
                     promos = data.get("promos", {})
                     return [{"id": v, "name": k, "stable": "recommended" in k} for k, v in promos.items()]
@@ -901,7 +901,7 @@ async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
                      print("DEBUG: NeoForge version-specific fetch failed, falling back to all")
                      res = await client.get("https://bmclapi2.bangbang93.com/neoforge/list")
                 data = res.json()
-                return [{"id": v, "stable": True} for v in data]
+                return [{"id": v["version"], "stable": True} for v in data if isinstance(v, dict) and "version" in v]
 
             elif loader == "paper":
                 if not mc_version or mc_version == "latest":
@@ -921,7 +921,7 @@ async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
                         builds_data = builds_res.json()
                         builds = builds_data.get("builds", [])
                         # Return in reverse order (newest first)
-                        return [{"id": str(b["build"]), "stable": b["channel"] == "default"} for b in reversed(builds)]
+                        return [{"id": str(b["build"]), "stable": b.get("channel", "").upper() == "STABLE" or b.get("channel", "").lower() == "default"} for b in reversed(builds)]
                 return [{"id": "latest", "stable": True}]
 
             elif loader == "spigot":
