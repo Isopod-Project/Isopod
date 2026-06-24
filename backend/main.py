@@ -272,7 +272,7 @@ async def get_instance_status(instance_id: str):
                services = cdata.get("services", {})
                # Support both top-level services or nested keys
                mc_config = services.get("mc") or list(services.values())[0]
-                env = mc_config.get("environment", {})
+               env = mc_config.get("environment", {})
                if isinstance(env, list):
                    env_dict = {}
                    for item in env:
