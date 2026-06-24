@@ -1302,16 +1302,24 @@ export default function App() {
    const selectedStatus = selectedId ? statuses[selectedId] : null;
    const logs = selectedId ? (serverLogs[selectedId] || "") : "";
 
-  // Fetch loader versions when selection changes
+  // Fetch loader versions when selection changes (Add and Edit modals)
   useEffect(() => {
     if (isAddModalOpen && selectedAddLoader !== "VANILLA") {
        // Only fetch if we have an actual version ID or 'latest'
        const versionToFetch = selectedAddVersion === "latest" ? "" : selectedAddVersion;
        fetchLoaderVersions(selectedAddLoader, versionToFetch);
+    } else if (isEditModalOpen && editTab === "loader" && config.environment) {
+       const loader = config.environment["TYPE"];
+       const mcVersion = config.environment["VERSION"] || "";
+       if (loader && loader !== "VANILLA") {
+          fetchLoaderVersions(loader, mcVersion === "latest" ? "" : mcVersion);
+       } else {
+          setLoaderVersions([]);
+       }
     } else {
        setLoaderVersions([]);
     }
-  }, [selectedAddLoader, selectedAddVersion, isAddModalOpen]);
+  }, [selectedAddLoader, selectedAddVersion, isAddModalOpen, isEditModalOpen, editTab, config.environment?.TYPE, config.environment?.VERSION]);
 
 
   const copyToClipboard = (text: string, id?: string) => {
@@ -2725,8 +2733,8 @@ export default function App() {
                 )}
 
                 {editTab === "loader" && (
-                    <div className="flex flex-col h-full p-8 max-w-2xl mx-auto w-full">
-                       <div className="flex flex-col gap-8 text-neutral-300">
+                    <div className="flex flex-col h-full p-8 max-w-2xl mx-auto w-full overflow-auto scrollbar-custom">
+                       <div className="flex flex-col gap-6 text-neutral-300">
                           <div>
                              <h3 className="text-xl font-bold mb-2 flex items-center gap-2">
                                 <Cpu className="text-[#3E8ED0]" /> Mod Loader
@@ -2759,20 +2767,61 @@ export default function App() {
                              ))}
                           </div>
 
-                          <div className="bg-[#242424] border border-[#3A3A3A] p-4 rounded-lg">
-                             <label className="block text-sm font-medium text-neutral-400 mb-2">Advanced: Loader Version</label>
-                             <input 
-                                type="text"
-                                className="w-full bg-[#141414] border border-[#3A3A3A] p-2.5 rounded focus:outline-none focus:border-[#3E8ED0] text-[#E0E0E0] font-mono text-sm"
-                                value={config.environment["LOADER_VERSION"] || ""}
-                                onChange={(e) => setConfig(prev => ({
-                                   ...prev,
-                                   environment: { ...prev.environment, LOADER_VERSION: e.target.value }
-                                }))}
-                                placeholder="latest"
-                             />
-                             <p className="text-[10px] text-neutral-500 mt-2 italic">Leave empty for latest recommended version.</p>
-                          </div>
+                          {config.environment["TYPE"] !== "VANILLA" && (
+                             <>
+                                <div className="bg-amber-500/10 border border-amber-500/30 p-4 rounded-lg flex items-start gap-2.5 text-xs text-amber-400">
+                                   <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                                   <p>Warning: Changing the mod loader type or version may cause existing mods to stop loading or fail to start. Ensure your mods are compatible with the selected loader and version.</p>
+                                </div>
+
+                                <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg overflow-hidden h-60 flex flex-col">
+                                   <div className="grid grid-cols-2 px-4 py-2.5 border-b border-[#3A3A3A] bg-[#2D2D2D] text-[10px] font-bold text-neutral-400 uppercase tracking-widest">
+                                      <div>Loader Version</div>
+                                      <div className="text-right">Status</div>
+                                   </div>
+                                   <div className="flex-1 overflow-auto relative">
+                                      {isLoaderLoading ? (
+                                         <div className="absolute inset-0 flex items-center justify-center bg-[#0F0F0F]/50">
+                                            <div className="flex flex-col items-center gap-3">
+                                               <RefreshCw className="w-5 h-5 text-[#3E8ED0] animate-spin" />
+                                               <span className="text-[10px] text-neutral-500">Scanning versions...</span>
+                                            </div>
+                                         </div>
+                                      ) : (
+                                         <div className="divide-y divide-[#1A1A1A]">
+                                            <div 
+                                               onClick={() => setConfig(prev => ({
+                                                  ...prev,
+                                                  environment: { ...prev.environment, LOADER_VERSION: "latest" }
+                                               }))}
+                                               className={`grid grid-cols-2 px-4 py-2 text-sm cursor-pointer transition-all ${(!config.environment["LOADER_VERSION"] || config.environment["LOADER_VERSION"] === 'latest') ? 'bg-[#3E8ED0]/20 text-[#3E8ED0] border-l-2 border-l-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
+                                            >
+                                               <div className="font-bold italic">Latest Recommended</div>
+                                               <div className="text-right text-[10px] opacity-60">AUTO</div>
+                                            </div>
+                                            {loaderVersions.map((lv) => (
+                                               <div 
+                                                  key={lv.id}
+                                                  onClick={() => setConfig(prev => ({
+                                                     ...prev,
+                                                     environment: { ...prev.environment, LOADER_VERSION: lv.id }
+                                                  }))}
+                                                  className={`grid grid-cols-2 px-4 py-2 text-sm font-mono cursor-pointer transition-all ${config.environment["LOADER_VERSION"] === lv.id ? 'bg-[#3E8ED0]/20 text-[#3E8ED0] border-l-2 border-l-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
+                                               >
+                                                  <div>{lv.id}</div>
+                                                  <div className="text-right">
+                                                     <span className={`text-[10px] px-1.5 py-0.5 rounded ${lv.stable ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'}`}>
+                                                        {lv.stable ? 'STABLE' : 'UNSTABLE'}
+                                                     </span>
+                                                  </div>
+                                               </div>
+                                            ))}
+                                         </div>
+                                      )}
+                                   </div>
+                                </div>
+                             </>
+                          )}
                        </div>
                     </div>
                 )}
