@@ -1245,12 +1245,12 @@ async def create_instance(req: CreateInstanceRequest):
                     # Find mrpack file download link and parse index for client-side only mods
                     mrpack_url = None
                     for file_info in vdata.get("files", []):
-                        if file_info.get("filename", "").endswith(".mrpack"):
+                        if file_info.get("filename", "").lower().endswith(".mrpack"):
                             mrpack_url = file_info.get("url")
                             break
                     
                     if mrpack_url:
-                        mrpack_res = await client.get(mrpack_url)
+                        mrpack_res = await client.get(mrpack_url, follow_redirects=True)
                         if mrpack_res.status_code == 200:
                             import zipfile
                             import io
