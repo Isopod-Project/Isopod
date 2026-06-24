@@ -465,7 +465,7 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
         # Ensure EULA is preserved/added
         env = new_config.environment
         env["EULA"] = "TRUE"
-        if "MODRINTH_ALLOWED_VERSION_TYPE" not in env:
+        if env.get("MODRINTH_ALLOWED_VERSION_TYPE") == "release,beta,alpha" or "MODRINTH_ALLOWED_VERSION_TYPE" not in env:
             env["MODRINTH_ALLOWED_VERSION_TYPE"] = "alpha"
         config['services'][first_service_name]['environment'] = env
         
