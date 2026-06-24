@@ -1876,16 +1876,13 @@ export default function App() {
                      {[
                         { id: "custom", name: "Custom", icon: Gamepad2 },
                         { id: "import", name: "Import", icon: Database },
-                        { id: "atlauncher", name: "ATLauncher", icon: Box },
-                        { id: "curseforge", name: "CurseForge", icon: Settings },
-                        { id: "modrinth", name: "Modrinth", icon: RefreshCw },
-                        { id: "technic", name: "Technic", icon: Layers }
+                        { id: "modrinth", name: "Modrinth", icon: RefreshCw }
                      ].map((tab) => (
                         <button 
                            key={tab.id}
                            onClick={() => {
                               setAddTab(tab.id as any);
-                              if (tab.id === 'modrinth' || tab.id === 'curseforge') {
+                              if (tab.id === 'modrinth') {
                                  handleModpackSearch("", tab.id);
                               }
                            }}
@@ -2019,7 +2016,7 @@ export default function App() {
                                        Mod Loader
                                     </h4>
                                     <div className="flex bg-[#1E1E1E] rounded p-1 border border-[#323232] overflow-x-auto max-w-full">
-                                       {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT', 'PAPER', 'SPIGOT'].map(l => (
+                                       {['VANILLA', 'FABRIC'].map(l => (
                                           <button 
                                              key={l}
                                              onClick={() => setSelectedAddLoader(l)}
@@ -2912,10 +2909,7 @@ export default function App() {
                           <div className="grid grid-cols-2 gap-4">
                              {[
                                 { id: "VANILLA", name: "Vanilla", icon: Gamepad2, desc: "Standard Minecraft experience" },
-                                { id: "FABRIC", name: "Fabric", icon: Cpu, desc: "Lightweight and modular" },
-                                { id: "FORGE", name: "Forge", icon: Settings, desc: "Traditional and powerful" },
-                                { id: "QUILT", name: "Quilt", icon: RefreshCw, desc: "The open community loader" },
-                                { id: "NEOFORGE", name: "NeoForge", icon: Layers, desc: "Modern community fork" }
+                                { id: "FABRIC", name: "Fabric", icon: Cpu, desc: "Lightweight and modular" }
                              ].map((l) => (
                                 <div 
                                    key={l.id}
