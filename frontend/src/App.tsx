@@ -2590,26 +2590,38 @@ export default function App() {
                     >
                        {(() => {
                           if (!logs) return "Waiting for output...";
-                          if (isVerbose) return logs;
                           
                           const allowedPatterns = [
                             /ERROR/, /FATAL/, /Exception/,
                             /Loading \d+ mods/, / - /, / \\-- /,
                             /Done \(/,
                             /> /, 
-                            /issued (server )?command/,
+                            /issued (server )?command/i,
                             /joined the game/, /left the game/,
                             /\[Server thread\/INFO\]: </,
                             /Starting minecraft server version/,
                             /\[Server thread\/INFO\]: \[(?!Rcon: Stopping)/ 
                           ];
 
-                          return logs.split('\n').filter(line => {
-                             // Always keep manual commands
-                             if (line.includes('> ')) return true;
-                             // Check against strict allowlist
-                             return allowedPatterns.some(p => p.test(line));
-                          }).join('\n');
+                          const lines = logs.split('\n');
+                          const filtered = isVerbose 
+                             ? lines 
+                             : lines.filter(line => {
+                                if (line.includes('> ')) return true;
+                                return allowedPatterns.some(p => p.test(line));
+                             });
+
+                          return filtered.map((line, idx) => {
+                             const isCommand = /issued (server )?command/i.test(line) || line.includes('> ');
+                             if (isCommand) {
+                                return (
+                                   <span key={idx} className="block text-[#4ADE80] font-bold bg-[#14532D]/30 px-1.5 py-0.5 rounded border border-emerald-800/30 my-0.5">
+                                      {line}
+                                   </span>
+                                );
+                             }
+                             return <span key={idx} className="block">{line}</span>;
+                          });
                        })()}
                     </pre>
                     <div className="flex bg-[#1A1A1A] border-x border-b border-[#333] rounded-b-lg p-3 gap-3">
