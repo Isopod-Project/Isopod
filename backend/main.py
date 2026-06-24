@@ -1225,12 +1225,11 @@ async def create_instance(req: CreateInstanceRequest):
         # Resolve Modrinth version metadata for Java version & Minecraft version
         try:
             async with httpx.AsyncClient() as client:
+                vdata = None
                 if req.modpack_version:
                     res = await client.get(f"https://api.modrinth.com/v2/version/{req.modpack_version}")
                     if res.status_code == 200:
                         vdata = res.json()
-                        if vdata.get("game_versions"):
-                            mc_version = vdata["game_versions"][0]
                 else:
                     res = await client.get(f"https://api.modrinth.com/v2/project/{req.modrinth_id}/version")
                     if res.status_code == 200:
@@ -1238,8 +1237,38 @@ async def create_instance(req: CreateInstanceRequest):
                         if versions:
                             vdata = versions[0]
                             req.modpack_version = vdata["id"]
-                            if vdata.get("game_versions"):
-                                mc_version = vdata["game_versions"][0]
+                
+                if vdata:
+                    if vdata.get("game_versions"):
+                        mc_version = vdata["game_versions"][0]
+                    
+                    # Find mrpack file download link and parse index for client-side only mods
+                    mrpack_url = None
+                    for file_info in vdata.get("files", []):
+                        if file_info.get("filename", "").endswith(".mrpack"):
+                            mrpack_url = file_info.get("url")
+                            break
+                    
+                    if mrpack_url:
+                        mrpack_res = await client.get(mrpack_url)
+                        if mrpack_res.status_code == 200:
+                            import zipfile
+                            import io
+                            with zipfile.ZipFile(io.BytesIO(mrpack_res.content)) as z:
+                                if "modrinth.index.json" in z.namelist():
+                                    index_data = json.loads(z.read("modrinth.index.json").decode("utf-8"))
+                                    excludes = []
+                                    for f in index_data.get("files", []):
+                                        env_cfg = f.get("env", {})
+                                        if env_cfg.get("server") == "unsupported":
+                                            filename = f.get("path", "").split("/")[-1]
+                                            if filename:
+                                                excludes.append(filename)
+                                    
+                                    if excludes:
+                                        exclude_str = ",".join(excludes)
+                                        env.append(f"MODRINTH_EXCLUDE_FILES={exclude_str}")
+                                        env.append("MODRINTH_FORCE_SYNCHRONIZE=true")
         except Exception as e:
             print(f"Error fetching Modrinth version details: {e}")
 
