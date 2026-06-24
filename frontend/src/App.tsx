@@ -20,6 +20,8 @@ interface InstanceStatus {
   public_ip?: string;
   last_online?: number;
   containers: unknown[];
+  startup_status?: string;
+  startup_percent?: number;
 }
 
 
@@ -330,7 +332,7 @@ export default function App() {
     try {
       setStatuses((prev: Record<string, InstanceStatus>) => ({
         ...prev, 
-        [id]: { ...prev[id], is_running: true } // Optimistic update
+        [id]: { ...prev[id], is_running: true, is_ready: false, startup_status: "Starting...", startup_percent: 5 } // Optimistic update
       }));
       const res = await fetch(`/api/instances/${id}/start`, { method: "POST" });
       if (!res.ok) {
@@ -350,7 +352,7 @@ export default function App() {
     try {
       setStatuses((prev: Record<string, InstanceStatus>) => ({
         ...prev, 
-        [id]: { ...prev[id], is_running: false } // Optimistic update
+        [id]: { ...prev[id], is_running: false, is_ready: false, startup_status: "Stopping...", startup_percent: 50 } // Optimistic update
       }));
       const res = await fetch(`/api/instances/${id}/stop`, { method: "POST" });
       if (!res.ok) {
@@ -372,7 +374,7 @@ export default function App() {
     try {
       setStatuses((prev: Record<string, InstanceStatus>) => ({
         ...prev, 
-        [id]: { ...prev[id], is_running: false, is_ready: false } // Optimistic update
+        [id]: { ...prev[id], is_running: false, is_ready: false, startup_status: "Stopping...", startup_percent: 80 } // Optimistic update
       }));
       const res = await fetch(`/api/instances/${id}/kill`, { method: "POST" });
       if (!res.ok) {
@@ -912,10 +914,14 @@ export default function App() {
       try {
          setStatuses((prev: Record<string, InstanceStatus>) => ({
             ...prev,
-            [id]: { ...prev[id], is_running: false, is_ready: false }
+            [id]: { ...prev[id], is_running: true, is_ready: false, startup_status: "Restarting...", startup_percent: 20 }
          }));
          // We use stop then start for a clean reload of compose
          await fetch(`/api/instances/${id}/stop`, { method: "POST" });
+         setStatuses((prev: Record<string, InstanceStatus>) => ({
+            ...prev,
+            [id]: { ...prev[id], is_running: true, is_ready: false, startup_status: "Starting...", startup_percent: 40 }
+         }));
          await fetch(`/api/instances/${id}/start`, { method: "POST" });
          
          // Modal closure already handled by handleSaveConfig if coming from there
@@ -1737,9 +1743,40 @@ export default function App() {
                  )}
               </div>
               <h2 className="text-lg font-bold text-center leading-tight mb-1">{selectedInstance.name}</h2>
-              <p className="text-xs text-neutral-400">
-                 {!selectedStatus?.is_running ? 'Offline' : (selectedStatus?.is_ready ? 'Online' : 'Starting...')}
+              <p className="text-xs text-neutral-400 text-center">
+                 {!selectedStatus?.is_running 
+                    ? (selectedStatus?.startup_status === "Stopping..." ? 'Stopping...' : 'Offline') 
+                    : (selectedStatus?.is_ready ? 'Online' : (selectedStatus?.startup_status || 'Starting...'))}
               </p>
+
+              {/* Progress Bar */}
+              {selectedStatus && (
+                (() => {
+                  const showProgress = (selectedStatus.is_running && !selectedStatus.is_ready) || 
+                                      (selectedStatus.startup_status === "Stopping..." || selectedStatus.startup_status === "Restarting...");
+                  const pct = selectedStatus.startup_percent || (selectedStatus.startup_status === "Stopping..." ? 50 : 0);
+                  const isStopping = selectedStatus.startup_status === "Stopping..." || selectedStatus.startup_status === "Killing...";
+                  
+                  if (!showProgress) return null;
+                  
+                  return (
+                    <div className="w-full mt-3 px-4">
+                      <div className="w-full bg-[#1A1A1A] border border-[#323232] p-2 rounded flex flex-col gap-1.5 shadow-inner">
+                        <div className="flex justify-between text-[10px] text-neutral-400 font-mono">
+                          <span className="truncate max-w-[150px]">{selectedStatus.startup_status || "Starting..."}</span>
+                          <span>{pct}%</span>
+                        </div>
+                        <div className="w-full bg-[#323232] rounded-full h-1.5 overflow-hidden">
+                          <div 
+                            className={`h-1.5 rounded-full transition-all duration-500 ease-out animate-pulse ${isStopping ? 'bg-amber-600' : 'bg-[#3E8ED0]'}`} 
+                            style={{ width: `${pct}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()
+              )}
             </div>
 
             <div className="p-4 flex flex-col gap-1.5 flex-1 overflow-auto">
@@ -2451,14 +2488,32 @@ export default function App() {
                  <div className="p-1.5 bg-[#3E8ED0]/10 rounded border border-[#3E8ED0]/30">
                     <Edit className="w-5 h-5 text-[#3E8ED0]" />
                  </div>
-                 <div>
-                    <h2 className="text-xl font-bold text-[#E0E0E0]">
-                      {isGlobalBrowser ? "Global Folders" : (selectedInstance ? `Editing: ${selectedInstance.name}` : "Editing")}
-                    </h2>
+                 <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-3">
+                       <h2 className="text-xl font-bold text-[#E0E0E0]">
+                         {isGlobalBrowser ? "Global Folders" : (selectedInstance ? `Editing: ${selectedInstance.name}` : "Editing")}
+                       </h2>
+                       {!isGlobalBrowser && selectedInstance && (
+                          <div className="flex items-center gap-2 bg-[#1A1A1A] border border-[#3A3A3A] px-2.5 py-0.5 rounded-full">
+                             <span className="relative flex h-2 w-2">
+                                {statuses[selectedInstance.id]?.is_running && (
+                                   <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${statuses[selectedInstance.id]?.is_ready ? 'bg-emerald-400' : 'bg-amber-400'} opacity-75`}></span>
+                                )}
+                                <span className={`relative inline-flex rounded-full h-2 w-2 ${statuses[selectedInstance.id]?.is_running ? (statuses[selectedInstance.id]?.is_ready ? 'bg-emerald-500' : 'bg-amber-500') : 'bg-neutral-500'}`}></span>
+                             </span>
+                             <span className="text-[11px] font-medium text-neutral-300">
+                                {!statuses[selectedInstance.id]?.is_running 
+                                   ? (statuses[selectedInstance.id]?.startup_status === "Stopping..." ? 'Stopping' : 'Offline') 
+                                   : (statuses[selectedInstance.id]?.is_ready ? 'Online' : (statuses[selectedInstance.id]?.startup_status || 'Starting...'))}
+                             </span>
+                          </div>
+                       )}
+                    </div>
+                    
                     {selectedInstance && statuses[selectedInstance.id]?.public_ip && !isGlobalBrowser && (
                        <button 
                           onClick={() => copyToClipboard(`${statuses[selectedInstance.id].public_ip}:${statuses[selectedInstance.id].port || 25565}`, 'modal')}
-                          className="flex items-center gap-2 mt-1 text-[10px] bg-[#050505] border border-[#3A3A3A] px-2 py-0.5 rounded hover:bg-[#1A1A1A] transition group"
+                          className="flex items-center gap-2 mt-0.5 text-[10px] bg-[#050505] border border-[#3A3A3A] px-2 py-0.5 rounded hover:bg-[#1A1A1A] transition group self-start"
                           title="Click to copy server address"
                        >
                           <span className="text-neutral-500 font-bold uppercase tracking-wider">Address:</span>
@@ -2468,6 +2523,33 @@ export default function App() {
                           <Copy className={`w-2.5 h-2.5 transition-colors ${copiedId === 'modal' ? 'text-emerald-400' : 'text-neutral-600 group-hover:text-[#3E8ED0]'}`} />
                        </button>
                     )}
+
+                    {!isGlobalBrowser && selectedInstance && statuses[selectedInstance.id] && (() => {
+                       const status = statuses[selectedInstance.id];
+                       const showProgress = (status.is_running && !status.is_ready) || 
+                                           (status.startup_status === "Stopping..." || status.startup_status === "Restarting...");
+                       const pct = status.startup_percent || (status.startup_status === "Stopping..." ? 50 : 0);
+                       const isStopping = status.startup_status === "Stopping..." || status.startup_status === "Killing...";
+                       
+                       if (!showProgress) return null;
+                       
+                       return (
+                          <div className="flex items-center gap-2 mt-1.5 w-64">
+                             <div className="w-full bg-[#1A1A1A] border border-[#323232] p-1.5 rounded flex flex-col gap-1 shadow-inner">
+                                <div className="flex justify-between text-[9px] text-neutral-400 font-mono">
+                                   <span className="truncate max-w-[150px]">{status.startup_status || "Starting..."}</span>
+                                   <span>{pct}%</span>
+                                </div>
+                                <div className="w-full bg-[#323232] rounded-full h-1 overflow-hidden">
+                                   <div 
+                                     className={`h-1 rounded-full transition-all duration-500 ease-out animate-pulse ${isStopping ? 'bg-amber-600' : 'bg-[#3E8ED0]'}`} 
+                                     style={{ width: `${pct}%` }}
+                                   ></div>
+                                </div>
+                             </div>
+                          </div>
+                       );
+                    })()}
                  </div>
               </div>
               <button onClick={() => setIsEditModalOpen(false)} className="p-1 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition">

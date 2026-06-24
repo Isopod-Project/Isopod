@@ -245,7 +245,11 @@ async def get_instance_status(instance_id: str):
     
     # Check logs for "Done" heartbeat if running
     is_ready = False
+    startup_status = "Offline"
+    startup_percent = 0
     if is_running:
+        startup_status = "Starting..."
+        startup_percent = 10
         try:
             # Check most recent logs for Minecraft heartbeats
             log_result = subprocess.run(
@@ -253,9 +257,43 @@ async def get_instance_status(instance_id: str):
                 cwd=get_instance_path(instance_id),
                 capture_output=True, text=True, timeout=5
             )
+            stdout = log_result.stdout
             # Log heartbeats: Done (2.345s)! or Done!
-            if "Done (" in log_result.stdout or "Done!" in log_result.stdout:
+            if "Done (" in stdout or "Done!" in stdout:
                 is_ready = True
+                startup_status = "Online"
+                startup_percent = 100
+            else:
+                # Parse logs for startup state
+                lines = stdout.splitlines()
+                found = False
+                for line in reversed(lines):
+                    if "Preparing spawn area:" in line:
+                        import re
+                        m = re.search(r"Preparing spawn area:\s*(\d+)%", line)
+                        if m:
+                            pct = int(m.group(1))
+                            startup_status = f"Preparing spawn area ({pct}%)"
+                            startup_percent = int(40 + pct * 0.55)
+                            found = True
+                            break
+                if not found:
+                    for line in reversed(lines):
+                        if "Preparing level" in line:
+                            startup_status = "Preparing level..."
+                            startup_percent = 30
+                            found = True
+                            break
+                        elif "Loading properties" in line:
+                            startup_status = "Loading properties..."
+                            startup_percent = 20
+                            found = True
+                            break
+                        elif "Starting minecraft server version" in line or "Starting Minecraft server" in line:
+                            startup_status = "Starting Minecraft server..."
+                            startup_percent = 15
+                            found = True
+                            break
         except: pass
 
     # Get metadata like version and last active
@@ -312,7 +350,9 @@ async def get_instance_status(instance_id: str):
         "port": port,
         "public_ip": public_ip,
         "last_online": last_online,
-        "containers": container_info
+        "containers": container_info,
+        "startup_status": startup_status,
+        "startup_percent": startup_percent
     }
 
 @app.post("/api/instances/{instance_id}/start")
