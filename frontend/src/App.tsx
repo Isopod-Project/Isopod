@@ -86,6 +86,8 @@ export default function App() {
   const [newName, setNewName] = useState("");
   const [newPort, setNewPort] = useState("25565");
   const [isCreating, setIsCreating] = useState(false);
+  const [importProgress, setImportProgress] = useState<number | null>(null);
+  const [importStatus, setImportStatus] = useState<string>("");
   
   // Prism-like Add Modal States
   const [addStep, setAddStep] = useState<number>(1);
@@ -93,9 +95,14 @@ export default function App() {
   const [selectedAddVersion, setSelectedAddVersion] = useState("latest");
   const [selectedAddLoader, setSelectedAddLoader] = useState("VANILLA");
   const [searchModpacks, setSearchModpacks] = useState("");
+  const [onlyServerSideModpacks, setOnlyServerSideModpacks] = useState(true);
   const [modpackResults, setModpackResults] = useState<any[]>([]);
   const [isModpackLoading, setIsModpackLoading] = useState(false);
   const [selectedModpack, setSelectedModpack] = useState<any>(null);
+  const [modpackVersions, setModpackVersions] = useState<any[]>([]);
+  const [selectedModpackVersion, setSelectedModpackVersion] = useState<string>("");
+  const [isModpackVersionsLoading, setIsModpackVersionsLoading] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
   const [versionSearch, setVersionSearch] = useState("");
   const [versionFilters, setVersionFilters] = useState({
     Releases: true,
@@ -308,30 +315,13 @@ export default function App() {
     }
   };
 
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      setIsCreating(true);
-      try {
-         const formData = new FormData();
-         formData.append("file", file);
-         const res = await fetch("/api/instances/import", { method: "POST", body: formData });
-         if (res.ok) {
-            const data = await res.json();
-            await fetchInstances();
-            setSelectedId(data.id);
-            setIsAddModalOpen(false);
-            await showAlert("Instance imported successfully!", "Success");
-         } else {
-            const err = await res.json().catch(() => ({}));
-            await showAlert(`Failed to import: ${err.detail || 'Server error'}`, "Error");
-         }
-      } catch (err) {
-         await showAlert("Error uploading instance zip.", "Error");
-      } finally {
-         setIsCreating(false);
-         if (e.target) e.target.value = '';
-      }
+      setImportFile(file);
+      const baseName = file.name.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ");
+      setNewName(baseName);
+      e.target.value = '';
   };
 
   const handleStart = async (id: string, e: React.MouseEvent) => {
@@ -420,10 +410,103 @@ export default function App() {
     }
   };
 
+  const fetchModpackVersions = async (packId: string, provider: string) => {
+    setIsModpackVersionsLoading(true);
+    try {
+      const res = await fetch(`/api/mods/${provider}/${packId}/versions`);
+      if (!res.ok) throw new Error("Failed to fetch modpack versions");
+      const data = await res.json();
+      setModpackVersions(data);
+      if (data && data.length > 0) {
+        const latestRelease = data.find((v: any) => v.version_type === "release") || data[0];
+        setSelectedModpackVersion(latestRelease.id);
+      } else {
+        setSelectedModpackVersion("");
+      }
+    } catch (e) {
+      console.error("Failed to fetch modpack versions", e);
+      setModpackVersions([]);
+      setSelectedModpackVersion("");
+    } finally {
+      setIsModpackVersionsLoading(false);
+    }
+  };
+
   const handleAddInstance = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsCreating(true);
     try {
+      if (addTab === 'import') {
+        if (!importFile) {
+          await showAlert("Please select a ZIP file first.", "Error");
+          setIsCreating(false);
+          return;
+        }
+         const formData = new FormData();
+         formData.append("file", importFile);
+         if (newName) formData.append("name", newName);
+         if (newPort) formData.append("port", newPort);
+         if (newDifficulty) formData.append("difficulty", newDifficulty);
+         if (newGamemode) formData.append("gamemode", newGamemode);
+         if (newSeed) formData.append("seed", newSeed);
+         if (newLevelType) formData.append("level_type", newLevelType);
+         formData.append("generate_structures", String(newGenerateStructures));
+         if (newMemory) formData.append("memory", newMemory);
+         
+         setImportProgress(0);
+         setImportStatus("Uploading ZIP file...");
+
+         const xhr = new XMLHttpRequest();
+         
+         const promise = new Promise<any>((resolve, reject) => {
+           xhr.upload.addEventListener("progress", (event) => {
+             if (event.lengthComputable) {
+               const percentage = Math.round((event.loaded / event.total) * 100);
+               setImportProgress(percentage);
+               if (percentage === 100) {
+                 setImportStatus("Extracting ZIP on server...");
+               }
+             }
+           });
+           
+           xhr.addEventListener("load", () => {
+             if (xhr.status >= 200 && xhr.status < 300) {
+               try {
+                 resolve(JSON.parse(xhr.responseText));
+               } catch (e) {
+                 resolve({ message: "Import completed" });
+               }
+             } else {
+               try {
+                 const err = JSON.parse(xhr.responseText);
+                 reject(new Error(err.detail || "Failed to import instance"));
+               } catch (e) {
+                 reject(new Error("Failed to import instance"));
+               }
+             }
+           });
+           
+           xhr.addEventListener("error", () => {
+             reject(new Error("Network upload error"));
+           });
+           
+           xhr.open("POST", "/api/instances/import");
+           xhr.send(formData);
+         });
+
+         const data = await promise;
+         setInstances((prev: Instance[]) => [...prev, data]);
+         setIsAddModalOpen(false);
+         setImportFile(null);
+         setNewName("");
+         setImportProgress(null);
+         setImportStatus("");
+         await showAlert("Instance imported successfully!", "Success");
+         fetchInstances();
+         setIsCreating(false);
+         return;
+      }
+
       const body: any = { 
         name: newName, 
         template: selectedAddLoader.toLowerCase(), 
@@ -432,6 +515,7 @@ export default function App() {
         loader_version: selectedAddLoaderVersion,
         modrinth_id: addTab === 'modrinth' && selectedModpack ? selectedModpack.id : null,
         cf_id: addTab === 'curseforge' && selectedModpack ? selectedModpack.id : null,
+        modpack_version: (addTab === 'modrinth' || addTab === 'curseforge') && selectedModpack ? selectedModpackVersion : null,
         seed: newSeed,
         level_type: newLevelType,
         difficulty: newDifficulty,
@@ -454,6 +538,8 @@ export default function App() {
       // Reset states
       setNewName("");
       setSelectedModpack(null);
+      setModpackVersions([]);
+      setSelectedModpackVersion("");
       setSelectedAddVersion("latest");
       setSelectedAddLoader("VANILLA");
       setSelectedAddLoaderVersion("latest");
@@ -470,6 +556,8 @@ export default function App() {
       await showAlert("Failed to create instance", "Creation Failed");
     } finally {
       setIsCreating(false);
+      setImportProgress(null);
+      setImportStatus("");
     }
   };
 
@@ -710,7 +798,10 @@ export default function App() {
   const handleModpackSearch = async (query: string, provider: string) => {
     setIsModpackLoading(true);
     try {
-      const res = await fetch(`/api/mods/search/${provider}?q=${encodeURIComponent(query)}&class_type=modpack`);
+      const url = provider === "modrinth"
+        ? `/api/mods/search/${provider}?q=${encodeURIComponent(query)}&class_type=modpack&only_server_side=${onlyServerSideModpacks}`
+        : `/api/mods/search/${provider}?q=${encodeURIComponent(query)}&class_type=modpack`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error(`${provider} search failed`);
       const data = await res.json();
       setModpackResults(Array.isArray(data) ? data : []);
@@ -949,14 +1040,17 @@ export default function App() {
       if (!config || !config.environment) return;
       const mIdsEnv = config.environment["MODRINTH_PROJECTS"] || "";
       const cIdsEnv = config.environment["CF_PROJECTS"] || "";
-      if (!mIdsEnv && !cIdsEnv) {
+      const modrinthModpack = config.environment["MODRINTH_MODPACK"] || "";
+      const cfModpack = config.environment["CF_SLUG"] || "";
+
+      if (!mIdsEnv && !cIdsEnv && !modrinthModpack && !cfModpack) {
          setInstalledModsMeta([]);
          return;
       }
 
       setIsMetaLoading(true);
       try {
-         const res = await fetch(`/api/mods/metadata?modrinth_ids=${mIdsEnv}&cf_ids=${cIdsEnv}`);
+         const res = await fetch(`/api/mods/metadata?modrinth_ids=${mIdsEnv}&cf_ids=${cIdsEnv}&modrinth_modpack=${modrinthModpack}&cf_modpack=${cfModpack}`);
          const data = await res.json();
          setInstalledModsMeta(data);
 
@@ -1246,6 +1340,13 @@ export default function App() {
       }
    }, [modSearchQuery, modSearchProvider]);
 
+   // Re-run modpack search when toggle changes
+   useEffect(() => {
+      if (isAddModalOpen && addTab === "modrinth" && searchModpacks) {
+         handleModpackSearch(searchModpacks, addTab);
+      }
+   }, [onlyServerSideModpacks]);
+
    // Verify Minecraft User for Global Whitelist
    useEffect(() => {
       const timer = setTimeout(async () => {
@@ -1376,6 +1477,7 @@ export default function App() {
                 setSelectedAddVersion("latest");
                 setSelectedAddLoader("VANILLA");
                 setSelectedModpack(null);
+                setImportFile(null);
              }}
             className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium"
           >
@@ -1998,36 +2100,72 @@ export default function App() {
                                  <Database className="w-10 h-10 text-[#3E8ED0]" />
                               </div>
                               <div className="space-y-2">
-                                 <h3 className="text-xl font-bold text-white">Import Existing Server</h3>
-                                 <p className="text-sm text-neutral-400 max-w-sm">Place your server files in a folder within your servers directory, then select it here to begin configuration.</p>
+                                 <h3 className="text-xl font-bold text-white">
+                                    {importFile ? "File Selected" : "Import Server / World"}
+                                 </h3>
+                                 <p className="text-sm text-neutral-400 max-w-sm">
+                                    {importFile ? (
+                                       <span className="font-mono text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20 block truncate max-w-xs mx-auto">
+                                          {importFile.name}
+                                       </span>
+                                    ) : (
+                                       "Upload an Isopod server export (.zip) or a Minecraft singleplayer world (.zip containing level.dat) to create a new server instance."
+                                    )}
+                                 </p>
                               </div>
-                              <label className="px-8 py-3 bg-[#333] hover:bg-[#444] rounded-lg font-bold text-white transition-all cursor-pointer">
-                                  Browse Zip File
-                                  <input type="file" className="hidden" accept=".zip" onChange={handleImport} />
-                              </label>
+                              <div className="flex gap-2">
+                                 <label className="px-6 py-2.5 bg-[#3E8ED0] hover:bg-[#2B6A9E] rounded-lg font-bold text-white transition-all cursor-pointer shadow-lg shadow-[#3E8ED0]/15 text-sm">
+                                     {importFile ? "Change Zip File" : "Browse Zip File"}
+                                     <input type="file" className="hidden" accept=".zip" onChange={handleImport} />
+                                 </label>
+                                 {importFile && (
+                                    <button 
+                                       onClick={() => {
+                                          setImportFile(null);
+                                          setNewName("");
+                                       }}
+                                       className="px-6 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-500 rounded-lg font-bold transition-all text-sm"
+                                    >
+                                       Clear
+                                    </button>
+                                 )}
+                              </div>
                            </div>
                         )}
 
                         {(addTab === "modrinth" || addTab === "curseforge" || addTab === "atlauncher" || addTab === "technic") && (
                            <div className="flex flex-col h-full bg-[#1E1E1E]/50">
-                              <div className="p-4 bg-[#242424] border-b border-[#323232] flex gap-3">
-                                 <div className="flex-1 relative">
-                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
-                                    <input 
-                                       type="text" 
-                                       placeholder={`Search ${addTab} modpacks...`}
-                                       value={searchModpacks}
-                                       onChange={(e) => setSearchModpacks(e.target.value)}
-                                       onKeyDown={(e) => e.key === 'Enter' && handleModpackSearch(searchModpacks, addTab)}
-                                       className="w-full bg-[#141414] border border-[#3A3A3A] pl-10 pr-4 py-2 rounded focus:outline-none focus:border-[#3E8ED0] text-sm"
-                                    />
+                              <div className="p-4 bg-[#242424] border-b border-[#323232] flex flex-col gap-3">
+                                 <div className="flex gap-3 w-full">
+                                    <div className="flex-1 relative">
+                                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
+                                       <input 
+                                          type="text" 
+                                          placeholder={`Search ${addTab} modpacks...`}
+                                          value={searchModpacks}
+                                          onChange={(e) => setSearchModpacks(e.target.value)}
+                                          onKeyDown={(e) => e.key === 'Enter' && handleModpackSearch(searchModpacks, addTab)}
+                                          className="w-full bg-[#141414] border border-[#3A3A3A] pl-10 pr-4 py-2 rounded focus:outline-none focus:border-[#3E8ED0] text-sm"
+                                       />
+                                    </div>
+                                    <button 
+                                       onClick={() => handleModpackSearch(searchModpacks, addTab)}
+                                       className="px-6 py-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white font-bold rounded text-sm transition-all shadow-lg shadow-[#3E8ED0]/15"
+                                    >
+                                       Search
+                                    </button>
                                  </div>
-                                 <button 
-                                    onClick={() => handleModpackSearch(searchModpacks, addTab)}
-                                    className="px-6 py-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white font-bold rounded text-sm transition-all shadow-lg shadow-[#3E8ED0]/15"
-                                 >
-                                    Search
-                                 </button>
+                                 {addTab === "modrinth" && (
+                                    <label className="flex items-center gap-2 cursor-pointer self-start">
+                                       <input 
+                                          type="checkbox" 
+                                          checked={onlyServerSideModpacks} 
+                                          onChange={(e) => setOnlyServerSideModpacks(e.target.checked)}
+                                          className="rounded border-[#3A3A3A] bg-[#141414] text-[#3E8ED0] focus:ring-[#3E8ED0]"
+                                       />
+                                       <span className="text-xs text-neutral-400 select-none">Show only server-side compatible modpacks</span>
+                                    </label>
+                                 )}
                               </div>
                               <div className="flex-1 overflow-auto p-4 grid grid-cols-1 gap-2">
                                  {isModpackLoading ? (
@@ -2047,6 +2185,7 @@ export default function App() {
                                           onClick={() => {
                                              setSelectedModpack(pack);
                                              if (!newName) setNewName(pack.name);
+                                             fetchModpackVersions(pack.id, addTab);
                                           }}
                                           className={`flex items-center gap-4 p-3 rounded-lg border cursor-pointer transition-all ${selectedModpack?.id === pack.id ? 'bg-[#3E8ED0]/20 border-[#3E8ED0] shadow-lg shadow-[#3E8ED0]/5' : 'bg-[#222] border-[#333] hover:bg-[#282828] hover:border-[#444]'}`}
                                        >
@@ -2062,6 +2201,51 @@ export default function App() {
                                              <div className="flex items-center gap-4 mt-1">
                                                 <span className="text-[9px] font-bold text-neutral-500 uppercase flex items-center gap-1"><RefreshCw className="w-2.5 h-2.5" /> {(pack.downloads || 0).toLocaleString()} DL</span>
                                              </div>
+                                             {selectedModpack?.id === pack.id && (
+                                                <div className="mt-3 pt-3 border-t border-[#3E8ED0]/20 flex flex-col gap-2" onClick={(e) => e.stopPropagation()}>
+                                                   <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">Select Version</label>
+                                                   {isModpackVersionsLoading ? (
+                                                      <div className="flex items-center gap-2 text-xs text-neutral-500">
+                                                         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                                         <span>Loading versions...</span>
+                                                      </div>
+                                                   ) : (
+                                                      <div className="flex flex-col gap-1.5">
+                                                         <select 
+                                                            value={selectedModpackVersion}
+                                                            onChange={(e) => setSelectedModpackVersion(e.target.value)}
+                                                            className="w-full bg-[#141414] border border-[#3E8ED0]/40 rounded p-1.5 text-xs text-[#E0E0E0] focus:outline-none focus:border-[#3E8ED0] font-medium"
+                                                         >
+                                                            {modpackVersions.map((v: any) => (
+                                                               <option key={v.id} value={v.id}>
+                                                                  {v.name} ({v.game_versions?.join(', ') || 'unknown MC'})
+                                                               </option>
+                                                            ))}
+                                                         </select>
+                                                         {(() => {
+                                                            const activeVer = modpackVersions.find((v: any) => v.id === selectedModpackVersion);
+                                                            if (!activeVer) return null;
+                                                            return (
+                                                               <div className="flex flex-wrap gap-x-3 gap-y-1 mt-0.5 text-[10px] text-neutral-500">
+                                                                  <span className="flex items-center gap-1">
+                                                                     <span className="font-semibold text-neutral-400">Minecraft:</span> {activeVer.game_versions?.join(', ') || 'N/A'}
+                                                                  </span>
+                                                                  <span className="flex items-center gap-1">
+                                                                     <span className="font-semibold text-neutral-400">Loader:</span> {activeVer.loaders?.join(', ') || 'N/A'}
+                                                                  </span>
+                                                                  <span className="flex items-center gap-1">
+                                                                     <span className="font-semibold text-neutral-400">Type:</span> 
+                                                                     <span className={`px-1 rounded text-[9px] uppercase font-bold ${activeVer.version_type === 'release' ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400'}`}>
+                                                                        {activeVer.version_type || 'N/A'}
+                                                                     </span>
+                                                                  </span>
+                                                               </div>
+                                                            );
+                                                         })()}
+                                                      </div>
+                                                   )}
+                                                </div>
+                                             )}
                                           </div>
                                        </div>
                                     ))
@@ -2174,9 +2358,25 @@ export default function App() {
 
              {/* Bottom Actions */}
              <div className="p-4 bg-[#2D2D2D] border-t border-[#3A3A3A] flex justify-between items-center px-6">
-                <button className="flex items-center gap-2 text-neutral-500 hover:text-white transition-colors text-xs font-medium">
-                   <AlertCircle className="w-4 h-4" /> Help
-                </button>
+                <div className="flex items-center gap-4">
+                   <button className="flex items-center gap-2 text-neutral-500 hover:text-white transition-colors text-xs font-medium">
+                      <AlertCircle className="w-4 h-4" /> Help
+                   </button>
+                   {isCreating && addTab === 'import' && (
+                      <div className="flex flex-col gap-1.5 w-64 md:w-80">
+                         <div className="flex justify-between text-xs font-semibold text-neutral-300">
+                            <span className="animate-pulse text-amber-500">{importStatus || "Uploading & extracting..."}</span>
+                            {importProgress !== null && <span>{importProgress}%</span>}
+                         </div>
+                         <div className="w-full h-2 bg-neutral-800 rounded-full overflow-hidden border border-[#3A3A3A]">
+                            <div 
+                               className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-300 ease-out" 
+                               style={{ width: `${importProgress !== null ? importProgress : 50}%` }}
+                            />
+                         </div>
+                      </div>
+                    )}
+                </div>
                 <div className="flex gap-2">
                    {addStep === 2 && (
                       <button 
@@ -2195,9 +2395,9 @@ export default function App() {
                    {addStep === 1 ? (
                       <button 
                         onClick={() => setAddStep(2)}
-                        disabled={!newName || (addTab !== 'custom' && addTab !== 'import' && !selectedModpack)}
+                        disabled={!newName || (addTab === 'import' && !importFile) || (addTab !== 'custom' && addTab !== 'import' && (!selectedModpack || !selectedModpackVersion))}
                         className={`flex items-center gap-2 px-8 py-2 rounded font-bold text-sm shadow-xl transition-all ${
-                          !newName || (addTab !== 'custom' && addTab !== 'import' && !selectedModpack) ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed border border-[#333]' : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white shadow-[#3E8ED0]/10'
+                          !newName || (addTab === 'import' && !importFile) || (addTab !== 'custom' && addTab !== 'import' && (!selectedModpack || !selectedModpackVersion)) ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed border border-[#333]' : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white shadow-[#3E8ED0]/10'
                         }`}
                       >
                         Next <ChevronRight className="w-4 h-4" />

@@ -5,7 +5,7 @@ import re
 import zipfile
 import tempfile
 import asyncio
-from fastapi import FastAPI, HTTPException, File, UploadFile, Request, BackgroundTasks
+from fastapi import FastAPI, HTTPException, File, UploadFile, Request, BackgroundTasks, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
@@ -83,6 +83,7 @@ class CreateInstanceRequest(BaseModel):
     loader_version: Optional[str] = "latest"
     modrinth_id: Optional[str] = None
     cf_id: Optional[str] = None
+    modpack_version: Optional[str] = None
     group: Optional[str] = "No group"
     icon_url: Optional[str] = None
     memory: Optional[str] = "1G"
@@ -272,17 +273,25 @@ async def get_instance_status(instance_id: str):
                # Support both top-level services or nested keys
                mc_config = services.get("mc") or list(services.values())[0]
                env = mc_config.get("environment", {})
-               version = env.get("VERSION", "Unknown")
+               if isinstance(env, list):
+                   env_dict = {}
+                   for item in env:
+                       if "=" in item:
+                           k, v = item.split("=", 1)
+                           env_dict[k] = v
+                   env = env_dict
+               version = env.get("VERSION", "Unknown") if isinstance(env, dict) else "Unknown"
                
                # Extract port
                ports = mc_config.get("ports", [])
                if ports:
-                   p_str = ports[0].split(":")[0]
+                   p_str = str(ports[0]).split(":")[0]
                    port = int(p_str)
         
         # Last online from docker-compose.yml mod date
         last_online = os.path.getmtime(compose_path)
-    except: pass
+    except Exception as e:
+        print(f"Error parsing compose for status: {e}")
 
     public_ip = await get_public_ip()
 
@@ -443,9 +452,19 @@ def get_config(instance_id: str):
     first_service_name = list(services.keys())[0]
     service = services[first_service_name]
     
+    raw_env = service.get("environment", {})
+    env = {}
+    if isinstance(raw_env, list):
+        for item in raw_env:
+            if '=' in item:
+                k, v = item.split('=', 1)
+                env[k] = v
+    elif isinstance(raw_env, dict):
+        env = raw_env
+
     return {
         "image": service.get("image", ""),
-        "environment": service.get("environment", {}),
+        "environment": env,
     }
 
 @app.put("/api/instances/{instance_id}/config")
@@ -596,6 +615,7 @@ def get_instance_users(instance_id: str):
     # Return as list
     return list(users.values())
 
+
 def format_uuid(raw_uuid: str) -> str:
     if len(raw_uuid) == 32:
         return f"{raw_uuid[:8]}-{raw_uuid[8:12]}-{raw_uuid[12:16]}-{raw_uuid[16:20]}-{raw_uuid[20:]}"
@@ -604,6 +624,7 @@ def format_uuid(raw_uuid: str) -> str:
 def get_minecraft_uuid(username: str) -> str:
     import urllib.request
     import hashlib
+    import json
     
     url = f"https://api.mojang.com/users/profiles/minecraft/{username}"
     try:
@@ -627,6 +648,7 @@ def get_minecraft_uuid(username: str) -> str:
     hash_list[8] = (hash_list[8] & 0x3f) | 0x80  # Variant 1
     hex_str = ''.join(f'{b:02x}' for b in hash_list)
     return f"{hex_str[:8]}-{hex_str[8:12]}-{hex_str[12:16]}-{hex_str[16:20]}-{hex_str[20:]}"
+
 
 @app.put("/api/instances/{instance_id}/users")
 def update_instance_users(instance_id: str, users: List[WhitelistUser]):
@@ -984,8 +1006,137 @@ async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
 
     return []
 
+def get_java_tag_for_mc_version(mc_version: str) -> str:
+    if not mc_version:
+        return "java21"
+    
+    parts = mc_version.split(".")
+    try:
+        if len(parts) >= 1:
+            major = int(parts[0])
+            if major == 1:
+                if len(parts) >= 2:
+                    minor = int(parts[1])
+                    if minor >= 21:
+                        return "java21"
+                    elif minor >= 20:
+                        if len(parts) >= 3 and int(parts[2]) >= 5:
+                            return "java21"
+                        return "java17"
+                    elif minor >= 18:
+                        return "java17"
+                    elif minor >= 17:
+                        return "java17"
+                    else:
+                        return "java8"
+            else:
+                if major >= 25:
+                    return "java25"
+                elif major >= 21:
+                    return "java21"
+                elif major >= 17:
+                    return "java17"
+                else:
+                    return "java8"
+    except Exception as e:
+        print(f"Error parsing MC version '{mc_version}' for Java mapping: {e}")
+    
+    if "1.21" in mc_version or "1.20.5" in mc_version or "1.20.6" in mc_version or "26." in mc_version:
+        return "java21"
+    if "1.20" in mc_version or "1.19" in mc_version or "1.18" in mc_version:
+        return "java17"
+    
+    return "java21"
+
+def is_client_only_mod(filename: str) -> bool:
+    fn = filename.lower()
+    if fn.endswith(".jar"):
+        fn = fn[:-4]
+    
+    # Normalize: strip all non-alphanumeric chars
+    import re
+    norm = re.sub(r'[^a-z0-9]', '', fn)
+    
+    # Common client-side indicators
+    client_indicators = [
+        "sodium", "rubidium", "embeddium", "iris", "oculus", "modmenu", "continuity",
+        "entityculling", "immediatelyfast", "dynamicfps", "e4mc", "controlify",
+        "reesessodiumoptions", "sodiumextra", "bettergrassify", "cubeswithoutborders",
+        "animatica", "skyboxify", "puzzle", "presencefootsteps", "soundphysics",
+        "borderlessfullscreen", "languagereload", "morechathistory", "mainmenucredits",
+        "crashassistant", "bettermounthud", "capeprovider", "zoomify", "debugify",
+        "fastquit", "nochatreports", "optigui", "litematica", "minihud", "tweakeroo",
+        "lambdynamiclights", "bobby", "distanthorizons", "fancymenu", "konkrete",
+        "controlling", "searchables", "customskinloader", "fabrishot", "perspectivemod",
+        "chunkfade", "shulboxtooltip", "itemphysics", "ambience", "visuality",
+        "skinlayers", "3dskinlayers", "wavesurfer", "legendarytooltips"
+    ]
+    
+    for indicator in client_indicators:
+        if norm.startswith(indicator):
+            return True
+            
+    return False
+
+@app.get("/api/mods/modrinth/{project_id}/versions")
+async def get_modrinth_project_versions(project_id: str):
+    url = f"https://api.modrinth.com/v2/project/{project_id}/version"
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url)
+            if res.status_code == 200:
+                versions = res.json()
+                results = []
+                for v in versions:
+                    results.append({
+                        "id": v["id"],
+                        "version_number": v["version_number"],
+                        "name": v["name"],
+                        "game_versions": v["game_versions"],
+                        "loaders": v["loaders"],
+                        "version_type": v["version_type"]
+                    })
+                return results
+            else:
+                raise HTTPException(status_code=res.status_code, detail="Failed to fetch Modrinth versions")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Modrinth API error: {str(e)}")
+
+@app.get("/api/mods/curseforge/{project_id}/versions")
+async def get_curseforge_project_versions(project_id: str):
+    url = f"https://api.curse.tools/v1/cf/mods/{project_id}/files"
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url)
+            if res.status_code == 200:
+                files = res.json().get("data", [])
+                results = []
+                for f in files:
+                    game_versions = []
+                    loaders = []
+                    for ver in f.get("gameVersions", []):
+                        ver_lower = ver.lower()
+                        if ver_lower in ["fabric", "forge", "quilt", "neoforge"]:
+                            loaders.append(ver_lower)
+                        elif ver and ver[0].isdigit():
+                            game_versions.append(ver)
+                    
+                    results.append({
+                        "id": str(f["id"]),
+                        "version_number": f.get("displayName", f.get("fileName", "Unknown")),
+                        "name": f.get("displayName", f.get("fileName", "Unknown")),
+                        "game_versions": game_versions,
+                        "loaders": loaders,
+                        "version_type": "release" if f.get("releaseType") == 1 else ("beta" if f.get("releaseType") == 2 else "alpha")
+                    })
+                return results
+            else:
+                raise HTTPException(status_code=res.status_code, detail="Failed to fetch CurseForge versions")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"CurseForge API error: {str(e)}")
+
 @app.get("/api/mods/search/modrinth")
-async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None, class_type: str = "mod"):
+async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None, class_type: str = "mod", only_server_side: bool = True):
     # Handle "undefined" literals from frontend
     q = None if q == "undefined" or not q else q
     mc_version = None if mc_version == "undefined" or not mc_version else mc_version
@@ -997,7 +1148,7 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
     facets = [
         [f"project_type:{class_type}"],
     ]
-    if class_type == "mod":
+    if class_type == "mod" or (class_type == "modpack" and only_server_side):
         facets.append(["server_side:required", "server_side:optional"])
     if mc_version:
         facets.append([f"versions:{mc_version}"])
@@ -1113,7 +1264,7 @@ def generate_slug(text: str) -> str:
     return slug.strip('-')
 
 @app.post("/api/instances")
-def create_instance(req: CreateInstanceRequest):
+async def create_instance(req: CreateInstanceRequest):
     slug = generate_slug(req.name)
     path = os.path.join(SERVERS_DIR, slug)
     if os.path.exists(path):
@@ -1145,6 +1296,7 @@ def create_instance(req: CreateInstanceRequest):
                     "MODRINTH_ALLOWED_VERSION_TYPE=alpha"
                 ],
                 "volumes": ["./data:/data"],
+                "dns": ["8.8.8.8", "1.1.1.1"],
                 "restart": "unless-stopped"
             }
         }
@@ -1170,10 +1322,132 @@ def create_instance(req: CreateInstanceRequest):
         else:
             env.append(f"LOADER_VERSION={req.loader_version}")
 
+    mc_version = None
+
     if req.modrinth_id:
-        env.append(f"MODRINTH_PROJECTS={req.modrinth_id}")
+        # Resolve Modrinth version metadata for Java version & Minecraft version
+        try:
+            async with httpx.AsyncClient() as client:
+                vdata = None
+                if req.modpack_version:
+                    res = await client.get(f"https://api.modrinth.com/v2/version/{req.modpack_version}")
+                    if res.status_code == 200:
+                        vdata = res.json()
+                else:
+                    res = await client.get(f"https://api.modrinth.com/v2/project/{req.modrinth_id}/version")
+                    if res.status_code == 200:
+                        versions = res.json()
+                        if versions:
+                            vdata = versions[0]
+                            req.modpack_version = vdata["id"]
+                
+                if vdata:
+                    if vdata.get("game_versions"):
+                        mc_version = vdata["game_versions"][0]
+                    
+                    # Find mrpack file download link and parse index for client-side only mods
+                    mrpack_url = None
+                    for file_info in vdata.get("files", []):
+                        if file_info.get("filename", "").lower().endswith(".mrpack"):
+                            mrpack_url = file_info.get("url")
+                            break
+                    
+                    if mrpack_url:
+                        mrpack_res = await client.get(mrpack_url, follow_redirects=True)
+                        if mrpack_res.status_code == 200:
+                            import zipfile
+                            import io
+                            with zipfile.ZipFile(io.BytesIO(mrpack_res.content)) as z:
+                                if "modrinth.index.json" in z.namelist():
+                                    index_data = json.loads(z.read("modrinth.index.json").decode("utf-8"))
+                                    excludes = []
+                                    for f in index_data.get("files", []):
+                                        env_cfg = f.get("env", {})
+                                        filename = f.get("path", "").split("/")[-1]
+                                        if filename:
+                                            if env_cfg.get("server") == "unsupported" or is_client_only_mod(filename):
+                                                excludes.append(filename)
+                                    
+                                    if excludes:
+                                        exclude_str = ",".join(excludes)
+                                        env.append(f"MODRINTH_EXCLUDE_FILES={exclude_str}")
+                                        env.append("MODRINTH_FORCE_SYNCHRONIZE=true")
+        except Exception as e:
+            print(f"Error fetching Modrinth version details: {e}")
+
+        # Replace TYPE=... with TYPE=MODRINTH for Modrinth modpack
+        for i, val in enumerate(env):
+            if val.startswith("TYPE="):
+                env[i] = "TYPE=MODRINTH"
+                break
+        env.append(f"MODRINTH_MODPACK={req.modrinth_id}")
+        if req.modpack_version:
+            env.append(f"MODRINTH_VERSION={req.modpack_version}")
+
     if req.cf_id:
-        env.append(f"CF_PROJECTS={req.cf_id}")
+        file_id = None
+        # If curseforge, req.modpack_version is the file ID
+        try:
+            async with httpx.AsyncClient() as client:
+                if req.modpack_version:
+                    file_id = req.modpack_version
+                else:
+                    res = await client.get(f"https://api.curse.tools/v1/cf/mods/{req.cf_id}")
+                    if res.status_code == 200:
+                        data = res.json().get("data", {})
+                        latest_files = data.get("latestFiles", [])
+                        if latest_files:
+                            file_id = str(latest_files[0]["id"])
+                            req.modpack_version = file_id
+                            for ver in latest_files[0].get("gameVersions", []):
+                                if ver and ver[0].isdigit():
+                                    mc_version = ver
+                                    break
+                
+                if file_id and not mc_version:
+                    res = await client.get(f"https://api.curse.tools/v1/cf/mods/{req.cf_id}/files/{file_id}")
+                    if res.status_code == 200:
+                        fdata = res.json().get("data", {})
+                        for ver in fdata.get("gameVersions", []):
+                             if ver and ver[0].isdigit():
+                                 mc_version = ver
+                                 break
+        except Exception as e:
+            print(f"Error fetching CurseForge version details: {e}")
+
+        # Replace TYPE=... with TYPE=AUTO_CURSEFORGE for CurseForge modpack
+        for i, val in enumerate(env):
+            if val.startswith("TYPE="):
+                env[i] = "TYPE=AUTO_CURSEFORGE"
+                break
+        env.append(f"CF_SLUG={req.cf_id}")
+        if req.modpack_version:
+            env.append(f"CF_FILE_ID={req.modpack_version}")
+        
+        # Exclude common client-only mods from CurseForge downloads
+        cf_excludes = [
+            "sodium", "rubidium", "embeddium", "iris-shaders", "oculus", "modmenu", "continuity",
+            "entityculling", "immediatelyfast", "dynamic-fps", "e4mc", "controlify",
+            "reeses-sodium-options", "sodium-extra", "bettergrassify", "cubes-without-borders",
+            "animatica", "skyboxify", "puzzle", "presence-footsteps", "sound-physics-remastered",
+            "borderlessfullscreen", "language-reload", "morechathistory", "mainmenucredits",
+            "crashassistant", "better-mount-hud", "cape-provider", "zoomify", "debugify",
+            "fastquit", "no-chat-reports", "optigui", "litematica", "minihud", "tweakeroo",
+            "lambdynamiclights", "bobby", "distant-horizons", "fancymenu", "konkrete",
+            "controlling", "searchables", "custom-skin-loader", "fabrishot", "perspectivemod",
+            "chunk-fade", "shulbox-tooltip", "itemphysics-lite", "ambience", "visuality",
+            "skinlayers-3d", "wavesurfer", "legendary-tooltips"
+        ]
+        env.append(f"CF_EXCLUDE_MODS={','.join(cf_excludes)}")
+
+    # Set correct java version and Minecraft version based on resolved version
+    if mc_version:
+        java_tag = get_java_tag_for_mc_version(mc_version)
+        compose_content["services"]["mc"]["image"] = f"itzg/minecraft-server:{java_tag}"
+        for i, val in enumerate(env):
+            if val.startswith("VERSION="):
+                env[i] = f"VERSION={mc_version}"
+                break
     
     with open(os.path.join(path, "docker-compose.yml"), "w") as f:
         yaml.dump(compose_content, f, default_flow_style=False)
@@ -1454,12 +1728,22 @@ def export_instance(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/instances/import")
-async def import_instance(file: UploadFile = File(...)):
+async def import_instance(
+    file: UploadFile = File(...),
+    name: Optional[str] = Form(None),
+    port: Optional[str] = Form(None),
+    difficulty: Optional[str] = Form(None),
+    gamemode: Optional[str] = Form(None),
+    seed: Optional[str] = Form(None),
+    level_type: Optional[str] = Form(None),
+    generate_structures: Optional[str] = Form(None),
+    memory: Optional[str] = Form(None)
+):
     if not file.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="Only .zip files are supported")
         
     # Generate a unique slug for the new instance
-    base_name = file.filename.rsplit('.', 1)[0]
+    base_name = name if name else file.filename.rsplit('.', 1)[0]
     new_slug = generate_slug(base_name)
     
     # Avoid collisions
@@ -1478,54 +1762,192 @@ async def import_instance(file: UploadFile = File(...)):
         tmp_path = tmp.name
         
     try:
-        with zipfile.ZipFile(tmp_path, 'r') as zipf:
-            zipf.extractall(target_path)
-            
-        # Update docker-compose.yml to match the new slug and avoid port conflict
-        compose_path = os.path.join(target_path, "docker-compose.yml")
-        if os.path.exists(compose_path):
+        port_val = None
+        if port:
             try:
-                with open(compose_path, "r") as f:
-                    config = yaml.safe_load(f)
+                port_val = int(port)
+            except ValueError:
+                pass
                 
-                services = config.get("services", {})
-                if services:
-                    # Find used ports
-                    used_ports = set()
-                    for entry in os.scandir(SERVERS_DIR):
-                        if entry.is_dir() and entry.name != new_slug:
+        gen_struct_bool = True
+        if generate_structures is not None:
+            gen_struct_bool = generate_structures.lower() == 'true'
+
+        temp_extract_dir = os.path.join(target_path, "temp_extract")
+        os.makedirs(temp_extract_dir, exist_ok=True)
+        
+        with zipfile.ZipFile(tmp_path, 'r') as zipf:
+            for member in zipf.infolist():
+                filename_normalized = member.filename.replace('\\', '/')
+                if filename_normalized.startswith('/') or '..' in filename_normalized:
+                    continue
+                target_file = os.path.join(temp_extract_dir, filename_normalized)
+                if member.is_dir():
+                    os.makedirs(target_file, exist_ok=True)
+                else:
+                    os.makedirs(os.path.dirname(target_file), exist_ok=True)
+                    with zipf.open(member) as source, open(target_file, "wb") as target:
+                        shutil.copyfileobj(source, target)
+                        
+        compose_file_found = None
+        level_dat_found = None
+        for root, dirs, files in os.walk(temp_extract_dir):
+            for file in files:
+                if file.lower() in ('docker-compose.yml', 'docker-compose.yaml'):
+                    compose_file_found = os.path.join(root, file)
+                    break
+                elif file.lower() == 'level.dat':
+                    level_dat_found = os.path.join(root, file)
+            if compose_file_found:
+                break
+                
+        if not compose_file_found and not level_dat_found:
+            raise HTTPException(
+                status_code=400, 
+                detail="Invalid zip structure. Must contain a docker-compose.yml (for server exports) or level.dat (for single-player worlds)."
+            )
+            
+        if compose_file_found:
+            src_dir = os.path.dirname(compose_file_found)
+            for item in os.listdir(src_dir):
+                src_item = os.path.join(src_dir, item)
+                dst_item = os.path.join(target_path, item)
+                if item != "temp_extract":
+                    shutil.move(src_item, dst_item)
+                    
+            if os.path.exists(temp_extract_dir):
+                shutil.rmtree(temp_extract_dir)
+                
+            compose_path = os.path.join(target_path, "docker-compose.yml")
+            if os.path.exists(compose_path):
+                try:
+                    with open(compose_path, "r") as f:
+                        config = yaml.safe_load(f)
+                    
+                    services = config.get("services", {})
+                    if services:
+                        # Find used ports
+                        used_ports = set()
+                        for entry in os.scandir(SERVERS_DIR):
+                            if entry.is_dir() and entry.name != new_slug:
+                                try:
+                                    other_compose = os.path.join(entry.path, "docker-compose.yml")
+                                    if os.path.exists(other_compose):
+                                        with open(other_compose, 'r') as of:
+                                            odata = yaml.safe_load(of)
+                                            for _, oservice in odata.get("services", {}).items():
+                                                for p in oservice.get("ports", []):
+                                                    used_ports.add(int(str(p).split(':')[0]))
+                                except: pass
+    
+                        service_name = "mc" if "mc" in services else list(services.keys())[0]
+                        service = services[service_name]
+                        service["container_name"] = f"isopod_{new_slug}"
+                        
+                        if "ports" in service:
                             try:
-                                other_compose = os.path.join(entry.path, "docker-compose.yml")
-                                if os.path.exists(other_compose):
-                                    with open(other_compose, 'r') as of:
-                                        odata = yaml.safe_load(of)
-                                        for _, oservice in odata.get("services", {}).items():
-                                            for p in oservice.get("ports", []):
-                                                used_ports.add(int(str(p).split(':')[0]))
+                                p = service["ports"][0] or "25565:25565"
+                                current_port = int(str(p).split(':')[0])
+                                new_port = port_val if port_val else current_port
+                                while new_port in used_ports or new_port < 1024:
+                                    new_port += 1
+                                service["ports"] = [f"{new_port}:25565"]
                             except: pass
 
-                    service_name = "mc" if "mc" in services else list(services.keys())[0]
-                    service = services[service_name]
-                    service["container_name"] = f"isopod_{new_slug}"
+                        # Update other properties if provided
+                        env = service.get("environment", [])
+                        if isinstance(env, list):
+                            def set_env_list(key, val):
+                                for i, item in enumerate(env):
+                                    if item.startswith(f"{key}="):
+                                        env[i] = f"{key}={val}"
+                                        return
+                                env.append(f"{key}={val}")
+
+                            if difficulty: set_env_list("DIFFICULTY", difficulty)
+                            if gamemode: set_env_list("MODE", gamemode)
+                            if seed: set_env_list("SEED", seed)
+                            if level_type: set_env_list("LEVEL_TYPE", level_type)
+                            if generate_structures is not None: set_env_list("GENERATE_STRUCTURES", "true" if gen_struct_bool else "false")
+                            if memory: set_env_list("MEMORY", memory)
+                        elif isinstance(env, dict):
+                            if difficulty: env["DIFFICULTY"] = difficulty
+                            if gamemode: env["MODE"] = gamemode
+                            if seed: env["SEED"] = seed
+                            if level_type: env["LEVEL_TYPE"] = level_type
+                            if generate_structures is not None: env["GENERATE_STRUCTURES"] = "true" if gen_struct_bool else "false"
+                            if memory: env["MEMORY"] = memory
                     
-                    if "ports" in service:
-                        try:
-                            p = service["ports"][0] or "25565:25565"
-                            current_port = int(str(p).split(':')[0])
-                            new_port = current_port
-                            while new_port in used_ports or new_port < 1024:
-                                new_port += 1
-                            service["ports"] = [f"{new_port}:25565"]
-                        except: pass
+                    with open(compose_path, "w") as f:
+                        yaml.dump(config, f, default_flow_style=False)
+                except Exception as e:
+                    print(f"Error updating compose after import: {e}")
+        else:
+            src_dir = os.path.dirname(level_dat_found)
+            world_dir = os.path.join(target_path, "data", "world")
+            os.makedirs(world_dir, exist_ok=True)
+            for item in os.listdir(src_dir):
+                src_item = os.path.join(src_dir, item)
+                dst_item = os.path.join(world_dir, item)
+                shutil.move(src_item, dst_item)
                 
-                with open(compose_path, "w") as f:
-                    yaml.dump(config, f, default_flow_style=False)
-            except Exception as e:
-                print(f"Error updating compose after import: {e}")
+            if os.path.exists(temp_extract_dir):
+                shutil.rmtree(temp_extract_dir)
+                                
+            # Generate the default docker-compose.yml for this single player world
+            used_ports = set()
+            for entry in os.scandir(SERVERS_DIR):
+                if entry.is_dir() and entry.name != new_slug:
+                    try:
+                        other_compose = os.path.join(entry.path, "docker-compose.yml")
+                        if os.path.exists(other_compose):
+                            with open(other_compose, 'r') as of:
+                                odata = yaml.safe_load(of)
+                                for _, oservice in odata.get("services", {}).items():
+                                    for p in oservice.get("ports", []):
+                                        used_ports.add(int(str(p).split(':')[0]))
+                    except: pass
+            
+            new_port = port_val if port_val else 25565
+            while new_port in used_ports or new_port < 1024:
+                new_port += 1
                 
+            compose_content = {
+                "services": {
+                    "mc": {
+                        "image": "itzg/minecraft-server",
+                        "container_name": f"isopod_{new_slug}",
+                        "ports": [f"{new_port}:25565"],
+                        "environment": [
+                            "EULA=TRUE",
+                            "TYPE=VANILLA",
+                            "VERSION=latest",
+                            f"MEMORY={memory or '2G'}",
+                            f"MOTD={base_name} Hosted by Isopod",
+                            "ENABLE_RCON=true",
+                            "RCON_PASSWORD=isopod",
+                            f"SEED={seed or ''}",
+                            f"LEVEL_TYPE={level_type or 'DEFAULT'}",
+                            f"DIFFICULTY={difficulty or 'easy'}",
+                            f"MODE={gamemode or 'survival'}",
+                            f"GENERATE_STRUCTURES={'true' if gen_struct_bool else 'false'}",
+                            "JVM_OPTS=--add-opens java.base/sun.misc=ALL-UNNAMED"
+                        ],
+                        "volumes": ["./data:/data"],
+                        "restart": "unless-stopped"
+                    }
+                }
+            }
+            with open(os.path.join(target_path, "docker-compose.yml"), "w") as f:
+                yaml.dump(compose_content, f, default_flow_style=False)
+                
+            save_instance_meta(target_path, {"group": "No group"})
+            
         return {"id": new_slug, "message": "Instance imported successfully"}
     except Exception as e:
         shutil.rmtree(target_path, ignore_errors=True)
+        if isinstance(e, HTTPException):
+            raise e
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
     finally:
         if os.path.exists(tmp_path):
@@ -1563,7 +1985,7 @@ def execute_command(instance_id: str, req: CommandRequest):
         return {"output": f"Execution error: {str(e)}", "success": False}
 
 @app.get("/api/mods/metadata")
-async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
+async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = "", modrinth_modpack: str = "", cf_modpack: str = ""):
     """Fetch metadata for multiple mods from Modrinth and CurseForge."""
     results = []
     
@@ -1571,6 +1993,40 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
     c_ids = [i.strip() for i in cf_ids.split(",") if i.strip()]
     
     async with httpx.AsyncClient() as client:
+        # If modrinth_modpack is specified, fetch its dependencies (constituent mods)
+        if modrinth_modpack:
+            try:
+                res = await client.get(f"https://api.modrinth.com/v2/project/{modrinth_modpack}/version")
+                if res.status_code == 200:
+                    versions = res.json()
+                    if versions:
+                        # Grab dependencies from the latest version of the modpack
+                        deps = versions[0].get("dependencies", [])
+                        for d in deps:
+                            p_id = d.get("project_id")
+                            if p_id and p_id not in m_ids:
+                                m_ids.append(p_id)
+            except Exception as e:
+                print(f"Error resolving Modrinth modpack dependencies: {e}")
+
+        # If cf_modpack is specified, fetch its dependencies (constituent mods)
+        if cf_modpack:
+            try:
+                res = await client.get(f"https://api.curse.tools/v1/cf/mods/{cf_modpack}")
+                if res.status_code == 200:
+                    data = res.json().get("data", {})
+                    latest_files = data.get("latestFiles", [])
+                    if latest_files:
+                        deps = latest_files[0].get("dependencies", [])
+                        for d in deps:
+                            # 1 = Embedded, 3 = Required
+                            if d.get("relationType") in (1, 3):
+                                p_id = str(d.get("modId"))
+                                if p_id and p_id not in c_ids:
+                                    c_ids.append(p_id)
+            except Exception as e:
+                print(f"Error resolving CurseForge modpack dependencies: {e}")
+
         # Modrinth bulk lookup
         if m_ids:
             # Check cache first
@@ -1592,7 +2048,8 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
                                 "url": f"https://modrinth.com/mod/{project['slug']}",
                                 "provider": "modrinth",
                                 "mc_versions": project.get("game_versions", [])[:3],
-                                "latest_version": project.get("latest_version", "Unknown")
+                                "latest_version": project.get("latest_version", "Unknown"),
+                                "is_client_only": project.get("server_side") == "unsupported"
                             }
                             mod_metadata_cache[project["slug"]] = meta
                             mod_metadata_cache[project["id"]] = meta
@@ -1601,9 +2058,12 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
             
             for mid in m_ids:
                 if mid in mod_metadata_cache:
-                    meta = mod_metadata_cache[mid].copy()
-                    meta["requested_id"] = mid
-                    results.append(meta)
+                    meta = mod_metadata_cache[mid]
+                    if meta.get("is_client_only"):
+                        continue
+                    meta_copy = meta.copy()
+                    meta_copy["requested_id"] = mid
+                    results.append(meta_copy)
                 else:
                     results.append({"id": mid, "name": mid, "provider": "modrinth", "unknown": True, "requested_id": mid})
 
@@ -1611,15 +2071,20 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
         if c_ids:
             for cid in c_ids:
                 if cid in mod_metadata_cache:
-                    meta = mod_metadata_cache[cid].copy()
-                    meta["requested_id"] = cid
-                    results.append(meta)
+                    meta = mod_metadata_cache[cid]
+                    if meta.get("is_client_only"):
+                        continue
+                    meta_copy = meta.copy()
+                    meta_copy["requested_id"] = cid
+                    results.append(meta_copy)
                     continue
                 try:
                     res = await client.get(f"https://api.curse.tools/v1/cf/mods/{cid}")
                     if res.status_code == 200:
                         item = res.json()["data"]
                         latest_file = item.get("latestFiles", [{}])[0]
+                        categories = item.get("categories", [])
+                        is_client_only = any(c.get("id") == 4764 for c in categories)
                         meta = {
                             "id": str(item["id"]),
                             "name": item["name"],
@@ -1630,9 +2095,12 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = ""):
                             "url": item.get("links", {}).get("websiteUrl", ""),
                             "provider": "curseforge",
                             "mc_versions": latest_file.get("gameVersions", [])[:3],
-                            "latest_version": latest_file.get("displayName", "Unknown")
+                            "latest_version": latest_file.get("displayName", "Unknown"),
+                            "is_client_only": is_client_only
                         }
                         mod_metadata_cache[cid] = meta
+                        if is_client_only:
+                            continue
                         meta_copy = meta.copy()
                         meta_copy["requested_id"] = cid
                         results.append(meta_copy)
