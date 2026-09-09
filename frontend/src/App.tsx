@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, Flame } from "lucide-react";
 
 interface Instance {
   id: string;
@@ -91,7 +91,8 @@ export default function App() {
   
   // Prism-like Add Modal States
   const [addStep, setAddStep] = useState<number>(1);
-  const [addTab, setAddTab] = useState<"custom" | "import" | "modrinth" | "curseforge" | "atlauncher" | "technic" | "world">("custom");
+  // Note: "atlauncher", "ftb" (Feed The Beast), and "technic" are commented out until backend provider endpoints are implemented.
+  const [addTab, setAddTab] = useState<"custom" | "import" | "modrinth" | "curseforge">("custom");
   const [selectedAddVersion, setSelectedAddVersion] = useState("latest");
   const [selectedAddLoader, setSelectedAddLoader] = useState("VANILLA");
   const [searchModpacks, setSearchModpacks] = useState("");
@@ -433,11 +434,14 @@ export default function App() {
      }
   }, [selectedAddVersion, isAddModalOpen]);
 
+  // Hardcoded available loaders for instance creation
+  const AVAILABLE_LOADERS = ['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT', 'PAPER'];
+
   useEffect(() => {
-     if (isAddModalOpen && !compatibleLoaders.includes(selectedAddLoader)) {
+     if (isAddModalOpen && !AVAILABLE_LOADERS.includes(selectedAddLoader)) {
         setSelectedAddLoader("VANILLA");
      }
-  }, [compatibleLoaders, selectedAddLoader, isAddModalOpen]);
+  }, [selectedAddLoader, isAddModalOpen]);
 
   useEffect(() => {
      if (isEditModalOpen && config?.environment?.VERSION) {
@@ -1967,13 +1971,18 @@ export default function App() {
                      {[
                         { id: "custom", name: "Custom", icon: Gamepad2 },
                         { id: "import", name: "Import", icon: Database },
-                        { id: "modrinth", name: "Modrinth", icon: RefreshCw }
+                        { id: "modrinth", name: "Modrinth", icon: RefreshCw },
+                        { id: "curseforge", name: "CurseForge", icon: Flame },
+                        // TODO: Re-add ATLauncher, Feed The Beast (FTB), and Technic once backend provider endpoints are implemented:
+                        // { id: "atlauncher", name: "ATLauncher", icon: Box },
+                        // { id: "ftb", name: "Feed The Beast", icon: Layers },
+                        // { id: "technic", name: "Technic", icon: Cpu }
                      ].map((tab) => (
                         <button 
                            key={tab.id}
                            onClick={() => {
                               setAddTab(tab.id as any);
-                              if (tab.id === 'modrinth') {
+                              if (tab.id === 'modrinth' || tab.id === 'curseforge') {
                                  handleModpackSearch("", tab.id);
                               }
                            }}
@@ -2107,7 +2116,7 @@ export default function App() {
                                        Mod Loader
                                     </h4>
                                     <div className="flex bg-[#1E1E1E] rounded p-1 border border-[#323232] overflow-x-auto max-w-full">
-                                       {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT', 'PAPER'].filter(l => compatibleLoaders.includes(l)).map(l => (
+                                       {AVAILABLE_LOADERS.map(l => (
                                           <button 
                                              key={l}
                                              onClick={() => setSelectedAddLoader(l)}
@@ -2213,7 +2222,7 @@ export default function App() {
                            </div>
                         )}
 
-                        {(addTab === "modrinth" || addTab === "curseforge" || addTab === "atlauncher" || addTab === "technic") && (
+                        {(addTab === "modrinth" || addTab === "curseforge") && (
                            <div className="flex flex-col h-full bg-[#1E1E1E]/50">
                               <div className="p-4 bg-[#242424] border-b border-[#323232] flex flex-col gap-3">
                                  <div className="flex gap-3 w-full">
