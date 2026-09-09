@@ -907,6 +907,7 @@ export default function App() {
                       finalEnv["NEOFORGE_VERSION"] || 
                       finalEnv["NEOFORGEVERSION"] || 
                       finalEnv["QUILT_LOADER_VERSION"] || 
+                      finalEnv["PAPER_BUILD"] || 
                       "";
       }
 
@@ -917,6 +918,7 @@ export default function App() {
       delete finalEnv["NEOFORGE_VERSION"];
       delete finalEnv["NEOFORGEVERSION"];
       delete finalEnv["QUILT_LOADER_VERSION"];
+      delete finalEnv["PAPER_BUILD"];
       delete finalEnv["LOADER_VERSION"];
 
       if (versionVal && versionVal !== "latest") {
@@ -928,6 +930,8 @@ export default function App() {
             finalEnv["NEOFORGE_VERSION"] = versionVal;
          } else if (loaderType === "QUILT") {
             finalEnv["QUILT_LOADER_VERSION"] = versionVal;
+         } else if (loaderType === "PAPER") {
+            finalEnv["PAPER_BUILD"] = versionVal;
          } else {
             finalEnv["LOADER_VERSION"] = versionVal;
          }
@@ -2999,7 +3003,8 @@ export default function App() {
                                 { id: "FABRIC", name: "Fabric", icon: Cpu, desc: "Lightweight and modular" },
                                 { id: "FORGE", name: "Forge", icon: Settings, desc: "Traditional and powerful" },
                                 { id: "QUILT", name: "Quilt", icon: RefreshCw, desc: "The open community loader" },
-                                { id: "NEOFORGE", name: "NeoForge", icon: Layers, desc: "Modern community fork" }
+                                { id: "NEOFORGE", name: "NeoForge", icon: Layers, desc: "Modern community fork" },
+                                { id: "PAPER", name: "Paper", icon: FileText, desc: "High performance plugin server" }
                              ].filter(l => compatibleLoaders.includes(l.id)).map((l) => (
                                 <div 
                                    key={l.id}
@@ -3019,7 +3024,7 @@ export default function App() {
                           </div>
 
                           <div className="bg-[#242424] border border-[#3A3A3A] p-4 rounded-lg">
-                             <label className="block text-sm font-medium text-neutral-400 mb-2">Advanced: Loader Version</label>
+                             <label className="block text-sm font-medium text-neutral-400 mb-2">Advanced: Loader / Build Version</label>
                              <input 
                                 type="text"
                                 className="w-full bg-[#141414] border border-[#3A3A3A] p-2.5 rounded focus:outline-none focus:border-[#3E8ED0] text-[#E0E0E0] font-mono text-sm"
@@ -3031,6 +3036,7 @@ export default function App() {
                                     config.environment["NEOFORGE_VERSION"] ||
                                     config.environment["NEOFORGEVERSION"] ||
                                     config.environment["QUILT_LOADER_VERSION"] ||
+                                    config.environment["PAPER_BUILD"] ||
                                     ""
                                  }
                                  onChange={(e) => {
@@ -3043,6 +3049,7 @@ export default function App() {
                                        delete newEnv["NEOFORGE_VERSION"];
                                        delete newEnv["NEOFORGEVERSION"];
                                        delete newEnv["QUILT_LOADER_VERSION"];
+                                       delete newEnv["PAPER_BUILD"];
                                        newEnv["LOADER_VERSION"] = val;
                                        return { ...prev, environment: newEnv };
                                     });
@@ -3063,7 +3070,8 @@ export default function App() {
                                              config.environment["FABRIC_LOADER_VERSION"] === lv.id ||
                                              config.environment["FORGE_VERSION"] === lv.id ||
                                              config.environment["NEOFORGE_VERSION"] === lv.id ||
-                                             config.environment["QUILT_LOADER_VERSION"] === lv.id;
+                                             config.environment["QUILT_LOADER_VERSION"] === lv.id ||
+                                             config.environment["PAPER_BUILD"] === lv.id;
                                           return (
                                              <button
                                                 key={lv.id}
@@ -3076,6 +3084,7 @@ export default function App() {
                                                    delete newEnv["NEOFORGE_VERSION"];
                                                    delete newEnv["NEOFORGEVERSION"];
                                                    delete newEnv["QUILT_LOADER_VERSION"];
+                                                   delete newEnv["PAPER_BUILD"];
                                                    newEnv["LOADER_VERSION"] = lv.id;
                                                    return { ...prev, environment: newEnv };
                                                 })}
@@ -4328,8 +4337,8 @@ export default function App() {
                                  </div>
                                  <div className="flex flex-col gap-2">
                                     <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Default Mod Loader</label>
-                                    <div className="grid grid-cols-5 gap-2">
-                                       {['VANILLA', 'FABRIC', 'FORGE', 'QUILT', 'NEOFORGE'].map((loader) => (
+                                    <div className="grid grid-cols-6 gap-2">
+                                       {['VANILLA', 'FABRIC', 'FORGE', 'QUILT', 'NEOFORGE', 'PAPER'].map((loader) => (
                                           <button
                                              key={loader}
                                              onClick={() => setGlobalSettings({ ...globalSettings, defaultLoader: loader })}

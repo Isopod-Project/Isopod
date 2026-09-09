@@ -881,10 +881,13 @@ async def get_compatible_loaders(mc_version: str):
 
     # Check Paper
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            res = await client.get("https://api.papermc.io/v2/projects/paper")
+        async with httpx.AsyncClient(headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Isopod/1.0"}, timeout=5.0) as client:
+            res = await client.get("https://fill.papermc.io/v3/projects/paper")
             if res.status_code == 200:
-                paper_versions = res.json().get("versions", [])
+                data = res.json()
+                paper_versions = []
+                for g in data.get("versions", {}).values():
+                    paper_versions.extend(g)
                 if mc_version in paper_versions:
                     compatible.append("PAPER")
     except Exception as e:
@@ -901,8 +904,12 @@ async def get_compatible_loaders(mc_version: str):
                 prefix = mc_version
                 if mc_version.startswith("1."):
                     parts = mc_version.split(".")
-                    if len(parts) >= 2:
-                        prefix = f"{parts[1]}.{parts[2]}" if len(parts) >= 3 else parts[1]
+                    if len(parts) >= 3:
+                        prefix = f"{parts[1]}.{parts[2]}"
+                    elif len(parts) == 2:
+                        prefix = f"{parts[1]}.0"
+                    else:
+                        prefix = parts[1]
                 neoforge_compatible = [v for v in versions if v.startswith(f"{prefix}.")]
                 if neoforge_compatible:
                     compatible.append("NEOFORGE")
@@ -957,8 +964,12 @@ async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
                      prefix = mc_version
                      if mc_version.startswith("1."):
                          parts = mc_version.split(".")
-                         if len(parts) >= 2:
-                             prefix = f"{parts[1]}.{parts[2]}" if len(parts) >= 3 else parts[1]
+                         if len(parts) >= 3:
+                             prefix = f"{parts[1]}.{parts[2]}"
+                         elif len(parts) == 2:
+                             prefix = f"{parts[1]}.0"
+                         else:
+                             prefix = parts[1]
                      versions = [v for v in versions if v.startswith(f"{prefix}.")]
                  return [{"id": v, "stable": "-beta" not in v} for v in reversed(versions)]
 
@@ -973,16 +984,27 @@ async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
                  return [{"id": v, "stable": True} for v in reversed(versions)]
 
             elif loader == "paper":
-                 url = "https://api.papermc.io/v2/projects/paper"
-                 res = await client.get(url)
-                 data = res.json()
-                 versions = data.get("versions", [])
                  if mc_version:
-                     versions = [v for v in versions if v == mc_version]
-                 return [{"id": v, "stable": True} for v in reversed(versions)]
+                     url = f"https://fill.papermc.io/v3/projects/paper/versions/{mc_version}/builds"
+                     res = await client.get(url)
+                     if res.status_code == 200:
+                         builds = res.json()
+                         return [{"id": str(b["id"]), "stable": b.get("channel") == "STABLE"} for b in builds]
+                 # Fallback / list all Paper MC versions if no specific mc_version is requested
+                 url = "https://fill.papermc.io/v3/projects/paper"
+                 res = await client.get(url)
+                 if res.status_code == 200:
+                     data = res.json()
+                     versions = []
+                     for g in data.get("versions", {}).values():
+                         versions.extend(g)
+                     return [{"id": v, "stable": True} for v in versions]
+                 return []
 
-            elif loader == "spigot":
-                return [{"id": "latest", "stable": True}]
+            # TODO: Add Spigot loader support later when an official public API for Spigot builds is integrated.
+            # Removed from active loader list for now since Spigot requires custom build tools (BuildTools).
+            # elif loader == "spigot":
+            #     return [{"id": "latest", "stable": True}]
 
     except Exception as e:
         print(f"DEBUG: Error fetching {loader} versions: {e}")
@@ -1298,10 +1320,7 @@ async def create_instance(req: CreateInstanceRequest):
         elif template == "QUILT":
             env.append(f"QUILT_LOADER_VERSION={req.loader_version}")
         elif template == "PAPER":
-            # Paper uses its own version but itzg handles TYPE=PAPER
-            # If loader_version is a build number, it might not be what it expects in TYPE=PAPER
-            # But we can try setting it. Normally TYPE=PAPER handles it.
-            pass
+            env.append(f"PAPER_BUILD={req.loader_version}")
         else:
             env.append(f"LOADER_VERSION={req.loader_version}")
 
