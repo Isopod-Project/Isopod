@@ -2566,19 +2566,6 @@ export default function App() {
                        )}
                     </div>
                     
-                    {selectedInstance && statuses[selectedInstance.id]?.public_ip && !isGlobalBrowser && (
-                       <button 
-                          onClick={() => copyToClipboard(`${statuses[selectedInstance.id].public_ip}:${statuses[selectedInstance.id].port || 25565}`, 'modal')}
-                          className="flex items-center gap-2 mt-0.5 text-[10px] bg-[#050505] border border-[#3A3A3A] px-2 py-0.5 rounded hover:bg-[#1A1A1A] transition group self-start"
-                          title="Click to copy server address"
-                       >
-                          <span className="text-neutral-500 font-bold uppercase tracking-wider">Address:</span>
-                          <span className={`font-mono transition-colors ${copiedId === 'modal' ? 'text-emerald-400' : 'text-emerald-500'}`}>
-                             {copiedId === 'modal' ? 'ADDRESS COPIED!' : `${statuses[selectedInstance.id].public_ip}:${statuses[selectedInstance.id].port || 25565}`}
-                          </span>
-                          <Copy className={`w-2.5 h-2.5 transition-colors ${copiedId === 'modal' ? 'text-emerald-400' : 'text-neutral-600 group-hover:text-[#3E8ED0]'}`} />
-                       </button>
-                    )}
 
                  </div>
               </div>
