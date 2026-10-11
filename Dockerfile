@@ -20,9 +20,13 @@ RUN apt-get update && \
         ca-certificates \
         curl && \
     rm -rf /var/lib/apt/lists/* && \
+    curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-27.3.1.tgz" | tar -xz -C /tmp && \
+    mv /tmp/docker/docker /usr/local/bin/docker && \
+    rm -rf /tmp/docker && \
     mkdir -p /usr/lib/docker/cli-plugins/ && \
     curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" -o /usr/lib/docker/cli-plugins/docker-compose && \
     chmod +x /usr/lib/docker/cli-plugins/docker-compose
+
 
 COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
