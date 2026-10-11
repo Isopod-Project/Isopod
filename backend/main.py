@@ -282,7 +282,7 @@ async def get_instance_status(instance_id: str):
             lines = stdout.splitlines()
             for line in reversed(lines):
                 # Check for stopping / shutdown first (most recent event)
-                if any(x in line for x in ["Stopping server", "Saving players", "Saving worlds", "Saving chunks", "Closing Server"]):
+                if any(x in line for x in ["Stopping server", "Stopping the server", "Closing Server"]):
                     is_ready = False
                     startup_status = "Stopping..."
                     startup_percent = 70
