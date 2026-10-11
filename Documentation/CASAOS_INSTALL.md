@@ -23,6 +23,8 @@ Since Isopod is currently in development, you must build the image locally on yo
 5. Paste the following configuration:
 
 ```yaml
+name: isopod
+
 services:
   isopod:
     image: isopod:latest
@@ -38,12 +40,28 @@ services:
       - /DATA/AppData/isopod/docker:/var/lib/docker
     environment:
       - SERVERS_DIR=/servers
-    x-casaos:
-      title: Isopod
-      icon: https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png
-      main: isopod
-      port_map: "8000"
-      scheme: http
+    labels:
+      icon: "https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png"
+      title: "Isopod"
+      description: "Modern Minecraft Server Manager"
+      casaos_app_id: "isopod"
+
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: isopod
+  author: Tacoz234
+  category: Utilities
+  description:
+    en_us: Modern, lightweight Minecraft instance manager with a sleek web dashboard.
+  developer: Tacoz234
+  icon: https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png
+  thumbnail: https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png
+  title:
+    en_us: Isopod
+  port_map: "8000"
+  scheme: http
 ```
 
 6. Click **Submit**.

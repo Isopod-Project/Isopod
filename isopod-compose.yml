@@ -1,4 +1,4 @@
-version: '3.8'
+name: isopod
 
 services:
   isopod:
@@ -7,6 +7,7 @@ services:
     container_name: isopod
     privileged: true
     restart: unless-stopped
+    network_mode: bridge
     ports:
       - "8000:8000"
       - "25565-25585:25565-25585"
@@ -17,4 +18,25 @@ services:
       - /DATA/AppData/isopod/docker:/var/lib/docker
     environment:
       - SERVERS_DIR=/servers
+    labels:
+      icon: "https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png"
+      title: "Isopod"
+      description: "Modern Minecraft Server Manager"
+      casaos_app_id: "isopod"
 
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: isopod
+  author: Tacoz234
+  category: Utilities
+  description:
+    en_us: Modern, lightweight Minecraft instance manager with a sleek web dashboard.
+  developer: Tacoz234
+  icon: https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png
+  thumbnail: https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png
+  title:
+    en_us: Isopod
+  port_map: "8000"
+  scheme: http
