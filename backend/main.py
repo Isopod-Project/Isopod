@@ -5,15 +5,17 @@ import re
 import zipfile
 import tempfile
 import asyncio
-from fastapi import FastAPI, HTTPException, File, UploadFile, Request, BackgroundTasks, Form
+from fastapi import FastAPI, HTTPException, File, UploadFile, Request, BackgroundTasks, Form, Body
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import docker
 import yaml
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union, Tuple
 import httpx
 import json
 import time
@@ -48,6 +50,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class AuthorizationMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        inst_user = request.headers.get("X-Instance-User")
+        inst_id = request.headers.get("X-Instance-Id")
+        if inst_user and inst_id:
+            try:
+                access = check_instance_user_access(inst_id, inst_user)
+                if not access.get("permitted", True):
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": access.get("reason", "Access denied"), "access": access}
+                    )
+            except Exception as e:
+                print(f"Error in AuthorizationMiddleware: {e}")
+        response = await call_next(request)
+        return response
+
+app.add_middleware(AuthorizationMiddleware)
 
 SERVERS_DIR = os.getenv("SERVERS_DIR", "./servers")
 
@@ -412,6 +433,19 @@ async def start_instance(instance_id: str):
             except Exception as e:
                 print(f"Bundling failed during start: {e}")
 
+    # Sync whitelist and ops files from User Management schema before starting
+    try:
+        users, _ = get_instance_users_internal(instance_id)
+        data_dir = os.path.join(path, "data")
+        os.makedirs(data_dir, exist_ok=True)
+        wl_path = os.path.join(data_dir, "whitelist.json")
+        if not os.path.exists(wl_path) or os.path.getsize(wl_path) == 0:
+            wl_entries = [{"uuid": u["uuid"] or "", "name": u["name"]} for u in users if u.get("whitelisted") and u.get("active")]
+            with open(wl_path, "w") as f:
+                json.dump(wl_entries, f, indent=2)
+    except Exception as e:
+        print(f"Error syncing user management on start: {e}")
+
     # Start all services
     result = subprocess.run(["docker", "compose", "up", "-d"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
@@ -499,121 +533,220 @@ class WhitelistUser(BaseModel):
     level: int = 0
     is_op: bool = False
     whitelisted: bool = True
+    active: bool = True
 
-@app.get("/api/instances/{instance_id}/users")
-def get_instance_users(instance_id: str):
+class UpdateUsersPayload(BaseModel):
+    users: List[WhitelistUser]
+    whitelist_enabled: Optional[bool] = None
+
+def get_instance_users_internal(instance_id: str) -> Tuple[List[dict], bool]:
     path = get_instance_path(instance_id)
-    
-    # Paths for files
     data_dir = os.path.join(path, "data")
     os.makedirs(data_dir, exist_ok=True)
+    users_file = os.path.join(data_dir, "users.json")
     whitelist_path = os.path.join(data_dir, "whitelist.json")
     ops_path = os.path.join(data_dir, "ops.json")
+    compose_path = os.path.join(path, "docker-compose.yml")
     
+    # Check whitelist_enabled and legacy fallback values from docker-compose.yml
+    whitelist_enabled = False
+    legacy_whitelist_names = []
+    legacy_op_names = []
+    if os.path.exists(compose_path):
+        try:
+            with open(compose_path, "r") as f:
+                config = yaml.safe_load(f)
+            services = config.get("services", {})
+            if services:
+                first_service = list(services.keys())[0]
+                env = services[first_service].get("environment", {})
+                env_dict = {}
+                if isinstance(env, list):
+                    for item in env:
+                        if "=" in item:
+                            k, v = item.split("=", 1)
+                            env_dict[k] = v
+                elif isinstance(env, dict):
+                    env_dict = env
+                whitelist_enabled = env_dict.get("ENABLE_WHITELIST", "").lower() == "true"
+                legacy_wl_str = env_dict.get("WHITELIST", "")
+                legacy_whitelist_names = [n.strip() for n in legacy_wl_str.split(",") if n.strip()]
+                legacy_ops_str = env_dict.get("OPS", "")
+                legacy_op_names = [n.strip() for n in legacy_ops_str.split(",") if n.strip()]
+        except Exception as e:
+            print(f"Error reading docker-compose.yml for user config: {e}")
+            
     users = {}
     
-    # 1. Check ops.json
-    if os.path.exists(ops_path):
+    # 1. Primary source of truth: users.json
+    if os.path.exists(users_file):
         try:
-            with open(ops_path, "r") as f:
-                ops_data = json.load(f)
-                if isinstance(ops_data, list):
-                    for entry in ops_data:
-                        if isinstance(entry, dict) and "name" in entry:
-                            name = entry["name"]
-                            uuid = entry.get("uuid")
-                            level = entry.get("level", 4)
-                            users[name.lower()] = {
-                                "name": name,
-                                "uuid": uuid,
-                                "level": level,
-                                "is_op": True,
-                                "whitelisted": False # Default to false, check whitelist.json next
+            with open(users_file, "r") as f:
+                saved_users = json.load(f)
+                if isinstance(saved_users, list):
+                    for u in saved_users:
+                        if isinstance(u, dict) and "name" in u:
+                            users[u["name"].lower()] = {
+                                "name": u["name"],
+                                "uuid": u.get("uuid"),
+                                "level": u.get("level", 0),
+                                "is_op": u.get("is_op", False),
+                                "whitelisted": u.get("whitelisted", True),
+                                "active": u.get("active", True)
                             }
         except Exception as e:
-            print(f"Error reading ops.json: {e}")
+            print(f"Error reading users.json: {e}")
             
-    # 2. Check whitelist.json
-    if os.path.exists(whitelist_path):
-        try:
-            with open(whitelist_path, "r") as f:
-                wl_data = json.load(f)
-                if isinstance(wl_data, list):
-                    for entry in wl_data:
-                        if isinstance(entry, dict) and "name" in entry:
-                            name = entry["name"]
-                            uuid = entry.get("uuid")
-                            key = name.lower()
-                            if key in users:
-                                users[key]["whitelisted"] = True
-                                if uuid and not users[key]["uuid"]:
-                                    users[key]["uuid"] = uuid
-                            else:
-                                users[key] = {
-                                    "name": name,
-                                    "uuid": uuid,
-                                    "level": 0,
-                                    "is_op": False,
-                                    "whitelisted": True
-                                }
-        except Exception as e:
-            print(f"Error reading whitelist.json: {e}")
-            
-    # 3. If both files don't exist or are empty, fallback to environment in docker-compose.yml
+    # 2. Secondary source: construct from ops.json & whitelist.json if users.json absent
     if not users:
-        compose_path = os.path.join(path, "docker-compose.yml")
-        if os.path.exists(compose_path):
+        if os.path.exists(ops_path):
             try:
-                with open(compose_path, "r") as f:
-                    config = yaml.safe_load(f)
-                services = config.get("services", {})
-                if services:
-                    first_service_name = list(services.keys())[0]
-                    service = services[first_service_name]
-                    env = service.get("environment", {})
-                    
-                    # Convert list to dict if needed
-                    env_dict = {}
-                    if isinstance(env, list):
-                        for item in env:
-                            if "=" in item:
-                                k, v = item.split("=", 1)
-                                env_dict[k] = v
-                    elif isinstance(env, dict):
-                        env_dict = env
-                        
-                    whitelist_str = env_dict.get("WHITELIST", "")
-                    ops_str = env_dict.get("OPS", "")
-                    
-                    wl_names = [n.strip() for n in whitelist_str.split(",") if n.strip()]
-                    op_names = [n.strip() for n in ops_str.split(",") if n.strip()]
-                    
-                    for name in wl_names:
-                        users[name.lower()] = {
-                            "name": name,
-                            "uuid": None,
-                            "level": 0,
-                            "is_op": False,
-                            "whitelisted": True
-                        }
-                    for name in op_names:
-                        key = name.lower()
-                        if key in users:
-                            users[key]["is_op"] = True
-                            users[key]["level"] = 4
-                        else:
-                            users[key] = {
-                                "name": name,
-                                "uuid": None,
-                                "level": 4,
-                                "is_op": True,
-                                "whitelisted": False
-                            }
+                with open(ops_path, "r") as f:
+                    ops_data = json.load(f)
+                    if isinstance(ops_data, list):
+                        for entry in ops_data:
+                            if isinstance(entry, dict) and "name" in entry:
+                                name = entry["name"]
+                                users[name.lower()] = {
+                                    "name": name,
+                                    "uuid": entry.get("uuid"),
+                                    "level": entry.get("level", 4),
+                                    "is_op": True,
+                                    "whitelisted": False,
+                                    "active": True
+                                }
             except Exception as e:
-                print(f"Error reading fallback environment from docker-compose.yml: {e}")
+                print(f"Error reading ops.json: {e}")
                 
-    # Return as list
-    return list(users.values())
+        if os.path.exists(whitelist_path):
+            try:
+                with open(whitelist_path, "r") as f:
+                    wl_data = json.load(f)
+                    if isinstance(wl_data, list):
+                        for entry in wl_data:
+                            if isinstance(entry, dict) and "name" in entry:
+                                name = entry["name"]
+                                key = name.lower()
+                                if key in users:
+                                    users[key]["whitelisted"] = True
+                                    if entry.get("uuid") and not users[key]["uuid"]:
+                                        users[key]["uuid"] = entry["uuid"]
+                                else:
+                                    users[key] = {
+                                        "name": name,
+                                        "uuid": entry.get("uuid"),
+                                        "level": 0,
+                                        "is_op": False,
+                                        "whitelisted": True,
+                                        "active": True
+                                    }
+            except Exception as e:
+                print(f"Error reading whitelist.json: {e}")
+                
+    # 3. Data Migration / Backward Compatibility:
+    # If legacy WHITELIST environment variables exist in docker-compose.yml, migrate them into users schema
+    migrated_any = False
+    for name in legacy_whitelist_names:
+        key = name.lower()
+        if key not in users:
+            users[key] = {
+                "name": name,
+                "uuid": None,
+                "level": 0,
+                "is_op": False,
+                "whitelisted": True,
+                "active": True
+            }
+            migrated_any = True
+        else:
+            if not users[key]["whitelisted"]:
+                users[key]["whitelisted"] = True
+                migrated_any = True
+
+    for name in legacy_op_names:
+        key = name.lower()
+        if key not in users:
+            users[key] = {
+                "name": name,
+                "uuid": None,
+                "level": 4,
+                "is_op": True,
+                "whitelisted": False,
+                "active": True
+            }
+            migrated_any = True
+
+    user_list = list(users.values())
+    
+    # Persist migrated schema so future requests and active user access are guaranteed
+    if (not os.path.exists(users_file) or migrated_any) and user_list:
+        try:
+            with open(users_file, "w") as f:
+                json.dump(user_list, f, indent=2)
+            if not os.path.exists(whitelist_path):
+                wl_to_write = [{"uuid": u["uuid"] or "", "name": u["name"]} for u in user_list if u.get("whitelisted") and u.get("active")]
+                with open(whitelist_path, "w") as f:
+                    json.dump(wl_to_write, f, indent=2)
+        except Exception as e:
+            print(f"Error persisting users.json after migration: {e}")
+            
+    return user_list, whitelist_enabled
+
+
+def check_instance_user_access(instance_id: str, username: str) -> Dict[str, Any]:
+    """Single source of truth access evaluation based exclusively on User Management schema."""
+    users, wl_enabled = get_instance_users_internal(instance_id)
+    user_match = None
+    for u in users:
+        if u.get("name", "").lower() == username.lower():
+            user_match = u
+            break
+            
+    is_active = user_match.get("active", True) if user_match else True
+    is_whitelisted = user_match.get("whitelisted", False) if user_match else False
+    is_op = user_match.get("is_op", False) if user_match else False
+    
+    # Deactivated users in User Management are rejected regardless
+    if user_match and not is_active:
+        return {
+            "permitted": False,
+            "username": username,
+            "whitelist_enabled": wl_enabled,
+            "whitelisted": is_whitelisted,
+            "active": False,
+            "is_op": is_op,
+            "reason": "User is deactivated in User Management"
+        }
+        
+    if wl_enabled:
+        permitted = bool(user_match and is_whitelisted and is_active)
+        return {
+            "permitted": permitted,
+            "username": username,
+            "whitelist_enabled": True,
+            "whitelisted": is_whitelisted,
+            "active": is_active,
+            "is_op": is_op,
+            "reason": "User is explicitly whitelisted" if permitted else "Whitelist gating active: user is not whitelisted"
+        }
+    else:
+        return {
+            "permitted": True,
+            "username": username,
+            "whitelist_enabled": False,
+            "whitelisted": is_whitelisted,
+            "active": is_active,
+            "is_op": is_op,
+            "reason": "Standard user access rules apply without whitelist gating"
+        }
+
+
+@app.get("/api/instances/{instance_id}/users")
+def get_instance_users(instance_id: str, response: Response = None):
+    users, wl_enabled = get_instance_users_internal(instance_id)
+    if response:
+        response.headers["X-Whitelist-Enabled"] = "true" if wl_enabled else "false"
+    return users
 
 
 def format_uuid(raw_uuid: str) -> str:
@@ -651,11 +784,23 @@ def get_minecraft_uuid(username: str) -> str:
 
 
 @app.put("/api/instances/{instance_id}/users")
-def update_instance_users(instance_id: str, users: List[WhitelistUser]):
+def update_instance_users(
+    instance_id: str, 
+    payload: Union[UpdateUsersPayload, List[WhitelistUser]] = Body(...),
+    whitelist_enabled: Optional[bool] = None,
+    response: Response = None
+):
+    if isinstance(payload, UpdateUsersPayload):
+        users = payload.users
+        wl_enabled = payload.whitelist_enabled if payload.whitelist_enabled is not None else whitelist_enabled
+    else:
+        users = payload
+        wl_enabled = whitelist_enabled
+
     path = get_instance_path(instance_id)
-    
     data_dir = os.path.join(path, "data")
     os.makedirs(data_dir, exist_ok=True)
+    users_file = os.path.join(data_dir, "users.json")
     whitelist_path = os.path.join(data_dir, "whitelist.json")
     ops_path = os.path.join(data_dir, "ops.json")
     
@@ -674,6 +819,7 @@ def update_instance_users(instance_id: str, users: List[WhitelistUser]):
             
     whitelist_data = []
     ops_data = []
+    full_users_data = []
     
     whitelist_names = []
     ops_names = []
@@ -684,6 +830,7 @@ def update_instance_users(instance_id: str, users: List[WhitelistUser]):
         level = u.level
         is_op = u.is_op
         whitelisted = u.whitelisted
+        active = u.active
         
         if not name:
             continue
@@ -691,14 +838,24 @@ def update_instance_users(instance_id: str, users: List[WhitelistUser]):
         if not uuid:
             uuid = get_minecraft_uuid(name)
             
-        if whitelisted:
+        full_users_data.append({
+            "name": name,
+            "uuid": uuid,
+            "level": level,
+            "is_op": is_op,
+            "whitelisted": whitelisted,
+            "active": active
+        })
+            
+        # Only active users are written to access files
+        if active and whitelisted:
             whitelist_data.append({
                 "uuid": uuid or "",
                 "name": name
             })
             whitelist_names.append(name)
             
-        if is_op or level > 0:
+        if active and (is_op or level > 0):
             ops_data.append({
                 "uuid": uuid or "",
                 "name": name,
@@ -707,13 +864,21 @@ def update_instance_users(instance_id: str, users: List[WhitelistUser]):
             })
             ops_names.append(name)
             
-    # Write files
+    # Write users.json (Single source of truth)
+    try:
+        with open(users_file, "w") as f:
+            json.dump(full_users_data, f, indent=2)
+    except Exception as e:
+        print(f"Error writing users.json: {e}")
+
+    # Write whitelist.json
     try:
         with open(whitelist_path, "w") as f:
             json.dump(whitelist_data, f, indent=2)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write whitelist.json: {str(e)}")
         
+    # Write ops.json
     try:
         with open(ops_path, "w") as f:
             json.dump(ops_data, f, indent=2)
@@ -734,11 +899,13 @@ def update_instance_users(instance_id: str, users: List[WhitelistUser]):
                 
                 wl_str = ",".join(whitelist_names)
                 ops_str = ",".join(ops_names)
+                wl_val = "true" if wl_enabled else "false"
                 
                 if isinstance(env, list):
                     new_env = []
                     found_wl = False
                     found_ops = False
+                    found_enable = False
                     for item in env:
                         if item.startswith("WHITELIST="):
                             new_env.append(f"WHITELIST={wl_str}")
@@ -746,16 +913,23 @@ def update_instance_users(instance_id: str, users: List[WhitelistUser]):
                         elif item.startswith("OPS="):
                             new_env.append(f"OPS={ops_str}")
                             found_ops = True
+                        elif item.startswith("ENABLE_WHITELIST=") and wl_enabled is not None:
+                            new_env.append(f"ENABLE_WHITELIST={wl_val}")
+                            found_enable = True
                         else:
                             new_env.append(item)
                     if not found_wl:
                         new_env.append(f"WHITELIST={wl_str}")
                     if not found_ops:
                         new_env.append(f"OPS={ops_str}")
+                    if not found_enable and wl_enabled is not None:
+                        new_env.append(f"ENABLE_WHITELIST={wl_val}")
                     service["environment"] = new_env
                 elif isinstance(env, dict):
                     env["WHITELIST"] = wl_str
                     env["OPS"] = ops_str
+                    if wl_enabled is not None:
+                        env["ENABLE_WHITELIST"] = wl_val
                     service["environment"] = env
                     
             with open(compose_path, "w") as f:
@@ -773,6 +947,14 @@ def update_instance_users(instance_id: str, users: List[WhitelistUser]):
         except: pass
         
     if is_running:
+        # Toggle whitelist mode in live server if changed
+        if wl_enabled is not None:
+            cmd_toggle = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", f"whitelist {'on' if wl_enabled else 'off'}"]
+            try:
+                subprocess.run(cmd_toggle, cwd=path, capture_output=True, text=True, timeout=5)
+            except Exception as e:
+                print(f"RCON whitelist toggle failed: {e}")
+                
         # 1. Reload Whitelist
         cmd_wl = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", "whitelist reload"]
         try:
@@ -798,7 +980,70 @@ def update_instance_users(instance_id: str, users: List[WhitelistUser]):
             except Exception as e:
                 print(f"RCON op failed for {name}: {e}")
             
-    return {"message": "Users updated successfully"}
+    if response and wl_enabled is not None:
+        response.headers["X-Whitelist-Enabled"] = "true" if wl_enabled else "false"
+
+    return {"message": "Users updated successfully", "whitelist_enabled": wl_enabled}
+
+
+# ==========================================
+# Legacy Access Control Whitelist Deprecated Endpoints
+# ==========================================
+@app.get("/api/instances/{instance_id}/whitelist")
+@app.get("/api/instances/{instance_id}/access-control/whitelist")
+def get_legacy_whitelist(instance_id: str, response: Response):
+    response.headers["Deprecation"] = "true"
+    response.headers["X-Deprecated"] = "This endpoint is deprecated. Use /api/instances/{instance_id}/users instead."
+    users, _ = get_instance_users_internal(instance_id)
+    return [u for u in users if u.get("whitelisted", True) and u.get("active", True)]
+
+
+@app.put("/api/instances/{instance_id}/whitelist")
+@app.post("/api/instances/{instance_id}/whitelist")
+def update_legacy_whitelist(instance_id: str, legacy_users: List[Union[str, dict]], response: Response):
+    response.headers["Deprecation"] = "true"
+    response.headers["X-Deprecated"] = "This endpoint is deprecated. Use /api/instances/{instance_id}/users instead."
+    current_users, _ = get_instance_users_internal(instance_id)
+    current_map = {u["name"].lower(): u for u in current_users}
+    for item in legacy_users:
+        name = item if isinstance(item, str) else item.get("name")
+        if not name:
+            continue
+        key = name.lower()
+        if key in current_map:
+            current_map[key]["whitelisted"] = True
+            current_map[key]["active"] = True
+        else:
+            current_map[key] = {
+                "name": name,
+                "uuid": None if isinstance(item, str) else item.get("uuid"),
+                "level": 0,
+                "is_op": False,
+                "whitelisted": True,
+                "active": True
+            }
+    user_models = [WhitelistUser(**u) for u in current_map.values()]
+    update_instance_users(instance_id, user_models)
+    return {"message": "Legacy whitelist migrated and updated in User Management", "users": list(current_map.values())}
+
+
+@app.delete("/api/instances/{instance_id}/whitelist/{user_name}")
+def delete_legacy_whitelist_user(instance_id: str, user_name: str, response: Response):
+    response.headers["Deprecation"] = "true"
+    response.headers["X-Deprecated"] = "This endpoint is deprecated. Use /api/instances/{instance_id}/users instead."
+    current_users, _ = get_instance_users_internal(instance_id)
+    updated = []
+    for u in current_users:
+        if u["name"].lower() == user_name.lower():
+            u["whitelisted"] = False
+        updated.append(WhitelistUser(**u))
+    update_instance_users(instance_id, updated)
+    return {"message": f"User {user_name} unwhitelisted in User Management"}
+
+
+@app.get("/api/instances/{instance_id}/access/check")
+def check_access_endpoint(instance_id: str, username: str):
+    return check_instance_user_access(instance_id, username)
 
 @app.post("/api/instances/{instance_id}/icon")
 async def upload_icon(instance_id: str, file: UploadFile = File(...)):

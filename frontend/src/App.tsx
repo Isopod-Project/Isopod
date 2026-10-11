@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useMemo } from "react";
 import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown } from "lucide-react";
 
 interface Instance {
@@ -201,8 +201,6 @@ export default function App() {
   const [isVerifyingUser, setIsVerifyingUser] = useState(false);
   
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [instanceWhitelistUser, setInstanceWhitelistUser] = useState("");
-  const [instanceWhitelistPreview, setInstanceWhitelistPreview] = useState<{name: string, uuid: string} | null>(null);
 
   // User Management Tab States
   interface InstanceUser {
@@ -211,6 +209,7 @@ export default function App() {
     level: number;
     is_op: boolean;
     whitelisted: boolean;
+    active?: boolean;
   }
   const [instanceUsers, setInstanceUsers] = useState<InstanceUser[]>([]);
   const [isUsersLoading, setIsUsersLoading] = useState(false);
@@ -218,6 +217,37 @@ export default function App() {
   const [userSearchText, setUserSearchText] = useState("");
   const [userSearchPreview, setUserSearchPreview] = useState<{name: string, uuid: string} | null>(null);
   const [isUserSearchVerifying, setIsUserSearchVerifying] = useState(false);
+  const [isUserSearchFocused, setIsUserSearchFocused] = useState(false);
+
+  const getPlayerAvatarUrl = (identifier: string, size = 32) => {
+    if (!identifier) return `https://mc-heads.net/avatar/steve/${size}`;
+    return `https://mc-heads.net/avatar/${identifier}/${size}`;
+  };
+
+  // Autocomplete suggestions for User Management (2-3 gamertags)
+  const userSearchSuggestions = useMemo<{ name: string; uuid?: string }[]>(() => {
+    const q = userSearchText.trim().toLowerCase();
+    if (!q) return [];
+    const map = new Map<string, { name: string; uuid?: string }>();
+    if (userSearchPreview && userSearchPreview.name.toLowerCase().includes(q)) {
+      map.set(userSearchPreview.name.toLowerCase(), userSearchPreview);
+    }
+    for (const p of seenPlayers) {
+      if (p.name.toLowerCase().includes(q) && !map.has(p.name.toLowerCase())) {
+        map.set(p.name.toLowerCase(), p);
+      }
+      if (map.size >= 3) break;
+    }
+    if (map.size < 3) {
+      for (const u of instanceUsers) {
+        if (u.name.toLowerCase().includes(q) && !map.has(u.name.toLowerCase())) {
+          map.set(u.name.toLowerCase(), { name: u.name, uuid: u.uuid });
+        }
+        if (map.size >= 3) break;
+      }
+    }
+    return Array.from(map.values()).slice(0, 3);
+  }, [userSearchText, userSearchPreview, seenPlayers, instanceUsers]);
 
   // Resource Pack States
   const [resourcePackQuery, setResourcePackQuery] = useState("");
@@ -232,9 +262,13 @@ export default function App() {
   useEffect(() => {
     const defaults = globalSettings.defaultWhitelistUsers.map(u => ({ name: u, uuid: u }));
     const common = [
+       { name: "TheTacominecart", uuid: "b14c0873-f8a8-4000-a058-10d686f27fad" },
+       { name: "LumboJimbo", uuid: "19e8bd2f-748a-4087-99c4-6e08d4948cc4" },
        { name: "Technoblade", uuid: "ad8b121c-a330-4c8d-83c3-6311ce833c94" },
        { name: "Dream", uuid: "ec70bc6c-7023-4402-847c-c0494426545b" },
-       { name: "TheTacomin", uuid: "8696c21e-7b7e-400a-b50a-f02755e1136c" }
+       { name: "TheTacomin", uuid: "8696c21e-7b7e-400a-b50a-f02755e1136c" },
+       { name: "MumboJumbo", uuid: "853c80ef-3c37-49fd-aa49-938b674adae6" },
+       { name: "Grian", uuid: "0475b5b4-d537-4f18-bb45-4e783ab5b6f3" }
     ];
     setSeenPlayers(prev => {
        const existing = new Set(prev.map(p => p.name.toLowerCase()));
@@ -714,7 +748,25 @@ export default function App() {
       const res = await fetch(`/api/instances/${id}/users`);
       if (res.ok) {
         const data = await res.json();
-        setInstanceUsers(data);
+        const usersList: InstanceUser[] = Array.isArray(data) ? data : (data.users || []);
+        setInstanceUsers(usersList);
+        setSeenPlayers(prev => {
+           const existing = new Set(prev.map(p => p.name.toLowerCase()));
+           const toAdd = usersList
+              .filter(u => u.name && !existing.has(u.name.toLowerCase()))
+              .map(u => ({ name: u.name, uuid: u.uuid || u.name }));
+           return [...prev, ...toAdd];
+        });
+        const wlHeader = res.headers.get("X-Whitelist-Enabled");
+        if (wlHeader !== null) {
+          setConfig(prev => ({
+            ...prev,
+            environment: {
+              ...prev.environment,
+              ENABLE_WHITELIST: wlHeader === "true" ? "true" : "false"
+            }
+          }));
+        }
       }
     } catch (e) {
       console.error("Failed to fetch instance users", e);
@@ -725,11 +777,15 @@ export default function App() {
 
   const saveInstanceUsers = async (id: string) => {
     setIsUsersSaving(true);
+    const isWlOn = config.environment["ENABLE_WHITELIST"] === "true";
     try {
       const res = await fetch(`/api/instances/${id}/users`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(instanceUsers)
+        body: JSON.stringify({
+          users: instanceUsers,
+          whitelist_enabled: isWlOn
+        })
       });
       if (res.ok) {
         await showAlert("User management and whitelist saved successfully.", "Success");
@@ -755,9 +811,13 @@ export default function App() {
                  if (data.success && data.data && data.data.player) {
                     const p = { 
                        name: data.data.player.username, 
-                       uuid: data.data.player.raw_id 
+                       uuid: data.data.player.raw_id || data.data.player.id
                     };
                     setUserSearchPreview(p);
+                    setSeenPlayers(prev => {
+                       if (prev.find(x => x.name.toLowerCase() === p.name.toLowerCase())) return prev;
+                       return [p, ...prev].slice(0, 50);
+                    });
                  } else {
                     setUserSearchPreview(null);
                  }
@@ -1375,31 +1435,6 @@ export default function App() {
       }, 600);
       return () => clearTimeout(timer);
    }, [newWhitelistUser]);
-
-   // Verify Minecraft User for Instance Whitelist
-   useEffect(() => {
-      const timer = setTimeout(async () => {
-         if (instanceWhitelistUser.length >= 3) {
-            try {
-               const res = await fetch(`https://playerdb.co/api/player/minecraft/${instanceWhitelistUser}`);
-               const data = await res.json();
-               if (data.success) {
-                  const p = { name: data.data.player.username, uuid: data.data.player.id };
-                  setInstanceWhitelistPreview(p);
-                  setSeenPlayers(prev => {
-                     if (prev.find(x => x.uuid === p.uuid)) return prev;
-                     return [...prev, p].slice(-20);
-                  });
-               } else {
-                  setInstanceWhitelistPreview(null);
-               }
-            } catch (e) { setInstanceWhitelistPreview(null); }
-         } else {
-            setInstanceWhitelistPreview(null);
-         }
-      }, 600);
-      return () => clearTimeout(timer);
-   }, [instanceWhitelistUser]);
 
    const selectedInstance = instances.find(i => i.id === selectedId);
    const selectedStatus = selectedId ? statuses[selectedId] : null;
@@ -2700,17 +2735,29 @@ export default function App() {
                 {editTab === "users" && (
                   <div className="flex flex-col h-full p-8 overflow-auto scrollbar-custom text-[#E0E0E0]">
                     <div className="max-w-4xl w-full mx-auto space-y-6">
-                      <div className="flex justify-between items-center">
+                      {/* Header with Whitelist Toggle */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-[#2D2D2D]">
                          <div className="flex items-center gap-3">
-                            <Users className="w-6 h-6 text-[#3E8ED0]" />
+                            <div className="p-2.5 rounded-xl bg-[#3E8ED0]/10 border border-[#3E8ED0]/30 text-[#3E8ED0]">
+                               <Users className="w-6 h-6" />
+                            </div>
                             <div>
-                               <h3 className="text-xl font-bold">User Management</h3>
-                               <p className="text-xs text-neutral-500">Manage whitelist and player permissions (operator status).</p>
+                               <h3 className="text-xl font-bold tracking-tight">User Management</h3>
+                               <p className="text-xs text-neutral-400">Manage player access, whitelist gating, and operator permissions.</p>
                             </div>
                          </div>
-                         <div className="flex items-center gap-2 bg-[#2D2D2D] border border-[#3A3A3A] px-4 py-2 rounded-lg">
-                            <span className="text-xs font-bold text-neutral-400 uppercase tracking-wider">Whitelist:</span>
+                         
+                         {/* Whitelist (On/Off) Toggle Switch */}
+                         <div className="flex items-center gap-3 bg-[#242424] border border-[#3A3A3A] px-4 py-2.5 rounded-xl shadow-lg">
+                            <div className="flex items-center gap-2">
+                               <Shield className={`w-4 h-4 transition-colors ${config.environment["ENABLE_WHITELIST"] === "true" ? 'text-amber-400' : 'text-neutral-500'}`} />
+                               <div className="flex flex-col">
+                                  <span className="text-xs font-bold text-neutral-200 uppercase tracking-wider">Whitelist</span>
+                                  <span className="text-[10px] text-neutral-500 font-medium">Access Restriction</span>
+                               </div>
+                            </div>
                             <button 
+                               type="button"
                                onClick={() => setConfig(prev => ({
                                   ...prev,
                                   environment: { 
@@ -2718,17 +2765,46 @@ export default function App() {
                                      ENABLE_WHITELIST: prev.environment["ENABLE_WHITELIST"] === "true" ? "false" : "true" 
                                   }
                                }))}
-                               className={`px-3 py-1 rounded text-[10px] font-bold transition-all border ${config.environment["ENABLE_WHITELIST"] === "true" ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' : 'bg-neutral-800 border-neutral-700 text-neutral-500'}`}
+                               aria-label="Toggle Whitelist"
+                               className={`w-12 h-6 rounded-full transition-all relative outline-none focus:ring-2 focus:ring-[#3E8ED0]/40 ${
+                                  config.environment["ENABLE_WHITELIST"] === "true" ? 'bg-amber-500 shadow-md shadow-amber-500/25' : 'bg-neutral-800 border border-neutral-700'
+                               }`}
                             >
-                               {config.environment["ENABLE_WHITELIST"] === "true" ? 'ENABLED' : 'DISABLED'}
+                               <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow ${
+                                  config.environment["ENABLE_WHITELIST"] === "true" ? 'left-7' : 'left-1'
+                               }`} />
                             </button>
+                            <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold border transition-all ${
+                               config.environment["ENABLE_WHITELIST"] === "true" 
+                               ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' 
+                               : 'bg-neutral-800 border-neutral-700 text-neutral-500'
+                            }`}>
+                               {config.environment["ENABLE_WHITELIST"] === "true" ? 'ON' : 'OFF'}
+                            </span>
                          </div>
                       </div>
 
-                      {/* Add Player Section */}
-                      <div className={`bg-[#242424] border border-[#3A3A3A] rounded-lg overflow-hidden shadow-xl transition-all ${config.environment["ENABLE_WHITELIST"] !== "true" ? 'opacity-40 pointer-events-none select-none' : ''}`}>
-                         <div className="px-4 py-3 bg-[#2D2D2D] border-b border-[#3A3A3A] flex justify-between items-center bg-gradient-to-r from-[#2D2D2D] to-[#242424]">
-                            <span className="text-xs font-bold text-neutral-200 uppercase tracking-wider">Add Player to Whitelist</span>
+                      {/* State Notification Banner */}
+                      {config.environment["ENABLE_WHITELIST"] === "true" ? (
+                         <div className="flex items-center gap-3 p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300">
+                            <Shield className="w-4 h-4 text-amber-400 shrink-0" />
+                            <div>
+                               <span className="font-bold">Whitelist Gating Active:</span> Only explicitly whitelisted and active players listed below are permitted to join this server.
+                            </div>
+                         </div>
+                      ) : (
+                         <div className="flex items-center gap-3 p-3.5 bg-[#242424] border border-[#3A3A3A] rounded-xl text-xs text-neutral-400">
+                            <Users className="w-4 h-4 text-neutral-500 shrink-0" />
+                            <div>
+                               <span className="font-bold text-neutral-300">Standard Access Active:</span> Whitelist gating is disabled. Standard user access rules apply without whitelist gating.
+                            </div>
+                         </div>
+                      )}
+
+                      {/* Add Player Section (Fully functional regardless of whitelist state) */}
+                      <div className="bg-[#242424] border border-[#3A3A3A] rounded-xl shadow-xl relative z-20">
+                         <div className="px-4 py-3 bg-[#2D2D2D] border-b border-[#3A3A3A] flex justify-between items-center bg-gradient-to-r from-[#2D2D2D] to-[#242424] rounded-t-xl">
+                            <span className="text-xs font-bold text-neutral-200 uppercase tracking-wider">Add Player</span>
                          </div>
                          <div className="p-5 space-y-4">
                             <div className="flex gap-2">
@@ -2736,12 +2812,12 @@ export default function App() {
                                   <div className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-[#1A1A1A] border border-[#333] flex items-center justify-center overflow-hidden">
                                      {userSearchPreview ? (
                                         <img 
-                                           src={`https://crafatar.com/avatars/${userSearchPreview.uuid}?size=32&overlay`} 
+                                           src={getPlayerAvatarUrl(userSearchPreview.uuid || userSearchPreview.name, 32)} 
                                            referrerPolicy="no-referrer"
                                            alt="" 
                                            className="w-full h-full"
                                            onError={(e) => {
-                                              e.currentTarget.src = `https://minotar.net/avatar/${userSearchText}/32`;
+                                              e.currentTarget.src = `https://crafthead.net/avatar/${userSearchPreview.name}/32`;
                                            }}
                                         />
                                      ) : (
@@ -2751,9 +2827,17 @@ export default function App() {
                                   <input 
                                      type="text"
                                      value={userSearchText}
+                                     onFocus={() => setIsUserSearchFocused(true)}
+                                     onBlur={() => setTimeout(() => setIsUserSearchFocused(false), 200)}
                                      onChange={(e) => setUserSearchText(e.target.value)}
-                                     disabled={config.environment["ENABLE_WHITELIST"] !== "true"}
                                      onKeyDown={(e) => {
+                                        if (e.key === 'Tab' && userSearchSuggestions.length > 0) {
+                                           e.preventDefault();
+                                           const first = userSearchSuggestions[0];
+                                           setUserSearchText(first.name);
+                                           setUserSearchPreview({ name: first.name, uuid: first.uuid || "" });
+                                           return;
+                                        }
                                         if (e.key === 'Enter' && userSearchText.trim()) {
                                            const targetName = userSearchPreview ? userSearchPreview.name : userSearchText.trim();
                                            const targetUuid = userSearchPreview ? userSearchPreview.uuid : undefined;
@@ -2765,16 +2849,22 @@ export default function App() {
                                                     uuid: targetUuid,
                                                     level: 0,
                                                     is_op: false,
-                                                    whitelisted: true
+                                                    whitelisted: true,
+                                                    active: true
                                                  }
                                               ]);
+                                              setSeenPlayers(prev => {
+                                                 if (prev.find(x => x.name.toLowerCase() === targetName.toLowerCase())) return prev;
+                                                 return [{ name: targetName, uuid: targetUuid || targetName }, ...prev].slice(0, 50);
+                                              });
                                            }
                                            setUserSearchText("");
                                            setUserSearchPreview(null);
+                                           setIsUserSearchFocused(false);
                                         }
                                      }}
                                      placeholder="Minecraft Gamertag..."
-                                     className="w-full bg-[#1A1A1A] border border-[#333] pl-12 pr-4 py-3 rounded-lg focus:outline-none focus:border-[#3E8ED0]/40 text-sm placeholder:text-neutral-700 transition-all font-medium"
+                                     className="w-full bg-[#1A1A1A] border border-[#333] pl-12 pr-4 py-3 rounded-lg focus:outline-none focus:border-[#3E8ED0]/60 text-sm placeholder:text-neutral-700 transition-all font-medium text-neutral-200"
                                   />
                                   {isUserSearchVerifying && (
                                      <div className="absolute right-3 top-1/2 -translate-y-1/2">
@@ -2782,8 +2872,55 @@ export default function App() {
                                      </div>
                                   )}
                                   {userSearchPreview && (
-                                     <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-[#3E8ED0]/80 bg-[#3E8ED0]/5 px-2 py-0.5 rounded border border-[#3E8ED0]/20">
+                                     <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-[#3E8ED0]/80 bg-[#3E8ED0]/10 px-2 py-0.5 rounded border border-[#3E8ED0]/30">
                                         FOUND
+                                     </div>
+                                  )}
+
+                                  {/* Autocomplete Dropdown (2-3 gamertags) */}
+                                  {isUserSearchFocused && userSearchText.trim().length >= 1 && userSearchSuggestions.length > 0 && (
+                                     <div className="absolute top-full left-0 right-0 mt-2 bg-[#1C1C1C] border-2 border-[#3E8ED0]/70 rounded-xl shadow-[0_16px_45px_rgba(0,0,0,0.95)] z-50 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
+                                        <div className="px-4 py-2.5 bg-[#252525] border-b border-[#353535] flex justify-between items-center text-[10px] font-bold text-neutral-300 uppercase tracking-wider">
+                                           <span className="flex items-center gap-1.5 text-[#3E8ED0]">
+                                              <Users className="w-3.5 h-3.5" />
+                                              Suggested Gamertags ({userSearchSuggestions.length})
+                                           </span>
+                                           <span className="text-neutral-500 font-normal">Click or Tab to autocomplete</span>
+                                        </div>
+                                        <div className="divide-y divide-[#2B2B2B]">
+                                           {userSearchSuggestions.map((sug: { name: string; uuid?: string }) => (
+                                              <div
+                                                 key={sug.name}
+                                                 onMouseDown={(e) => {
+                                                    e.preventDefault();
+                                                    setUserSearchText(sug.name);
+                                                    setUserSearchPreview({ name: sug.name, uuid: sug.uuid || "" });
+                                                    setIsUserSearchFocused(false);
+                                                 }}
+                                                 className="flex items-center gap-3.5 px-4 py-3 hover:bg-[#2A2A2A] cursor-pointer transition-colors group"
+                                              >
+                                                 <img 
+                                                    src={getPlayerAvatarUrl(sug.uuid || sug.name, 32)} 
+                                                    alt="" 
+                                                    className="w-7 h-7 rounded-md border border-[#444] shadow-sm shrink-0 bg-[#141414]"
+                                                    onError={(e) => {
+                                                       e.currentTarget.src = `https://crafthead.net/avatar/${sug.name}/32`;
+                                                    }}
+                                                 />
+                                                 <div className="flex flex-col min-w-0">
+                                                    <span className="text-sm font-bold text-neutral-200 group-hover:text-white truncate">
+                                                       {sug.name}
+                                                    </span>
+                                                    {sug.uuid && <span className="text-[10px] font-mono text-neutral-500 truncate">{sug.uuid}</span>}
+                                                 </div>
+                                                 <div className="ml-auto flex items-center">
+                                                    <span className="text-[10px] font-bold text-[#3E8ED0] bg-[#3E8ED0]/15 px-2.5 py-1 rounded-md border border-[#3E8ED0]/30 group-hover:bg-[#3E8ED0] group-hover:text-white transition-all shadow-sm">
+                                                       Autocomplete
+                                                    </span>
+                                                 </div>
+                                              </div>
+                                           ))}
+                                        </div>
                                      </div>
                                   )}
                                </div>
@@ -2800,16 +2937,21 @@ export default function App() {
                                                  uuid: targetUuid,
                                                  level: 0,
                                                  is_op: false,
-                                                 whitelisted: true
+                                                 whitelisted: true,
+                                                 active: true
                                               }
                                            ]);
+                                           setSeenPlayers(prev => {
+                                              if (prev.find(x => x.name.toLowerCase() === targetName.toLowerCase())) return prev;
+                                              return [{ name: targetName, uuid: targetUuid || targetName }, ...prev].slice(0, 50);
+                                           });
                                         }
                                         setUserSearchText("");
                                         setUserSearchPreview(null);
+                                        setIsUserSearchFocused(false);
                                      }
                                   }}
-                                  disabled={config.environment["ENABLE_WHITELIST"] !== "true"}
-                                  className="px-6 py-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] rounded-lg text-sm font-bold transition-all text-white shadow-md shadow-[#3E8ED0]/10"
+                                  className="px-6 py-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] rounded-lg text-sm font-bold transition-all text-white shadow-md shadow-[#3E8ED0]/15"
                                >
                                   Add Player
                                </button>
@@ -2817,8 +2959,8 @@ export default function App() {
                          </div>
                       </div>
 
-                      {/* Players List */}
-                      <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg overflow-hidden shadow-xl">
+                      {/* Players List Table */}
+                      <div className="bg-[#242424] border border-[#3A3A3A] rounded-xl overflow-hidden shadow-xl">
                          <div className="px-4 py-3 bg-[#2D2D2D] border-b border-[#3A3A3A] flex justify-between items-center bg-gradient-to-r from-[#2D2D2D] to-[#242424]">
                             <span className="text-xs font-bold text-neutral-200 uppercase tracking-wider">Managed Players ({instanceUsers.length})</span>
                          </div>
@@ -2831,7 +2973,7 @@ export default function App() {
                          ) : instanceUsers.length === 0 ? (
                             <div className="flex flex-col items-center justify-center py-12 text-neutral-600 text-sm gap-2">
                                <Users className="w-8 h-8 opacity-20" />
-                               <span className="italic">No players whitelisted or opped on this server.</span>
+                               <span className="italic">No players configured on this server.</span>
                             </div>
                          ) : (
                             <div className="overflow-x-auto">
@@ -2839,44 +2981,59 @@ export default function App() {
                                   <thead>
                                      <tr className="border-b border-[#2D2D2D] text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
                                         <th className="px-5 py-3.5">Player</th>
-                                        <th className="px-5 py-3.5">Whitelisted</th>
+                                        <th className="px-5 py-3.5">Account Status</th>
+                                        <th className="px-5 py-3.5">Whitelist</th>
                                         <th className="px-5 py-3.5">Operator (OP) Level</th>
                                         <th className="px-5 py-3.5 text-right">Actions</th>
                                      </tr>
                                   </thead>
                                   <tbody className="divide-y divide-[#2D2D2D]">
                                      {instanceUsers.map((user, idx) => (
-                                        <tr key={user.name} className="hover:bg-[#2A2A2A]/40 transition-colors">
+                                        <tr key={user.name} className={`hover:bg-[#2A2A2A]/40 transition-colors ${user.active === false ? 'opacity-60 bg-black/20' : ''}`}>
                                            <td className="px-5 py-3 flex items-center gap-3">
                                               <img 
-                                                 src={user.uuid ? `https://crafatar.com/avatars/${user.uuid}?size=32&overlay` : `https://minotar.net/avatar/${user.name}/32`} 
+                                                 src={getPlayerAvatarUrl(user.uuid || user.name, 32)} 
                                                  alt="" 
                                                  className="w-7 h-7 rounded bg-[#141414] border border-[#333]"
                                                  onError={(e) => {
-                                                    e.currentTarget.src = `https://minotar.net/avatar/${user.name}/32`;
+                                                    e.currentTarget.src = `https://crafthead.net/avatar/${user.name}/32`;
                                                  }}
                                               />
                                               <div className="flex flex-col">
-                                                 <span className="text-sm font-bold text-neutral-200">{user.name}</span>
+                                                 <span className={`text-sm font-bold ${user.active === false ? 'text-neutral-500 line-through' : 'text-neutral-200'}`}>{user.name}</span>
                                                  {user.uuid && <span className="text-[9px] font-mono text-neutral-600">{user.uuid}</span>}
                                               </div>
                                            </td>
                                            <td className="px-5 py-3">
                                               <button
+                                                 type="button"
+                                                 onClick={() => {
+                                                    setInstanceUsers(prev => prev.map((u, i) => i === idx ? { ...u, active: u.active === false ? true : false } : u));
+                                                 }}
+                                                 className={`px-3 py-1 rounded text-[10px] font-bold transition-all border ${
+                                                    user.active !== false 
+                                                    ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/25' 
+                                                    : 'bg-rose-500/15 border-rose-500/40 text-rose-400 hover:bg-rose-500/25'
+                                                 }`}
+                                                 title={user.active !== false ? "Click to deactivate player access" : "Click to activate player access"}
+                                              >
+                                                 {user.active !== false ? 'ACTIVE' : 'DEACTIVATED'}
+                                              </button>
+                                           </td>
+                                           <td className="px-5 py-3">
+                                              <button
+                                                 type="button"
                                                  onClick={() => {
                                                     setInstanceUsers(prev => prev.map((u, i) => i === idx ? { ...u, whitelisted: !u.whitelisted } : u));
                                                  }}
-                                                 disabled={config.environment["ENABLE_WHITELIST"] !== "true"}
                                                  className={`px-3 py-1 rounded text-[10px] font-bold transition-all border ${
-                                                    config.environment["ENABLE_WHITELIST"] === "true"
-                                                    ? (user.whitelisted ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' : 'bg-neutral-800 border-neutral-700 text-neutral-500')
-                                                    : 'bg-neutral-900 border-neutral-800 text-neutral-600 opacity-50 cursor-not-allowed'
+                                                    user.whitelisted
+                                                    ? 'bg-amber-500/20 border-amber-500/50 text-amber-400 hover:bg-amber-500/30'
+                                                    : 'bg-neutral-800 border-neutral-700 text-neutral-500 hover:bg-neutral-700 hover:text-neutral-300'
                                                  }`}
+                                                 title="Toggle player whitelist eligibility"
                                               >
-                                                 {config.environment["ENABLE_WHITELIST"] === "true"
-                                                  ? (user.whitelisted ? 'WHITELISTED' : 'BYPASSED')
-                                                  : 'DISABLED'
-                                                 }
+                                                 {user.whitelisted ? 'WHITELISTED' : 'NOT WHITELISTED'}
                                               </button>
                                            </td>
                                            <td className="px-5 py-3">
@@ -2901,11 +3058,12 @@ export default function App() {
                                            </td>
                                            <td className="px-5 py-3 text-right">
                                               <button 
+                                                 type="button"
                                                  onClick={() => {
                                                     setInstanceUsers(prev => prev.filter((_, i) => i !== idx));
                                                  }}
                                                  className="p-1.5 bg-[#3D2525]/30 hover:bg-red-500/20 text-red-400 rounded border border-red-500/20 transition-all"
-                                                 title="Remove from Whitelist"
+                                                 title="Remove player"
                                               >
                                                  <Trash2 className="w-3.5 h-3.5" />
                                               </button>
@@ -2921,12 +3079,14 @@ export default function App() {
                       {/* Save Panel */}
                       <div className="flex justify-end gap-3 pt-4 border-t border-[#3A3A3A]">
                          <button 
+                            type="button"
                             onClick={() => fetchInstanceUsers(selectedInstance?.id || "")}
                             className="px-5 py-2.5 rounded-lg text-neutral-400 hover:bg-[#323232] hover:text-white font-bold transition-all text-xs"
                          >
                             Discard Changes
                          </button>
                          <button 
+                            type="button"
                             onClick={() => saveInstanceUsers(selectedInstance?.id || "")}
                             disabled={isUsersSaving}
                             className="px-6 py-2.5 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white rounded-lg font-bold text-xs shadow-md shadow-[#3E8ED0]/15 transition-all flex items-center gap-2"
@@ -4243,12 +4403,12 @@ export default function App() {
                                                 <div className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-sm bg-[#1A1A1A] border border-[#333] flex items-center justify-center overflow-hidden">
                                                    {whitelistPreview ? (
                                                       <img
-                                                         src={`https://crafatar.com/avatars/${whitelistPreview.uuid}?size=32&overlay`}
+                                                         src={getPlayerAvatarUrl(whitelistPreview.uuid || whitelistPreview.name, 32)}
                                                          referrerPolicy="no-referrer"
                                                          alt=""
                                                          className="w-full h-full"
                                                          onError={(e) => {
-                                                            e.currentTarget.src = `https://minotar.net/avatar/${newWhitelistUser}/32`;
+                                                            e.currentTarget.src = `https://crafthead.net/avatar/${newWhitelistUser}/32`;
                                                          }}
                                                       />
                                                    ) : (
@@ -4292,7 +4452,7 @@ export default function App() {
                                                             }}
                                                             className="flex items-center gap-3 px-4 py-2.5 hover:bg-[#333] cursor-pointer border-b border-[#282828] last:border-0 group"
                                                          >
-                                                            <img src={`https://minotar.net/avatar/${p.name}/16`} alt="" className="w-4 h-4 rounded-sm" />
+                                                            <img src={getPlayerAvatarUrl(p.uuid || p.name, 16)} alt="" className="w-4 h-4 rounded-sm" onError={(e) => { e.currentTarget.src = `https://crafthead.net/avatar/${p.name}/16`; }} />
                                                             <span className="text-sm font-medium text-neutral-300 group-hover:text-white">{p.name}</span>
                                                             <span className="text-[10px] text-neutral-600 font-mono ml-auto">RECENT</span>
                                                          </div>
@@ -4323,7 +4483,7 @@ export default function App() {
                                              ) : (
                                                 globalSettings.defaultWhitelistUsers.map(user => (
                                                    <div key={user} className="flex items-center gap-2 px-2.5 py-1 bg-[#242424] border border-[#333] rounded-md text-xs group hover:border-amber-500/30 transition-colors">
-                                                      <img src={`https://minotar.net/avatar/${user}/16`} alt="" className="w-3 h-3 rounded-sm" />
+                                                      <img src={getPlayerAvatarUrl(user, 16)} alt="" className="w-3 h-3 rounded-sm" onError={(e) => { e.currentTarget.src = `https://crafthead.net/avatar/${user}/16`; }} />
                                                       <span className="text-neutral-300 font-medium">{user}</span>
                                                       <button
                                                          onClick={() => {
