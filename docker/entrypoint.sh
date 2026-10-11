@@ -22,8 +22,9 @@ if [ "$USE_EXTERNAL_DOCKER" = "false" ]; then
     mkdir -p /var/log /var/run
 
     # Start dockerd in background with isolated non-overlapping subnet to avoid collision with host bridge
-    DOCKERD_FLAGS="--bip=172.28.0.1/16 --default-address-pools base=172.29.0.0/16,size=24"
+    DOCKERD_FLAGS="--bip=172.28.0.1/16"
     dockerd $DOCKERD_FLAGS > /var/log/dockerd.log 2>&1 &
+
     DOCKERD_PID=$!
 
     echo "⏳ Waiting for internal Docker daemon to become ready..."
