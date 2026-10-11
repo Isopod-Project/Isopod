@@ -974,6 +974,7 @@ export default function App() {
          if (!res.ok) throw new Error("Failed to save config");
          setOriginalConfig(JSON.stringify(updatedConfig));
          setConfig(updatedConfig); // Also update live state
+         fetchInstanceMods(selectedId);
 
          if (shouldRestartAfter) {
             setIsEditModalOpen(false); // Exit to main screen
@@ -1179,6 +1180,19 @@ export default function App() {
          }
       } catch (e) {
          console.error("Failed to fetch instance mods", e);
+      } finally {
+         setIsInstanceModsLoading(false);
+      }
+   };
+
+   const handleCheckUpdatesAndSyncMods = async () => {
+      if (!selectedId) return;
+      setIsInstanceModsLoading(true);
+      try {
+         await fetch(`/api/instances/${selectedId}/mods/sync`, { method: "POST" });
+         await fetchInstanceMods(selectedId);
+      } catch (e) {
+         console.error("Error syncing mods", e);
       } finally {
          setIsInstanceModsLoading(false);
       }
@@ -3793,7 +3807,7 @@ export default function App() {
                                    </button>
                                    
                                    <button 
-                                      onClick={() => fetchInstanceMods()}
+                                       onClick={handleCheckUpdatesAndSyncMods}
                                       className="w-full text-left px-3 py-1.5 rounded text-xs font-medium bg-[#2A2A2A] hover:bg-[#343434] text-neutral-200 border border-[#383838] transition-colors flex items-center justify-between"
                                    >
                                       <span>Check for Updates</span>

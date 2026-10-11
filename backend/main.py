@@ -579,6 +579,12 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
     with open(compose_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False)
         
+    # Synchronize configured mods directly to data/mods/ immediately upon saving
+    try:
+        await sync_instance_mods_to_disk(instance_id, env)
+    except Exception as e:
+        print(f"Error syncing mods to disk during config save: {e}")
+        
     return {"message": "Config updated"}
 
 class WhitelistUser(BaseModel):
@@ -2951,6 +2957,167 @@ async def upload_instance_mod(instance_id: str, file: UploadFile = File(...)):
         "name": meta["name"],
         "version": meta["version"]
     }
+
+
+async def sync_instance_mods_to_disk(instance_id: str, env: Optional[dict] = None):
+    """
+    Download missing configured mod jar files for an instance directly into data/mods/ 
+    so they exist immediately when configured/saved rather than waiting for server boot.
+    """
+    path = get_instance_path(instance_id)
+    mods_dir = get_instance_mods_dir(instance_id)
+    os.makedirs(mods_dir, exist_ok=True)
+
+    if env is None:
+        compose_path = os.path.join(path, "docker-compose.yml")
+        if not os.path.exists(compose_path):
+            return
+        with open(compose_path, "r") as f:
+            cdata = yaml.safe_load(f) or {}
+        env_raw = cdata.get("services", {}).get("mc", {}).get("environment", {})
+        env = {}
+        if isinstance(env_raw, list):
+            for item in env_raw:
+                if "=" in item:
+                    k, v = item.split("=", 1)
+                    env[k] = v
+        elif isinstance(env_raw, dict):
+            env = env_raw
+
+    mc_version = env.get("VERSION", "").strip()
+    raw_loader = env.get("TYPE", "VANILLA").strip().lower()
+    if raw_loader == "fabric":
+        mod_loaders = ["fabric", "quilt"]
+    elif raw_loader == "quilt":
+        mod_loaders = ["quilt", "fabric"]
+    elif raw_loader == "neoforge":
+        mod_loaders = ["neoforge", "forge"]
+    elif raw_loader == "forge":
+        mod_loaders = ["forge"]
+    else:
+        mod_loaders = [raw_loader] if raw_loader != "vanilla" else []
+
+    # Collect existing mod files and parsed stems on disk
+    existing_stems = set()
+    existing_ids = set()
+    if os.path.exists(mods_dir):
+        for entry in os.scandir(mods_dir):
+            if entry.is_file() and (entry.name.lower().endswith(".jar") or entry.name.lower().endswith(".jar.disabled")):
+                stem = entry.name.lower().replace(".disabled", "").replace(".jar", "")
+                existing_stems.add(stem)
+                try:
+                    meta = parse_mod_jar_metadata(entry.path)
+                    if meta.get("id"):
+                        existing_ids.add(meta["id"].lower())
+                except:
+                    pass
+
+    def is_mod_on_disk(mid: str) -> bool:
+        clean = mid.lower().strip()
+        clean_no_hyphen = clean.replace("-", "").replace("_", "")
+        if clean in existing_ids:
+            return True
+        for stem in existing_stems:
+            stem_no_hyphen = stem.replace("-", "").replace("_", "")
+            if clean == stem or clean_no_hyphen == stem_no_hyphen or clean in stem or stem in clean:
+                return True
+        return False
+
+    m_enabled = [x.strip() for x in env.get("MODRINTH_PROJECTS", "").split(",") if x.strip()]
+    m_disabled = [x.strip() for x in env.get("MODRINTH_DISABLED", "").split(",") if x.strip()]
+    cf_enabled = [x.strip() for x in env.get("CF_PROJECTS", "").split(",") if x.strip()]
+    cf_disabled = [x.strip() for x in env.get("CF_DISABLED", "").split(",") if x.strip()]
+
+    async with httpx.AsyncClient(timeout=45.0, follow_redirects=True) as client:
+        # 1. Modrinth
+        for mid in m_enabled + m_disabled:
+            if is_mod_on_disk(mid):
+                continue
+            is_disabled = mid in m_disabled
+            try:
+                versions = []
+                params = {}
+                if mod_loaders:
+                    params["loaders"] = json.dumps(mod_loaders)
+                if mc_version:
+                    params["game_versions"] = json.dumps([mc_version])
+
+                res = await client.get(f"https://api.modrinth.com/v2/project/{mid}/version", params=params)
+                if res.status_code == 200:
+                    versions = res.json()
+
+                if not versions and mod_loaders:
+                    res_fb = await client.get(f"https://api.modrinth.com/v2/project/{mid}/version", params={"loaders": json.dumps(mod_loaders)})
+                    if res_fb.status_code == 200:
+                        versions = res_fb.json()
+
+                if not versions:
+                    res_fb = await client.get(f"https://api.modrinth.com/v2/project/{mid}/version")
+                    if res_fb.status_code == 200:
+                        versions = res_fb.json()
+
+                if versions and isinstance(versions, list) and len(versions) > 0:
+                    chosen = versions[0]
+                    files = chosen.get("files", [])
+                    primary = next((f for f in files if f.get("primary")), files[0] if files else None)
+                    if primary and primary.get("url"):
+                        target_fname = primary.get("filename") or f"{mid}.jar"
+                        if is_disabled and not target_fname.endswith(".disabled"):
+                            target_fname += ".disabled"
+                        dest_path = os.path.join(mods_dir, target_fname)
+                        async with client.stream("GET", primary["url"]) as dl_res:
+                            if dl_res.status_code == 200:
+                                with open(dest_path, "wb") as f_out:
+                                    async for chunk in dl_res.aiter_bytes():
+                                        f_out.write(chunk)
+                                existing_stems.add(target_fname.lower().replace(".disabled", "").replace(".jar", ""))
+                                existing_ids.add(mid.lower())
+                                print(f"Synced Modrinth mod {mid} -> {target_fname} ({os.path.getsize(dest_path)} bytes)")
+            except Exception as e:
+                print(f"Error syncing Modrinth mod {mid}: {e}")
+
+        # 2. CurseForge
+        for cid in cf_enabled + cf_disabled:
+            if is_mod_on_disk(cid):
+                continue
+            is_disabled = cid in cf_disabled
+            try:
+                res = await client.get(f"https://api.curse.tools/v1/cf/mods/{cid}/files")
+                if res.status_code == 200:
+                    data = res.json().get("data", [])
+                    chosen = None
+                    if mc_version:
+                        for f in data:
+                            if mc_version in f.get("gameVersions", []):
+                                chosen = f
+                                break
+                    if not chosen and data:
+                        chosen = data[0]
+                    if chosen and chosen.get("downloadUrl"):
+                        target_fname = chosen.get("fileName") or f"cf-{cid}.jar"
+                        if is_disabled and not target_fname.endswith(".disabled"):
+                            target_fname += ".disabled"
+                        dest_path = os.path.join(mods_dir, target_fname)
+                        async with client.stream("GET", chosen["downloadUrl"]) as dl_res:
+                            if dl_res.status_code == 200:
+                                with open(dest_path, "wb") as f_out:
+                                    async for chunk in dl_res.aiter_bytes():
+                                        f_out.write(chunk)
+                                existing_stems.add(target_fname.lower().replace(".disabled", "").replace(".jar", ""))
+                                existing_ids.add(cid.lower())
+                                print(f"Synced CurseForge mod {cid} -> {target_fname} ({os.path.getsize(dest_path)} bytes)")
+            except Exception as e:
+                print(f"Error syncing CurseForge mod {cid}: {e}")
+
+
+@app.post("/api/instances/{instance_id}/mods/sync")
+async def sync_instance_mods(instance_id: str):
+    """Explicitly synchronize missing mods to data/mods on disk."""
+    try:
+        await sync_instance_mods_to_disk(instance_id)
+        return {"message": "Mods synchronized successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/files")
