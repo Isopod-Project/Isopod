@@ -93,7 +93,7 @@ export default function App() {
 
    // Prism-like Add Modal States
    const [addStep, setAddStep] = useState<number>(1);
-   const [addTab, setAddTab] = useState<"custom" | "import" | "modrinth" | "curseforge" | "atlauncher" | "technic" | "world">("custom");
+   const [addTab, setAddTab] = useState<"custom" | "import" | "modrinth" | "world">("custom");
    const [selectedAddVersion, setSelectedAddVersion] = useState("latest");
    const [selectedAddLoader, setSelectedAddLoader] = useState("VANILLA");
    const [searchModpacks, setSearchModpacks] = useState("");
@@ -582,8 +582,8 @@ export default function App() {
             version: selectedAddVersion === 'latest' ? '' : selectedAddVersion,
             loader_version: selectedAddLoaderVersion,
             modrinth_id: addTab === 'modrinth' && selectedModpack ? selectedModpack.id : null,
-            cf_id: addTab === 'curseforge' && selectedModpack ? selectedModpack.id : null,
-            modpack_version: (addTab === 'modrinth' || addTab === 'curseforge') && selectedModpack ? selectedModpackVersion : null,
+            cf_id: null,
+            modpack_version: addTab === 'modrinth' && selectedModpack ? selectedModpackVersion : null,
             seed: newSeed,
             level_type: newLevelType,
             difficulty: newDifficulty,
@@ -2508,16 +2508,13 @@ export default function App() {
                            {[
                               { id: "custom", name: "Custom", icon: Gamepad2 },
                               { id: "import", name: "Import", icon: Database },
-                              { id: "atlauncher", name: "ATLauncher", icon: Box },
-                              { id: "curseforge", name: "CurseForge", icon: Settings },
-                              { id: "modrinth", name: "Modrinth", icon: RefreshCw },
-                              { id: "technic", name: "Technic", icon: Layers }
+                              { id: "modrinth", name: "Modrinth", icon: RefreshCw }
                            ].map((tab) => (
                               <button
                                  key={tab.id}
                                  onClick={() => {
                                     setAddTab(tab.id as any);
-                                    if (tab.id === 'modrinth' || tab.id === 'curseforge') {
+                                    if (tab.id === 'modrinth') {
                                        handleModpackSearch("", tab.id);
                                     }
                                  }}
@@ -2651,7 +2648,7 @@ export default function App() {
                                              Mod Loader
                                           </h4>
                                           <div className="flex bg-[#1E1E1E] rounded p-1 border border-[#323232] overflow-x-auto max-w-full">
-                                             {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT', 'PAPER', 'SPIGOT'].map(l => (
+                                             {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT', 'PAPER'].map(l => (
                                                 <button
                                                    key={l}
                                                    onClick={() => setSelectedAddLoader(l)}
@@ -2757,7 +2754,7 @@ export default function App() {
                                  </div>
                               )}
 
-                              {(addTab === "modrinth" || addTab === "curseforge" || addTab === "atlauncher" || addTab === "technic") && (
+                              {addTab === "modrinth" && (
                                  <div className="flex flex-col h-full bg-[#1E1E1E]/50">
                                     <div className="p-4 bg-[#242424] border-b border-[#323232] flex flex-col gap-3">
                                        <div className="flex gap-3 w-full">
