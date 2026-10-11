@@ -149,7 +149,7 @@ export default function App() {
 
    // Mod Search States
    const [modSearchQuery, setModSearchQuery] = useState("");
-   const [modSearchProvider, setModSearchProvider] = useState<"modrinth" | "curseforge">("modrinth");
+   const [modSearchProvider, setModSearchProvider] = useState<"modrinth">("modrinth");
    const [modSearchResults, setModSearchResults] = useState<any[]>([]);
    const [isModSearching, setIsModSearching] = useState(false);
    const [modSearchVersion, setModSearchVersion] = useState("");
@@ -284,7 +284,7 @@ export default function App() {
 
    // Resource Pack States
    const [resourcePackQuery, setResourcePackQuery] = useState("");
-   const [resourcePackProvider, setResourcePackProvider] = useState<"modrinth" | "curseforge">("modrinth");
+   const [resourcePackProvider, setResourcePackProvider] = useState<"modrinth">("modrinth");
    const [resourcePackResults, setResourcePackResults] = useState<any[]>([]);
    const [isResourcePackSearching, setIsResourcePackSearching] = useState(false);
    const [resourcePackListView, setResourcePackListView] = useState<"list" | "search">("list");
@@ -1056,7 +1056,6 @@ export default function App() {
       try {
          const loader = config.environment["TYPE"] || "VANILLA";
          const modrinthIds = (config.environment["MODRINTH_PROJECTS"] || "").split(',').filter(Boolean);
-         const cfIds = (config.environment["CF_PROJECTS"] || "").split(',').filter(Boolean);
 
          const res = await fetch("/api/mods/check-compatibility", {
             method: "POST",
@@ -1064,8 +1063,7 @@ export default function App() {
             body: JSON.stringify({
                mc_version: vId,
                loader: loader,
-               modrinth_ids: modrinthIds,
-               cf_ids: cfIds
+               modrinth_ids: modrinthIds
             })
          });
          const data = await res.json();
@@ -1084,10 +1082,8 @@ export default function App() {
       if (updateMods) {
          // Keep only compatible ones
          const compModrinth = compatibility.compatible.filter((m: any) => m.provider === 'modrinth').map((m: any) => m.id);
-         const compCf = compatibility.compatible.filter((m: any) => m.provider === 'curseforge').map((m: any) => m.id);
 
          newEnv["MODRINTH_PROJECTS"] = compModrinth.join(',');
-         newEnv["CF_PROJECTS"] = compCf.join(',');
       }
 
       if (updateLoader) {
@@ -1154,18 +1150,16 @@ export default function App() {
    const fetchInstalledModsMeta = async () => {
       if (!config || !config.environment) return;
       const mIdsEnv = config.environment["MODRINTH_PROJECTS"] || "";
-      const cIdsEnv = config.environment["CF_PROJECTS"] || "";
       const modrinthModpack = config.environment["MODRINTH_MODPACK"] || "";
-      const cfModpack = config.environment["CF_SLUG"] || "";
 
-      if (!mIdsEnv && !cIdsEnv && !modrinthModpack && !cfModpack) {
+      if (!mIdsEnv && !modrinthModpack) {
          setInstalledModsMeta([]);
          return;
       }
 
       setIsMetaLoading(true);
       try {
-         const res = await fetch(`/api/mods/metadata?modrinth_ids=${mIdsEnv}&cf_ids=${cIdsEnv}&modrinth_modpack=${modrinthModpack}&cf_modpack=${cfModpack}`);
+         const res = await fetch(`/api/mods/metadata?modrinth_ids=${mIdsEnv}&modrinth_modpack=${modrinthModpack}`);
          const data = await res.json();
          setInstalledModsMeta(data);
          if (Array.isArray(data)) {
@@ -1282,11 +1276,10 @@ export default function App() {
                return null;
             };
             const mUpdates = updateEnvLists("MODRINTH_PROJECTS", "MODRINTH_DISABLED");
-            const cfUpdates = updateEnvLists("CF_PROJECTS", "CF_DISABLED");
-            if (mUpdates || cfUpdates) {
+            if (mUpdates) {
                setConfig(prev => ({
                   ...prev,
-                  environment: { ...prev.environment, ...(mUpdates || {}), ...(cfUpdates || {}) }
+                  environment: { ...prev.environment, ...(mUpdates || {}) }
                }));
             }
          }
@@ -1314,7 +1307,7 @@ export default function App() {
 
                const matchInEn = enList.find(x => x.toLowerCase() === targetId);
                const matchInDis = disList.find(x => x.toLowerCase() === targetId);
-               const matched = matchInEn || matchInDis || (mod.provider === 'modrinth' || mod.provider === 'curseforge' ? mod.id : null);
+               const matched = matchInEn || matchInDis || (mod.provider === 'modrinth' ? mod.id : null);
 
                if (matched) {
                   let newEn = enList.filter(x => x.toLowerCase() !== targetId);
@@ -1330,14 +1323,12 @@ export default function App() {
             };
 
             const mUpdates = updateEnvLists("MODRINTH_PROJECTS", "MODRINTH_DISABLED");
-            const cfUpdates = updateEnvLists("CF_PROJECTS", "CF_DISABLED");
-            if (mUpdates || cfUpdates) {
+            if (mUpdates) {
                setConfig(prev => ({
                   ...prev,
                   environment: {
                      ...prev.environment,
-                     ...(mUpdates || {}),
-                     ...(cfUpdates || {})
+                     ...(mUpdates || {})
                   }
                }));
             }
@@ -1364,7 +1355,7 @@ export default function App() {
          if (config.environment) {
             setConfig(prev => {
                const env = { ...prev.environment };
-               for (const key of ["MODRINTH_PROJECTS", "MODRINTH_DISABLED", "CF_PROJECTS", "CF_DISABLED"]) {
+               for (const key of ["MODRINTH_PROJECTS", "MODRINTH_DISABLED"]) {
                   if (env[key]) {
                      const items = env[key].split(',').map(s => s.trim()).filter(Boolean);
                      const filtered = items.filter(x => x.toLowerCase() !== mod.id.toLowerCase() && x.toLowerCase() !== mod.filename.toLowerCase());
@@ -1396,7 +1387,7 @@ export default function App() {
          if (config.environment) {
             setConfig(prev => {
                const env = { ...prev.environment };
-               for (const key of ["MODRINTH_PROJECTS", "MODRINTH_DISABLED", "CF_PROJECTS", "CF_DISABLED"]) {
+               for (const key of ["MODRINTH_PROJECTS", "MODRINTH_DISABLED"]) {
                   if (env[key]) {
                      const items = env[key].split(',').map(s => s.trim()).filter(Boolean);
                      const filtered = items.filter(x => x.toLowerCase() !== mod.id.toLowerCase() && x.toLowerCase() !== mod.filename.toLowerCase());
@@ -1586,8 +1577,8 @@ export default function App() {
       }
    };
 
-   const handleAddMod = (res: any, provider: string) => {
-      const envKey = provider === 'modrinth' ? "MODRINTH_PROJECTS" : "CF_PROJECTS";
+   const handleAddMod = (res: any, provider: string = "modrinth") => {
+      const envKey = "MODRINTH_PROJECTS";
       const currentList: string = config.environment[envKey] || "";
       const currentItems = currentList.split(',').map(s => s.trim()).filter(Boolean);
       if (!currentItems.includes(res.id)) {
@@ -1637,8 +1628,8 @@ export default function App() {
       });
    };
 
-   const addWithDependencies = async (res: any, provider: string) => {
-      const envKey = provider === 'modrinth' ? "MODRINTH_PROJECTS" : "CF_PROJECTS";
+   const addWithDependencies = async (res: any, provider: string = "modrinth") => {
+      const envKey = "MODRINTH_PROJECTS";
       const currentList: string = config.environment[envKey] || "";
       const ids = currentList.split(',').map(s => s.trim()).filter(Boolean);
 
@@ -4367,23 +4358,9 @@ export default function App() {
                                           <ArrowLeft className="w-4 h-4" /> Back to Mods
                                        </button>
                                        <h3 className="text-xl font-bold flex items-center gap-2">
-                                          {modSearchProvider === 'modrinth' ? 'Modrinth Mod Search' : 'CurseForge Mod Search'}
+                                          Mod Search (Modrinth)
                                           {isModSearching && <RefreshCw className="w-4 h-4 animate-spin text-[#3E8ED0]" />}
                                        </h3>
-                                       <div className="flex bg-[#1A1A1A] border border-[#3A3A3A] p-1 rounded-lg ml-auto">
-                                          <button
-                                             onClick={() => setModSearchProvider("modrinth")}
-                                             className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${modSearchProvider === 'modrinth' ? 'bg-[#3E8ED0] text-white shadow-sm' : 'text-neutral-500 hover:text-neutral-300'}`}
-                                          >
-                                             Modrinth
-                                          </button>
-                                          <button
-                                             onClick={() => setModSearchProvider("curseforge")}
-                                             className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${modSearchProvider === 'curseforge' ? 'bg-[#3E8ED0] text-white shadow-sm' : 'text-neutral-500 hover:text-neutral-300'}`}
-                                          >
-                                             CurseForge
-                                          </button>
-                                       </div>
                                     </div>
 
                                     <div className="p-6 bg-[#242424] border-b border-[#323232] flex flex-col gap-4">
@@ -4442,7 +4419,7 @@ export default function App() {
                                              </div>
                                           ) : (
                                              modSearchResults.map((res) => {
-                                                const envKey = modSearchProvider === 'modrinth' ? "MODRINTH_PROJECTS" : "CF_PROJECTS";
+                                                const envKey = "MODRINTH_PROJECTS";
                                                 const currentList: string = config.environment[envKey] || "";
                                                 const isAdded = currentList.split(',').map(s => s.trim().toLowerCase()).includes(res.id.toLowerCase()) || instanceMods.some(m => m.id.toLowerCase() === res.id.toLowerCase());
 
@@ -4663,23 +4640,9 @@ export default function App() {
                                           <X className="w-5 h-5" />
                                        </button>
                                        <h3 className="text-xl font-bold flex items-center gap-2">
-                                          Search Resource Packs
+                                          Search Resource Packs (Modrinth)
                                           {isResourcePackSearching && <RefreshCw className="w-4 h-4 animate-spin text-[#3E8ED0]" />}
                                        </h3>
-                                       <div className="flex bg-[#1A1A1A] border border-[#3A3A3A] p-1 rounded-lg ml-auto">
-                                          <button
-                                             onClick={() => setResourcePackProvider("modrinth")}
-                                             className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${resourcePackProvider === 'modrinth' ? 'bg-[#3E8ED0] text-white shadow-sm' : 'text-neutral-500 hover:text-neutral-300'}`}
-                                          >
-                                             Modrinth
-                                          </button>
-                                          <button
-                                             onClick={() => setResourcePackProvider("curseforge")}
-                                             className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${resourcePackProvider === 'curseforge' ? 'bg-[#3E8ED0] text-white shadow-sm' : 'text-neutral-500 hover:text-neutral-300'}`}
-                                          >
-                                             CurseForge
-                                          </button>
-                                       </div>
                                     </div>
 
                                     <div className="p-6 bg-[#242424] border-b border-[#323232] flex flex-col gap-4">
@@ -4714,7 +4677,7 @@ export default function App() {
                                              </div>
                                           ) : (
                                              resourcePackResults.map((res) => {
-                                                const envKey = resourcePackProvider === 'modrinth' ? "RESOURCE_PACKS_MODRINTH" : "RESOURCE_PACKS_CF";
+                                                const envKey = "RESOURCE_PACKS_MODRINTH";
                                                 const currentList: string = config.environment[envKey] || "";
                                                 const isAdded = currentList.split(',').map(s => s.trim()).includes(res.id);
 

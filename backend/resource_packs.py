@@ -31,18 +31,6 @@ async def _fetch_pack_url(client: httpx.AsyncClient, pack_id: str, provider: str
         except Exception as e:
             print(f"  [modrinth] Error fetching {pack_id} for {mc_version}: {e}")
 
-    elif provider == 'curseforge':
-        # CurseForge API (via proxy)
-        try:
-            res = await client.get(f"https://api.curse.tools/v1/cf/mods/{pack_id}")
-            if res.status_code == 200:
-                data = res.json().get("data", {})
-                for file in data.get("latestFiles", []):
-                    if mc_version in file.get("gameVersions", []):
-                        return file.get("downloadUrl")
-        except Exception as e:
-            print(f"  [curseforge] Error fetching {pack_id} for {mc_version}: {e}")
-
     return None
 
 

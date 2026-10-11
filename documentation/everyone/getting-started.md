@@ -20,7 +20,7 @@ Welcome to **Isopod**! This guide will help you get your Minecraft Instance Mana
 
 ## 🦀 Features at a Glance
 - **Instance Creation**: Quickly spin up new Minecraft servers.
-- **Mod Management**: Search and install mods directly from Modrinth and CurseForge.
+- **Mod Management**: Search and install mods directly from Modrinth.
 - **Live Console**: Watch your server logs in real-time.
 - **RCON Support**: Send commands to your server without leaving the dashboard.
 

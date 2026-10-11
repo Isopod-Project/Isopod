@@ -6,7 +6,7 @@
 ## ✨ Features
 - **Prism-Like Instance Management**: Easily create, configure, and manage separate Minecraft server instances.
 - **Smart Mod Management**: 
-  - Integrated Search for **Modrinth** and **CurseForge**.
+  - Integrated Search for **Modrinth**.
   - **Auto-Dependency Resolution**: Automatically find and add required library mods.
   - **Version/Loader Safety**: Warnings for mismatched mods (e.g., Forge mod on a Fabric server).
   - **Server-Only Filtering**: Results are filtered to hide client-only mods by default.
