@@ -17,7 +17,7 @@ services:
       - /DATA/AppData/isopod/servers:/DATA/AppData/isopod/servers
     environment:
       - SERVERS_DIR=/DATA/AppData/isopod/servers
-      - GITHUB_REPO=Tacoz234/Isopod
+      - GITHUB_REPO=Isopod-Project/Isopod
       - DEBUG=true
     # This command starts BOTH the backend and the frontend dev server
     # We use '&' to run them in parallel
