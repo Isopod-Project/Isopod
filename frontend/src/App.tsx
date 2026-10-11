@@ -974,7 +974,8 @@ export default function App() {
          if (!res.ok) throw new Error("Failed to save config");
          setOriginalConfig(JSON.stringify(updatedConfig));
          setConfig(updatedConfig); // Also update live state
-         fetchInstanceMods(selectedId);
+         await fetchInstanceMods(selectedId, true);
+         if (selectedId) fetchFileList(selectedId, "data/mods");
 
          if (shouldRestartAfter) {
             setIsEditModalOpen(false); // Exit to main screen
@@ -1164,7 +1165,7 @@ export default function App() {
       }
    };
 
-   const fetchInstanceMods = async (instId?: string) => {
+   const fetchInstanceMods = async (instId?: string, forceReset = false) => {
       const id = instId || selectedId;
       if (!id) return;
       setIsInstanceModsLoading(true);
@@ -1172,7 +1173,14 @@ export default function App() {
          const res = await fetch(`/api/instances/${id}/mods`);
          if (res.ok) {
             const data: InstanceModItem[] = await res.json();
-            setInstanceMods(data);
+            setInstanceMods(prev => {
+               if (forceReset) return data;
+               const pending = prev.filter(m => m.source === "pending");
+               if (pending.length === 0) return data;
+               const dataIds = new Set(data.map(m => m.id.toLowerCase()));
+               const remainingPending = pending.filter(p => !dataIds.has(p.id.toLowerCase()));
+               return [...remainingPending, ...data];
+            });
             setSelectedModFilename(prev => {
                if (prev && data.some(m => m.filename === prev)) return prev;
                return data.length > 0 ? data[0].filename : null;
@@ -1265,6 +1273,10 @@ export default function App() {
             }
          }
 
+         if (mod.source === "pending") {
+            return;
+         }
+
          fetchInstanceMods(selectedId);
       } catch (e: any) {
          console.error("Error toggling mod", e);
@@ -1278,6 +1290,29 @@ export default function App() {
       const confirmed = await showConfirm(`Are you sure you want to remove "${mod.name}"? This will delete the mod file.`, "Remove Mod");
       if (!confirmed) return;
 
+      setInstanceMods(prev => prev.filter(m => m.filename !== mod.filename && m.id !== mod.id));
+      if (selectedModFilename === mod.filename) {
+         setSelectedModFilename(null);
+      }
+
+      if (config.environment) {
+         setConfig(prev => {
+            const env = { ...prev.environment };
+            for (const key of ["MODRINTH_PROJECTS", "MODRINTH_DISABLED", "CF_PROJECTS", "CF_DISABLED"]) {
+               if (env[key]) {
+                  const items = env[key].split(',').map(s => s.trim()).filter(Boolean);
+                  const filtered = items.filter(x => x.toLowerCase() !== mod.id.toLowerCase() && x.toLowerCase() !== mod.filename.toLowerCase());
+                  env[key] = filtered.join(',');
+               }
+            }
+            return { ...prev, environment: env };
+         });
+      }
+
+      if (mod.source === "pending") {
+         return;
+      }
+
       try {
          const res = await fetch(`/api/instances/${selectedId}/mods/delete`, {
             method: "POST",
@@ -1288,25 +1323,6 @@ export default function App() {
             })
          });
          if (!res.ok) throw new Error("Failed to delete mod");
-
-         setInstanceMods(prev => prev.filter(m => m.filename !== mod.filename && m.id !== mod.id));
-         if (selectedModFilename === mod.filename) {
-            setSelectedModFilename(null);
-         }
-
-         if (config.environment) {
-            setConfig(prev => {
-               const env = { ...prev.environment };
-               for (const key of ["MODRINTH_PROJECTS", "MODRINTH_DISABLED", "CF_PROJECTS", "CF_DISABLED"]) {
-                  if (env[key]) {
-                     const items = env[key].split(',').map(s => s.trim()).filter(Boolean);
-                     const filtered = items.filter(x => x.toLowerCase() !== mod.id.toLowerCase() && x.toLowerCase() !== mod.filename.toLowerCase());
-                     env[key] = filtered.join(',');
-                  }
-               }
-               return { ...prev, environment: env };
-            });
-         }
 
          fetchInstanceMods(selectedId);
       } catch (e: any) {
@@ -1487,34 +1503,107 @@ export default function App() {
       }
    };
 
-   const addWithDependencies = async (res: any, provider: string) => {
+   const handleAddMod = (res: any, provider: string) => {
       const envKey = provider === 'modrinth' ? "MODRINTH_PROJECTS" : "CF_PROJECTS";
       const currentList: string = config.environment[envKey] || "";
-      const ids = currentList.split(',').map(s => s.trim()).filter(Boolean);
-
-      if (ids.includes(res.id)) return;
-
-      try {
-         // Fetch dependencies
-         const depRes = await fetch(`/api/mods/dependencies?provider=${provider}&project_id=${res.id}`);
-         const depIds: string[] = await depRes.json();
-
-         const toAdd = [res.id, ...depIds];
-         const newIds = [...new Set([...ids, ...toAdd])].join(',');
-
-         setConfig(prev => ({
-            ...prev,
-            environment: { ...prev.environment, [envKey]: newIds }
-         }));
-      } catch (e) {
-         console.error("Failed to fetch dependencies", e);
-         // Fallback: just add the mod itself
-         const newList = currentList ? `${currentList},${res.id}` : res.id;
+      const currentItems = currentList.split(',').map(s => s.trim()).filter(Boolean);
+      if (!currentItems.includes(res.id)) {
+         const newList = [...currentItems, res.id].join(',');
          setConfig(prev => ({
             ...prev,
             environment: { ...prev.environment, [envKey]: newList }
          }));
       }
+
+      const newModItem: InstanceModItem = {
+         filename: `${res.id}.jar`,
+         id: res.id,
+         name: res.name || res.id,
+         version: res.latest_version || "-",
+         enabled: true,
+         size: 0,
+         modified: Date.now() / 1000,
+         modified_str: "Pending Save",
+         icon_url: res.icon_url || null,
+         summary: res.summary || null,
+         url: res.url || (provider === 'modrinth' ? `https://modrinth.com/mod/${res.id}` : null),
+         provider: provider,
+         source: "pending"
+      };
+
+      setInstanceMods(prev => {
+         const exists = prev.find(m => m.id.toLowerCase() === res.id.toLowerCase());
+         if (exists) {
+            return prev.map(m => m.id.toLowerCase() === res.id.toLowerCase() ? { ...m, enabled: true } : m);
+         }
+         return [newModItem, ...prev];
+      });
+   };
+
+   const addWithDependencies = async (res: any, provider: string) => {
+      const envKey = provider === 'modrinth' ? "MODRINTH_PROJECTS" : "CF_PROJECTS";
+      const currentList: string = config.environment[envKey] || "";
+      const ids = currentList.split(',').map(s => s.trim()).filter(Boolean);
+
+      let toAdd = [res.id];
+      try {
+         // Fetch dependencies
+         const depRes = await fetch(`/api/mods/dependencies?provider=${provider}&project_id=${res.id}`);
+         if (depRes.ok) {
+            const depIds: string[] = await depRes.json();
+            toAdd = [res.id, ...depIds];
+         }
+      } catch (e) {
+         console.error("Failed to fetch dependencies", e);
+      }
+
+      const newIds = [...new Set([...ids, ...toAdd])].join(',');
+      setConfig(prev => ({
+         ...prev,
+         environment: { ...prev.environment, [envKey]: newIds }
+      }));
+
+      setInstanceMods(prev => {
+         const existingIds = new Set(prev.map(m => m.id.toLowerCase()));
+         const additions: InstanceModItem[] = [];
+         for (const id of toAdd) {
+            if (!existingIds.has(id.toLowerCase())) {
+               additions.push({
+                  filename: `${id}.jar`,
+                  id: id,
+                  name: id === res.id ? (res.name || id) : id,
+                  version: id === res.id ? (res.latest_version || "-") : "-",
+                  enabled: true,
+                  size: 0,
+                  modified: Date.now() / 1000,
+                  modified_str: "Pending Save",
+                  icon_url: id === res.id ? (res.icon_url || null) : null,
+                  summary: id === res.id ? (res.summary || null) : null,
+                  url: id === res.id ? (res.url || null) : null,
+                  provider: provider,
+                  source: "pending"
+               });
+               existingIds.add(id.toLowerCase());
+            }
+         }
+         return [...additions, ...prev];
+      });
+   };
+
+   const closeEditModal = () => {
+      if (originalConfig) {
+         try {
+            setConfig(JSON.parse(originalConfig));
+         } catch (e) {
+            console.error("Failed to restore original config", e);
+         }
+      }
+      setInstanceMods([]);
+      if (selectedId) {
+         fetchInstanceMods(selectedId, true);
+      }
+      setModListView("list");
+      setIsEditModalOpen(false);
    };
 
    const openEditModal = () => {
@@ -1526,6 +1615,7 @@ export default function App() {
       fetchLogs(selectedId);
       fetchConfig(selectedId);
       fetchMcVersions();
+      fetchInstanceMods(selectedId, true);
    };
 
    const openSettings = () => {
@@ -1620,23 +1710,21 @@ export default function App() {
       return () => interval && clearInterval(interval);
    }, [isEditModalOpen, editTab, selectedId, isLogsLoading, fetchLogs]);
 
-   // Sync mod search filters and instance mods when config is loaded or tab changed
+   // Sync mod search filters and instance mods when modal is opened
    useEffect(() => {
-      if (isEditModalOpen && config.environment) {
-         const v = config.environment["VERSION"] || "";
-         const l = config.environment["TYPE"] || "";
+      if (isEditModalOpen && selectedId) {
+         const v = config?.environment ? (config.environment["VERSION"] || "") : "";
+         const l = config?.environment ? (config.environment["TYPE"] || "") : "";
          setModSearchVersion(v);
          setModSearchLoader(l);
          fetchInstalledModsMeta();
          fetchInstalledResourcePacksMeta();
-         if (selectedId) {
-            fetchInstanceMods(selectedId);
-         }
+         fetchInstanceMods(selectedId);
          // Auto-browse when opening search
          handleModSearch("", modSearchProvider, v, l);
          handleResourcePackSearch("", resourcePackProvider);
       }
-   }, [isEditModalOpen, config.environment]);
+   }, [isEditModalOpen, selectedId]);
 
    useEffect(() => {
       if (isEditModalOpen && selectedId && editTab === "mods") {
@@ -2804,7 +2892,7 @@ export default function App() {
 
                  </div>
               </div>
-              <button onClick={() => setIsEditModalOpen(false)} className="p-1 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition">
+              <button onClick={closeEditModal} className="p-1 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition" title="Close without saving">
                 <X className="w-6 h-6" />
               </button>
             </div>
@@ -3748,9 +3836,16 @@ export default function App() {
                                                         {/* Name + Filename */}
                                                         <td className="px-3 py-2 min-w-0">
                                                            <div className="flex flex-col">
+                                                               <div className="flex items-center gap-1.5 min-w-0">
                                                               <span className={`font-semibold truncate ${isSelected ? 'text-white' : mod.enabled ? 'text-neutral-100' : 'text-neutral-400'}`} title={mod.name}>
                                                                  {mod.name}
                                                               </span>
+                                                                  {mod.source === "pending" && (
+                                                                     <span className="text-[9px] font-bold text-amber-400 bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20 whitespace-nowrap">
+                                                                        Pending
+                                                                     </span>
+                                                                  )}
+                                                               </div>
                                                               <span className="text-[10px] text-neutral-500 font-mono truncate max-w-sm" title={mod.filename}>
                                                                  {mod.filename}
                                                               </span>
@@ -3764,7 +3859,13 @@ export default function App() {
 
                                                         {/* Last Modified */}
                                                         <td className="px-3 py-2 font-mono text-[11px] text-neutral-400 whitespace-nowrap">
-                                                           {mod.modified_str || "-"}
+                                                            {mod.source === "pending" ? (
+                                                               <span className="text-amber-400 font-semibold bg-amber-400/10 px-1.5 py-0.5 rounded border border-amber-400/20 text-[10px]">
+                                                                  Pending Save
+                                                               </span>
+                                                            ) : (
+                                                               mod.modified_str || "-"
+                                                            )}
                                                         </td>
                                                      </tr>
                                                   );
@@ -3919,15 +4020,12 @@ export default function App() {
                           /* SEARCH / DOWNLOAD VIEW */
                           <div className="flex flex-col h-full overflow-hidden">
                              <div className="p-4 border-b border-[#323232] bg-[#242424] flex items-center gap-4 shadow-sm">
-                                <button 
-                                   onClick={() => {
-                                      setModListView("list");
-                                      if (selectedId) fetchInstanceMods(selectedId);
-                                   }}
-                                   className="p-2 hover:bg-[#333] rounded-full transition-colors text-neutral-400 hover:text-white"
-                                >
-                                   <X className="w-5 h-5" />
-                                </button>
+                                 <button
+                                    onClick={() => setModListView("list")}
+                                    className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-[#333] text-neutral-300 hover:text-white rounded border border-[#383838] transition-colors text-xs font-semibold"
+                                 >
+                                    <ArrowLeft className="w-4 h-4" /> Back to Mods
+                                 </button>
                                 <h3 className="text-xl font-bold flex items-center gap-2">
                                    {modSearchProvider === 'modrinth' ? 'Modrinth Mod Search' : 'CurseForge Mod Search'}
                                    {isModSearching && <RefreshCw className="w-4 h-4 animate-spin text-[#3E8ED0]" />}
@@ -4006,7 +4104,7 @@ export default function App() {
                                       modSearchResults.map((res) => {
                                          const envKey = modSearchProvider === 'modrinth' ? "MODRINTH_PROJECTS" : "CF_PROJECTS";
                                          const currentList: string = config.environment[envKey] || "";
-                                         const isAdded = currentList.split(',').map(s => s.trim()).includes(res.id);
+                                         const isAdded = currentList.split(',').map(s => s.trim().toLowerCase()).includes(res.id.toLowerCase()) || instanceMods.some(m => m.id.toLowerCase() === res.id.toLowerCase());
                                          
                                          return (
                                             <div key={res.id} className="flex gap-4 p-3 rounded-lg border border-[#333] bg-[#222] hover:bg-[#282828] transition-colors group">
@@ -4286,7 +4384,7 @@ export default function App() {
                                         resourcePackResults.map((res) => {
                                            const envKey = resourcePackProvider === 'modrinth' ? "RESOURCE_PACKS_MODRINTH" : "RESOURCE_PACKS_CF";
                                            const currentList: string = config.environment[envKey] || "";
-                                           const isAdded = currentList.split(',').map(s => s.trim()).includes(res.id);
+                                           const isAdded = currentList.split(',').map(s => s.trim().toLowerCase()).includes(res.id.toLowerCase());
                                            
                                            return (
                                               <div key={res.id} className="flex gap-4 p-3 rounded-lg border border-[#333] bg-[#222] hover:bg-[#282828] transition-colors group">
