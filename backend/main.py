@@ -1473,7 +1473,7 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
         
     results = []
     for item in data.get("hits", []):
-        results.append({
+        meta_dict = {
             "id": item["slug"], # Using slug as ID for itzg/minecraft-server
             "name": item["title"],
             "summary": item["description"],
@@ -1481,8 +1481,14 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
             "author": item.get("author", "Unknown"),
             "downloads": item.get("downloads", 0),
             "url": f"https://modrinth.com/mod/{item['slug']}",
-            "categories": item.get("categories", [])
-        })
+            "categories": item.get("categories", []),
+            "provider": "modrinth"
+        }
+        mod_metadata_cache[item["slug"].lower()] = meta_dict
+        if "project_id" in item:
+            mod_metadata_cache[item["project_id"].lower()] = meta_dict
+        mod_metadata_cache[item["title"].lower()] = meta_dict
+        results.append(meta_dict)
     return results
 
 @app.get("/api/mods/search/curseforge")
@@ -1548,16 +1554,21 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
             logo = item.get("logo", {})
             icon_url = logo.get("thumbnailUrl") if logo else None
             
-            results.append({
+            cf_meta = {
                 "id": str(item.get("id", "")),
-                "name": item.get("name", "Unknown Modpack"),
+                "name": item.get("name", "Unknown Mod"),
                 "summary": item.get("summary", ""),
                 "icon_url": icon_url,
                 "author": author_name,
                 "downloads": int(item.get("downloadCount", 0)) if item.get("downloadCount") is not None else 0,
                 "url": item.get("links", {}).get("websiteUrl", "") if item.get("links") else "",
-                "categories": [c.get("name", "").lower() for c in item.get("categories", [])] if item.get("categories") else []
-            })
+                "categories": [c.get("name", "").lower() for c in item.get("categories", [])] if item.get("categories") else [],
+                "provider": "curseforge"
+            }
+            mod_metadata_cache[str(item.get("id", "")).lower()] = cf_meta
+            if item.get("name"):
+                mod_metadata_cache[item["name"].lower()] = cf_meta
+            results.append(cf_meta)
     except Exception as e:
         print(f"DEBUG: Error parsing CurseForge data: {e}")
         
@@ -2541,6 +2552,7 @@ def get_instance_mods_dir(instance_id: str) -> str:
 
 
 def parse_mod_jar_metadata(jar_path: str) -> dict:
+    import base64
     meta = {
         "id": None,
         "name": None,
@@ -2549,6 +2561,7 @@ def parse_mod_jar_metadata(jar_path: str) -> dict:
         "url": None,
         "icon_url": None,
     }
+    icon_file = None
     try:
         with zipfile.ZipFile(jar_path, 'r') as z:
             names = set(z.namelist())
@@ -2560,6 +2573,11 @@ def parse_mod_jar_metadata(jar_path: str) -> dict:
                 meta["summary"] = data.get("description")
                 contact = data.get("contact", {})
                 meta["url"] = contact.get("homepage") or contact.get("sources")
+                icon_field = data.get("icon")
+                if isinstance(icon_field, str):
+                    icon_file = icon_field
+                elif isinstance(icon_field, dict):
+                    icon_file = icon_field.get("128") or icon_field.get("64") or next(iter(icon_field.values()), None)
             elif "quilt.mod.json" in names:
                 data = json.loads(z.read("quilt.mod.json").decode('utf-8', errors='ignore'))
                 q_meta = data.get("quilt_loader", {}).get("metadata", {})
@@ -2567,6 +2585,11 @@ def parse_mod_jar_metadata(jar_path: str) -> dict:
                 meta["name"] = q_meta.get("name") or meta["id"]
                 meta["version"] = str(data.get("quilt_loader", {}).get("version", ""))
                 meta["summary"] = q_meta.get("description")
+                icon_field = q_meta.get("icon")
+                if isinstance(icon_field, str):
+                    icon_file = icon_field
+                elif isinstance(icon_field, dict):
+                    icon_file = icon_field.get("128") or icon_field.get("64") or next(iter(icon_field.values()), None)
             elif "META-INF/mods.toml" in names:
                 content = z.read("META-INF/mods.toml").decode('utf-8', errors='ignore')
                 import re
@@ -2574,10 +2597,12 @@ def parse_mod_jar_metadata(jar_path: str) -> dict:
                 m_name = re.search(r'displayName\s*=\s*["\']([^"\']+)["\']', content)
                 m_ver = re.search(r'version\s*=\s*["\']([^"\']+)["\']', content)
                 m_desc = re.search(r'description\s*=\s*["\']([^"\']+)["\']', content)
+                m_logo = re.search(r'logoFile\s*=\s*["\']([^"\']+)["\']', content)
                 if m_id: meta["id"] = m_id.group(1)
                 if m_name: meta["name"] = m_name.group(1)
                 if m_ver: meta["version"] = m_ver.group(1)
                 if m_desc: meta["summary"] = m_desc.group(1)
+                if m_logo: icon_file = m_logo.group(1)
             elif "mcmod.info" in names:
                 data = json.loads(z.read("mcmod.info").decode('utf-8', errors='ignore'))
                 if isinstance(data, list) and data:
@@ -2587,7 +2612,32 @@ def parse_mod_jar_metadata(jar_path: str) -> dict:
                     meta["version"] = str(item.get("version", ""))
                     meta["summary"] = item.get("description")
                     meta["url"] = item.get("url")
-    except Exception as e:
+                    if item.get("logoFile"):
+                        icon_file = item.get("logoFile")
+
+            if not icon_file:
+                for candidate in ["icon.png", "logo.png", "pack.png"]:
+                    if candidate in names:
+                        icon_file = candidate
+                        break
+                if not icon_file:
+                    for n in names:
+                        if n.endswith("/icon.png") or n.endswith("/logo.png"):
+                            icon_file = n
+                            break
+
+            if icon_file and icon_file in names:
+                try:
+                    img_bytes = z.read(icon_file)
+                    ext = "png"
+                    if icon_file.lower().endswith(".jpg") or icon_file.lower().endswith(".jpeg"):
+                        ext = "jpeg"
+                    elif icon_file.lower().endswith(".webp"):
+                        ext = "webp"
+                    meta["icon_url"] = f"data:image/{ext};base64,{base64.b64encode(img_bytes).decode('ascii')}"
+                except Exception:
+                    pass
+    except Exception:
         pass
 
     filename = os.path.basename(jar_path)
@@ -2597,14 +2647,20 @@ def parse_mod_jar_metadata(jar_path: str) -> dict:
     if clean_name.endswith(".jar"):
         clean_name = clean_name[:-4]
 
+    import re
     if not meta["name"]:
-        import re
         m = re.match(r"^([A-Za-z0-9_\s\+\-]+?)[-_]([vV]?\d+.*)$", clean_name)
         if m:
             meta["name"] = m.group(1).replace("-", " ").replace("_", " ").title()
             if not meta["version"]:
                 meta["version"] = m.group(2)
         else:
+            meta["name"] = clean_name.replace("-", " ").replace("_", " ").title()
+    else:
+        # Strip trailing version suffixes from mod name
+        meta["name"] = re.sub(r'[-_vV]?\d+(\.\d+)+.*$', '', meta["name"]).strip()
+        meta["name"] = re.sub(r'[-_]\d+.*$', '', meta["name"]).strip()
+        if not meta["name"]:
             meta["name"] = clean_name.replace("-", " ").replace("_", " ").title()
 
     if not meta["id"]:
@@ -2644,17 +2700,34 @@ async def list_instance_mods(instance_id: str):
                 seen_ids.add(mod_id.lower())
                 seen_ids.add(fname.lower())
 
-                # Check if we have cached Modrinth / Curseforge metadata
-                cached = mod_metadata_cache.get(mod_id.lower())
+                clean_stem = fname.replace(".disabled", "").replace(".jar", "").lower()
+                cached = mod_metadata_cache.get(mod_id.lower()) or mod_metadata_cache.get(clean_stem)
                 icon_url = jar_meta.get("icon_url") or (cached.get("icon_url") if cached else None)
                 url = jar_meta.get("url") or (cached.get("url") if cached else None)
                 summary = jar_meta.get("summary") or (cached.get("summary") if cached else None)
 
+                import re
+                mod_display_name = (cached.get("name") if cached else None) or jar_meta["name"] or fname
+                mod_display_name = re.sub(r'[-_vV]?\d+(\.\d+)+.*$', '', mod_display_name).strip()
+                mod_display_name = re.sub(r'[-_]\d+.*$', '', mod_display_name).strip()
+                if not mod_display_name:
+                    mod_display_name = jar_meta["name"] or fname
+
+                version_str = jar_meta.get("version")
+                if not version_str or version_str == "-":
+                    vm = re.search(r'[-_vV](\d+(\.\d+).*)$', clean_stem)
+                    if vm:
+                        version_str = vm.group(1)
+                    elif cached and cached.get("latest_version"):
+                        version_str = cached.get("latest_version")
+                    else:
+                        version_str = "-"
+
                 mods.append({
                     "filename": fname,
                     "id": mod_id,
-                    "name": jar_meta["name"] or fname,
-                    "version": jar_meta["version"] or "-",
+                    "name": mod_display_name,
+                    "version": version_str,
                     "enabled": is_enabled,
                     "size": st.st_size,
                     "modified": st.st_mtime,
