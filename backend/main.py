@@ -279,43 +279,57 @@ async def get_instance_status(instance_id: str):
                 capture_output=True, text=True, timeout=5
             )
             stdout = log_result.stdout
-            # Log heartbeats: Done (2.345s)! or Done!
-            if "Done (" in stdout or "Done!" in stdout:
-                is_ready = True
-                startup_status = "Online"
-                startup_percent = 100
-            else:
+            lines = stdout.splitlines()
+            for line in reversed(lines):
+                # Check for stopping / shutdown first (most recent event)
+                if any(x in line for x in ["Stopping server", "Saving players", "Saving worlds", "Saving chunks", "Closing Server"]):
+                    is_ready = False
+                    startup_status = "Stopping..."
+                    startup_percent = 70
+                    break
+                # Check for online / ready
+                if "Done (" in line or "Done!" in line:
+                    is_ready = True
+                    startup_status = "Online"
+                    startup_percent = 100
+                    break
                 # Parse logs for startup state
-                lines = stdout.splitlines()
-                found = False
-                for line in reversed(lines):
-                    if "Preparing spawn area:" in line:
-                        import re
-                        m = re.search(r"Preparing spawn area:\s*(\d+)%", line)
-                        if m:
-                            pct = int(m.group(1))
-                            startup_status = f"Preparing spawn area ({pct}%)"
-                            startup_percent = int(40 + pct * 0.55)
-                            found = True
-                            break
-                if not found:
-                    for line in reversed(lines):
-                        if "Preparing level" in line:
-                            startup_status = "Preparing level..."
-                            startup_percent = 30
-                            found = True
-                            break
-                        elif "Loading properties" in line:
-                            startup_status = "Loading properties..."
-                            startup_percent = 20
-                            found = True
-                            break
-                        elif "Starting minecraft server version" in line or "Starting Minecraft server" in line:
-                            startup_status = "Starting Minecraft server..."
-                            startup_percent = 15
-                            found = True
-                            break
+                import re
+                m = re.search(r"Preparing spawn area:\s*(\d+)%", line)
+                if m:
+                    pct = int(m.group(1))
+                    startup_status = f"Preparing spawn area ({pct}%)"
+                    startup_percent = int(45 + pct * 0.5)
+                    break
+                if "Preparing level" in line or "Preparing start region" in line:
+                    startup_status = "Preparing level..."
+                    startup_percent = 40
+                    break
+                if "Loading mods" in line or ("Loaded " in line and " mods" in line) or "Applying patches" in line or "Patching" in line:
+                    startup_status = "Loading mods..."
+                    startup_percent = 30
+                    break
+                if "Loading properties" in line or "Default game type:" in line:
+                    startup_status = "Loading properties..."
+                    startup_percent = 20
+                    break
+                if "Starting minecraft server version" in line or "Starting Minecraft server" in line or "Loading libraries" in line:
+                    startup_status = "Starting Minecraft server..."
+                    startup_percent = 15
+                    break
+                if any(x in line.lower() for x in ["downloading", "installing", "resolving"]):
+                    startup_status = "Downloading server files..."
+                    startup_percent = 10
+                    break
         except: pass
+    else:
+        is_restarting = any(c.status == "restarting" for c in containers)
+        if is_restarting:
+            startup_status = "Restarting..."
+            startup_percent = 20
+        else:
+            startup_status = "Offline"
+            startup_percent = 0
 
     # Get metadata like version and last active
     version = "Unknown"

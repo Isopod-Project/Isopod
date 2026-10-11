@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull } from "lucide-react";
 
 interface Instance {
   id: string;
@@ -1360,6 +1360,27 @@ export default function App() {
       return () => clearInterval(interval);
    }, [instances, globalSettings.autoRefresh]);
 
+   // Real-time Status & Progress Bar Polling in Editing View
+   useEffect(() => {
+      if (!isEditModalOpen || !selectedId || isGlobalBrowser) return;
+      const id = selectedId;
+      fetchStatus(id);
+
+      const status = statuses[id];
+      const isTransitioning = 
+         (status?.is_running && !status?.is_ready) || 
+         status?.startup_status === "Stopping..." || 
+         status?.startup_status === "Restarting...";
+
+      // Poll faster (1.5s) during state transitions for smooth progress bar updates; 3s otherwise
+      const pollRate = isTransitioning ? 1500 : 3000;
+      const interval = setInterval(() => {
+         fetchStatus(id);
+      }, pollRate);
+
+      return () => clearInterval(interval);
+   }, [isEditModalOpen, selectedId, isGlobalBrowser, statuses[selectedId || ""]?.is_running, statuses[selectedId || ""]?.is_ready, statuses[selectedId || ""]?.startup_status]);
+
    // Live Logs Polling
    useEffect(() => {
       let interval: any;
@@ -2559,32 +2580,6 @@ export default function App() {
                        </button>
                     )}
 
-                    {!isGlobalBrowser && selectedInstance && statuses[selectedInstance.id] && (() => {
-                       const status = statuses[selectedInstance.id];
-                       const showProgress = (status.is_running && !status.is_ready) || 
-                                           (status.startup_status === "Stopping..." || status.startup_status === "Restarting...");
-                       const pct = status.startup_percent || (status.startup_status === "Stopping..." ? 50 : 0);
-                       const isStopping = status.startup_status === "Stopping..." || status.startup_status === "Killing...";
-                       
-                       if (!showProgress) return null;
-                       
-                       return (
-                          <div className="flex items-center gap-2 mt-1.5 w-64">
-                             <div className="w-full bg-[#1A1A1A] border border-[#323232] p-1.5 rounded flex flex-col gap-1 shadow-inner">
-                                <div className="flex justify-between text-[9px] text-neutral-400 font-mono">
-                                   <span className="truncate max-w-[150px]">{status.startup_status || "Starting..."}</span>
-                                   <span>{pct}%</span>
-                                </div>
-                                <div className="w-full bg-[#323232] rounded-full h-1 overflow-hidden">
-                                   <div 
-                                     className={`h-1 rounded-full transition-all duration-500 ease-out animate-pulse ${isStopping ? 'bg-amber-600' : 'bg-[#3E8ED0]'}`} 
-                                     style={{ width: `${pct}%` }}
-                                   ></div>
-                                </div>
-                             </div>
-                          </div>
-                       );
-                    })()}
                  </div>
               </div>
               <button onClick={() => setIsEditModalOpen(false)} className="p-1 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition">
@@ -4147,6 +4142,157 @@ export default function App() {
                 )}
               </div>
             </div>
+
+            {/* Server Status Bar for Editing View */}
+            {!isGlobalBrowser && selectedInstance && (() => {
+               const status = statuses[selectedInstance.id];
+               const isRunning = status?.is_running;
+               const isReady = status?.is_ready;
+               const isStopping = status?.startup_status === "Stopping..." || status?.startup_status === "Killing...";
+               const isRestarting = status?.startup_status === "Restarting...";
+               const isStarting = isRunning && !isReady && !isStopping;
+               const showProgress = isStarting || isStopping || isRestarting;
+               const pct = status?.startup_percent || (isStopping ? 70 : (isRestarting ? 25 : 10));
+
+               const version = config.environment?.["VERSION"] || status?.version || "Unknown";
+               const loader = config.environment?.["TYPE"] || "VANILLA";
+               const port = status?.port || config.environment?.["SERVER_PORT"] || 25565;
+               const address = status?.public_ip ? `${status.public_ip}:${port}` : `localhost:${port}`;
+
+               return (
+                  <div className="bg-[#1C1C1C] border-t border-[#3A3A3A] px-5 py-2.5 flex flex-col gap-2 select-none shadow-2xl z-20">
+                     {/* Progress Bar Section (Visible during Starting, Stopping, or Restarting) */}
+                     {showProgress && (
+                        <div className="w-full bg-[#141414] border border-[#2F2F2F] rounded-lg p-2.5 flex flex-col gap-1.5 shadow-inner animate-in fade-in slide-in-from-bottom-1 duration-200">
+                           <div className="flex justify-between items-center text-[11px] font-mono">
+                              <div className="flex items-center gap-2">
+                                 <RefreshCw className={`w-3.5 h-3.5 animate-spin ${isStopping ? 'text-amber-400' : 'text-[#3E8ED0]'}`} />
+                                 <span className={`font-semibold ${isStopping ? 'text-amber-300' : 'text-neutral-200'}`}>
+                                    {status?.startup_status || (isStopping ? "Stopping server..." : "Starting server...")}
+                                 </span>
+                              </div>
+                              <span className="font-bold text-neutral-300 bg-[#242424] px-2 py-0.5 rounded border border-[#383838] text-[10px]">
+                                 {pct}%
+                              </span>
+                           </div>
+                           <div className="w-full bg-[#262626] rounded-full h-1.5 overflow-hidden">
+                              <div 
+                                 className={`h-full rounded-full transition-all duration-300 ease-out ${
+                                    isStopping 
+                                       ? 'bg-gradient-to-r from-amber-600 to-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.5)]' 
+                                       : 'bg-gradient-to-r from-[#3E8ED0] to-cyan-400 shadow-[0_0_8px_rgba(62,142,208,0.5)]'
+                                 }`} 
+                                 style={{ width: `${Math.max(5, Math.min(100, pct))}%` }}
+                              />
+                           </div>
+                        </div>
+                     )}
+
+                     {/* Status Bar Controls & Metadata */}
+                     <div className="flex items-center justify-between flex-wrap gap-3">
+                        {/* Left: Server Status & Metadata */}
+                        <div className="flex items-center gap-3">
+                           {/* Status Badge */}
+                           <div className={`flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-bold transition-colors ${
+                              isReady 
+                                 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
+                                 : isRunning 
+                                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' 
+                                    : isStopping 
+                                       ? 'bg-red-500/10 border-red-500/30 text-red-400'
+                                       : 'bg-neutral-800 border-neutral-700 text-neutral-400'
+                           }`}>
+                              <span className="relative flex h-2 w-2">
+                                 {isRunning && (
+                                    <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                                       isReady ? 'bg-emerald-400' : 'bg-amber-400'
+                                    }`} />
+                                 )}
+                                 <span className={`relative inline-flex rounded-full h-2 w-2 ${
+                                    isReady ? 'bg-emerald-500' : (isRunning ? 'bg-amber-500' : 'bg-neutral-500')
+                                 }`} />
+                              </span>
+                              <span>
+                                 {!isRunning 
+                                    ? (isStopping ? 'STOPPING...' : 'OFFLINE') 
+                                    : (isReady ? 'ONLINE' : (status?.startup_status || 'STARTING...'))}
+                              </span>
+                           </div>
+
+                           {/* Version & Loader Pill */}
+                           <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#242424] border border-[#333] text-[11px] text-neutral-300 font-mono">
+                              <span className="text-neutral-500 font-bold uppercase">{loader}</span>
+                              <span className="text-neutral-300">{version}</span>
+                           </div>
+
+                           {/* Address Pill */}
+                           {status?.public_ip && (
+                              <button 
+                                 onClick={() => copyToClipboard(address, 'statusBar')}
+                                 className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#242424] hover:bg-[#2A2A2A] border border-[#333] hover:border-[#444] text-[11px] font-mono transition group"
+                                 title="Click to copy server address"
+                              >
+                                 <span className="text-neutral-500 font-bold text-[10px]">IP:</span>
+                                 <span className={copiedId === 'statusBar' ? 'text-emerald-400 font-bold' : 'text-neutral-300'}>
+                                    {copiedId === 'statusBar' ? 'COPIED!' : address}
+                                 </span>
+                                 <Copy className={`w-3 h-3 ${copiedId === 'statusBar' ? 'text-emerald-400' : 'text-neutral-500 group-hover:text-[#3E8ED0]'}`} />
+                              </button>
+                           )}
+                        </div>
+
+                        {/* Right: Quick Action Controls */}
+                        <div className="flex items-center gap-2 ml-auto">
+                           {editTab !== "logs" && (
+                              <button 
+                                 onClick={() => setEditTab("logs")}
+                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#262626] hover:bg-[#323232] text-neutral-300 hover:text-white font-semibold text-xs border border-[#383838] transition-all"
+                                 title="Switch to live Minecraft logs"
+                              >
+                                 <Terminal className="w-3.5 h-3.5 text-[#3E8ED0]" />
+                                 <span>Console</span>
+                              </button>
+                           )}
+
+                           {!isRunning ? (
+                              <button 
+                                 onClick={(e) => handleStart(selectedInstance.id, e)}
+                                 className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all"
+                              >
+                                 <Play className="w-3.5 h-3.5 fill-current" />
+                                 <span>Start Server</span>
+                              </button>
+                           ) : (
+                              <>
+                                 <button 
+                                    onClick={() => handleRestart(selectedInstance.id)}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#2A2A2A] hover:bg-[#333] text-neutral-200 font-bold text-xs border border-[#3E3E3E] transition-all"
+                                    title="Restart Minecraft server"
+                                 >
+                                    <RotateCcw className="w-3.5 h-3.5 text-neutral-400" />
+                                    <span>Restart</span>
+                                 </button>
+                                 <button 
+                                    onClick={(e) => handleStop(selectedInstance.id, e)}
+                                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-md shadow-amber-600/20 transition-all"
+                                 >
+                                    <Square className="w-3.5 h-3.5 fill-current" />
+                                    <span>Stop Server</span>
+                                 </button>
+                                 <button 
+                                    onClick={(e) => handleKill(selectedInstance.id, e)}
+                                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-950/40 hover:bg-red-900/60 text-red-400 hover:text-red-300 font-bold text-xs border border-red-900/40 transition-all"
+                                    title="Force kill server if unresponsive"
+                                 >
+                                    <Skull className="w-3.5 h-3.5" />
+                                 </button>
+                              </>
+                           )}
+                        </div>
+                     </div>
+                  </div>
+               );
+            })()}
           </div>
         </div>
       )}
