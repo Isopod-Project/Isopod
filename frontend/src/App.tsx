@@ -186,6 +186,16 @@ export default function App() {
    const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
    const scrollRef = useRef<HTMLPreElement>(null);
 
+   // Prism Launcher Console Controls
+   const [logKeepUpdating, setLogKeepUpdating] = useState(true);
+   const [logWrapLines, setLogWrapLines] = useState(true);
+   const [logColorLines, setLogColorLines] = useState(true);
+   const [logSearchQuery, setLogSearchQuery] = useState("");
+   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
+   const [logCopied, setLogCopied] = useState(false);
+   const [clearedLogsOffset, setClearedLogsOffset] = useState<Record<string, number>>({});
+   const lastSearchedQueryRef = useRef("");
+
    // Version Change Handling
    const [isVersionModalOpen, setIsVersionModalOpen] = useState(false);
    const [pendingVersion, setPendingVersion] = useState("");
@@ -1757,10 +1767,10 @@ export default function App() {
    };
 
    useEffect(() => {
-      if (autoScrollEnabled && scrollRef.current) {
+      if (logKeepUpdating && scrollRef.current) {
          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
       }
-   }, [serverLogs, manualLogs, editTab, autoScrollEnabled]);
+   }, [serverLogs, manualLogs, editTab, logKeepUpdating]);
 
    useEffect(() => {
       fetchInstances();
@@ -1801,7 +1811,7 @@ export default function App() {
    // Live Logs Polling
    useEffect(() => {
       let interval: any;
-      if (isEditModalOpen && editTab === "logs" && selectedId) {
+      if (isEditModalOpen && editTab === "logs" && selectedId && logKeepUpdating) {
          interval = setInterval(() => {
             if (!isLogsLoading) {
                fetchLogs(selectedId);
@@ -1809,7 +1819,7 @@ export default function App() {
          }, 3000);
       }
       return () => interval && clearInterval(interval);
-   }, [isEditModalOpen, editTab, selectedId, isLogsLoading, fetchLogs]);
+   }, [isEditModalOpen, editTab, selectedId, isLogsLoading, fetchLogs, logKeepUpdating]);
 
    // Sync mod search filters and instance mods when config is loaded or tab changed
    useEffect(() => {
@@ -1893,7 +1903,9 @@ export default function App() {
    const selectedStatus = selectedId ? statuses[selectedId] : null;
 
    const getMergedLogs = (id: string) => {
-      const baseLogs = serverLogs[id] || "";
+      const base = serverLogs[id] || "";
+      const offset = clearedLogsOffset[id] || 0;
+      const baseLogs = base.length >= offset ? base.slice(offset) : "";
       const manual = manualLogs[id] || [];
       if (manual.length === 0) return baseLogs;
 
@@ -1912,6 +1924,81 @@ export default function App() {
    };
 
    const logs = selectedId ? getMergedLogs(selectedId) : "";
+
+   const displayLogLines = useMemo(() => {
+      if (!logs) return [];
+      const rawLines = logs.split('\n');
+      if (isVerbose) return rawLines;
+      const allowedPatterns = [
+         /ERROR/, /FATAL/, /Exception/,
+         /Loading \d+ mods/, / - /, / \\-- /,
+         /Done \(/,
+         /> /,
+         /issued (server )?command/i,
+         /joined the game/, /left the game/,
+         /\[Server thread\/INFO\]: </,
+         /Starting minecraft server version/,
+         /\[Server thread\/INFO\]: \[(?!Rcon: Stopping)/
+      ];
+      return rawLines.filter(line => {
+         if (line.includes('> ')) return true;
+         return allowedPatterns.some(p => p.test(line));
+      });
+   }, [logs, isVerbose]);
+
+   const matchingLineIndices = useMemo(() => {
+      if (!logSearchQuery.trim()) return [];
+      const q = logSearchQuery.toLowerCase();
+      const indices: number[] = [];
+      displayLogLines.forEach((line, idx) => {
+         if (line.toLowerCase().includes(q)) {
+            indices.push(idx);
+         }
+      });
+      return indices;
+   }, [displayLogLines, logSearchQuery]);
+
+   const handleFindNext = () => {
+      if (matchingLineIndices.length === 0) return;
+      let nextIdx = currentMatchIndex;
+      if (lastSearchedQueryRef.current !== logSearchQuery) {
+         lastSearchedQueryRef.current = logSearchQuery;
+         nextIdx = 0;
+      } else {
+         nextIdx = (currentMatchIndex + 1) % matchingLineIndices.length;
+      }
+      setCurrentMatchIndex(nextIdx);
+      const targetLineIdx = matchingLineIndices[nextIdx];
+      const el = document.getElementById(`log-line-${targetLineIdx}`);
+      if (el) {
+         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+   };
+
+   const handleScrollToBottom = () => {
+      if (scrollRef.current) {
+         scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+   };
+
+   const handleCopyLogs = async () => {
+      const textToCopy = displayLogLines.join('\n') || logs;
+      if (!textToCopy) return;
+      try {
+         await navigator.clipboard.writeText(textToCopy);
+         setLogCopied(true);
+         setTimeout(() => setLogCopied(false), 2000);
+      } catch (err) {
+         console.error("Failed to copy logs:", err);
+      }
+   };
+
+   const handleClearLogs = () => {
+      if (!selectedId) return;
+      const curLen = (serverLogs[selectedId] || "").length;
+      setClearedLogsOffset(prev => ({ ...prev, [selectedId]: curLen }));
+      setManualLogs(prev => ({ ...prev, [selectedId]: [] }));
+   };
 
    // Fetch loader versions when selection changes (Add and Edit modals)
    useEffect(() => {
@@ -3094,81 +3181,229 @@ export default function App() {
                      {/* Main Area */}
                      <div className="flex-1 bg-[#1A1A1A] flex flex-col min-w-0 overflow-hidden">
                         {editTab === "logs" && (
-                           <div className="flex flex-col h-full p-6">
-                              <div className="flex justify-between items-center mb-4">
-                                 <div className="flex items-center gap-4">
+                           <div className="flex flex-col h-full bg-[#181818] overflow-hidden">
+                              {/* Header with Title, Checkboxes, and Actions */}
+                              <div className="flex flex-wrap justify-between items-center gap-3 px-5 py-3 border-b border-[#2C2C2C] bg-[#222222]">
+                                 <div className="flex flex-wrap items-center gap-5">
                                     <div className="flex items-center gap-2">
-                                       <Terminal className="w-5 h-5 text-neutral-500" />
-                                       <span className="text-lg font-semibold text-neutral-300">Console Output</span>
+                                       <Terminal className="w-5 h-5 text-[#3E8ED0]" />
+                                       <span className="text-base font-bold text-white">Minecraft Log</span>
                                     </div>
-                                    <div className="flex bg-[#0D0D0D] border border-[#333] p-1 rounded-lg ml-4">
+                                    <div className="flex items-center gap-4 text-xs select-none">
+                                       <label className="flex items-center gap-1.5 cursor-pointer text-neutral-300 hover:text-white transition-colors">
+                                          <input
+                                             type="checkbox"
+                                             checked={logKeepUpdating}
+                                             onChange={(e) => setLogKeepUpdating(e.target.checked)}
+                                             className="w-4 h-4 rounded border-[#404040] bg-[#1A1A1A] text-[#3E8ED0] accent-[#3E8ED0] cursor-pointer"
+                                          />
+                                          <span>Keep updating</span>
+                                       </label>
+                                       <label className="flex items-center gap-1.5 cursor-pointer text-neutral-300 hover:text-white transition-colors">
+                                          <input
+                                             type="checkbox"
+                                             checked={logWrapLines}
+                                             onChange={(e) => setLogWrapLines(e.target.checked)}
+                                             className="w-4 h-4 rounded border-[#404040] bg-[#1A1A1A] text-[#3E8ED0] accent-[#3E8ED0] cursor-pointer"
+                                          />
+                                          <span>Wrap lines</span>
+                                       </label>
+                                       <label className="flex items-center gap-1.5 cursor-pointer text-neutral-300 hover:text-white transition-colors">
+                                          <input
+                                             type="checkbox"
+                                             checked={logColorLines}
+                                             onChange={(e) => setLogColorLines(e.target.checked)}
+                                             className="w-4 h-4 rounded border-[#404040] bg-[#1A1A1A] text-[#3E8ED0] accent-[#3E8ED0] cursor-pointer"
+                                          />
+                                          <span>Color lines</span>
+                                       </label>
+                                    </div>
+                                 </div>
+
+                                 <div className="flex items-center gap-2.5">
+                                    <div className="flex bg-[#141414] border border-[#333] p-0.5 rounded">
                                        <button
                                           onClick={() => setIsVerbose(false)}
-                                          className={`px-3 py-1 rounded-md text-[10px] font-bold transition-all ${!isVerbose ? 'bg-[#3E8ED0] text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+                                          className={`px-2.5 py-1 rounded text-[11px] font-medium transition-all ${!isVerbose ? 'bg-[#3E8ED0] text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-200'}`}
                                        >
                                           Simplified
                                        </button>
                                        <button
                                           onClick={() => setIsVerbose(true)}
-                                          className={`px-3 py-1 rounded-md text-[10px] font-bold transition-all ${isVerbose ? 'bg-[#3E8ED0] text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+                                          className={`px-2.5 py-1 rounded text-[11px] font-medium transition-all ${isVerbose ? 'bg-[#3E8ED0] text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-200'}`}
                                        >
                                           Verbose
                                        </button>
                                     </div>
+                                    <button
+                                       onClick={handleCopyLogs}
+                                       className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2D2D] hover:bg-[#3D3D3D] text-neutral-200 hover:text-white border border-[#404040] rounded text-xs font-medium transition-colors cursor-pointer"
+                                       title="Copy log output to clipboard"
+                                    >
+                                       {logCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                                       <span>{logCopied ? "Copied" : "Copy"}</span>
+                                    </button>
+                                    <button
+                                       onClick={handleClearLogs}
+                                       className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2D2D] hover:bg-[#3D3D3D] text-neutral-200 hover:text-white border border-[#404040] rounded text-xs font-medium transition-colors cursor-pointer"
+                                       title="Clear console view"
+                                    >
+                                       <Trash2 className="w-3.5 h-3.5" />
+                                       <span>Clear</span>
+                                    </button>
+                                    <button
+                                       onClick={() => {
+                                          if (selectedInstance) {
+                                             setClearedLogsOffset(prev => ({ ...prev, [selectedInstance.id]: 0 }));
+                                             fetchLogs(selectedInstance.id);
+                                          }
+                                       }}
+                                       className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2D2D] hover:bg-[#3D3D3D] text-neutral-200 hover:text-white border border-[#404040] rounded text-xs font-medium transition-colors cursor-pointer"
+                                       title="Refresh logs from server"
+                                    >
+                                       <RefreshCw className={`w-3.5 h-3.5 ${isLogsLoading ? 'animate-spin text-[#3E8ED0]' : ''}`} />
+                                       <span>Refresh</span>
+                                    </button>
                                  </div>
-                                 <button
-                                    onClick={() => selectedInstance && fetchLogs(selectedInstance.id)}
-                                    className="flex items-center gap-2 px-4 py-1.5 bg-[#323232] hover:bg-[#404040] rounded-md text-sm font-medium transition-colors border border-[#404040]"
-                                 >
-                                    <RefreshCw className={`w-4 h-4 ${isLogsLoading ? 'animate-spin' : ''}`} />
-                                    Refresh
-                                 </button>
                               </div>
+
+                              {/* Console Log Pre View */}
                               <pre
                                  ref={scrollRef}
-                                 className="flex-1 bg-[#0D0D0D] rounded-t-lg border border-[#333] p-5 overflow-auto text-xs font-mono text-emerald-400/90 whitespace-pre-wrap selection:bg-[#3E8ED0]/40 shadow-inner scroll-smooth"
+                                 className={`flex-1 bg-[#0D0D0D] p-4 overflow-auto text-xs font-mono selection:bg-[#3E8ED0]/40 shadow-inner scrollbar-custom ${
+                                    logWrapLines ? 'whitespace-pre-wrap break-words' : 'whitespace-pre overflow-x-auto'
+                                 }`}
                               >
-                                 {(() => {
-                                    if (!logs) return "Waiting for output...";
-
-                                    const allowedPatterns = [
-                                       /ERROR/, /FATAL/, /Exception/,
-                                       /Loading \d+ mods/, / - /, / \\-- /,
-                                       /Done \(/,
-                                       /> /,
-                                       /issued (server )?command/i,
-                                       /joined the game/, /left the game/,
-                                       /\[Server thread\/INFO\]: </,
-                                       /Starting minecraft server version/,
-                                       /\[Server thread\/INFO\]: \[(?!Rcon: Stopping)/
-                                    ];
-
-                                    const lines = logs.split('\n');
-                                    const filtered = isVerbose
-                                       ? lines
-                                       : lines.filter(line => {
-                                          if (line.includes('> ')) return true;
-                                          return allowedPatterns.some(p => p.test(line));
-                                       });
-
-                                    return filtered.map((line, idx) => {
+                                 {displayLogLines.length === 0 ? (
+                                    <span className="text-neutral-500 italic">
+                                       {logs ? "No logs match current filter." : "Waiting for output..."}
+                                    </span>
+                                 ) : (
+                                    displayLogLines.map((line, idx) => {
                                        const isCommand = /issued (server )?command/i.test(line) || line.includes('> ');
-                                       if (isCommand) {
-                                          return (
-                                             <span key={idx} className="block text-[#4ADE80] font-bold bg-[#14532D]/30 px-1.5 py-0.5 rounded border border-emerald-800/30 my-0.5">
-                                                {line}
-                                             </span>
-                                          );
+                                       const isError = /(\bERROR\b|\bFATAL\b|Exception|Severe|Crash)/i.test(line);
+                                       const isWarn = /(\bWARN\b|\bWARNING\b)/i.test(line);
+                                       const isPlayer = /(joined the game|left the game)/i.test(line);
+                                       const isLauncherMeta = /(Prism Launcher|version:|Launched instance|resolves to|folder is|Java path|Java is version|OS:|CPU:|RAM:|Vulkan device|OpenGL|Starting minecraft server)/i.test(line);
+                                       const isInfo = /\[Server thread\/INFO\]/i.test(line) || /\[INFO\]/i.test(line);
+
+                                       const isCurrentMatch = matchingLineIndices.length > 0 && matchingLineIndices[currentMatchIndex] === idx;
+                                       const isMatch = matchingLineIndices.includes(idx);
+
+                                       let lineStyle = "text-neutral-300";
+                                       let containerStyle = "";
+
+                                       if (logColorLines) {
+                                          if (isCommand) {
+                                             lineStyle = "text-[#4ADE80] font-semibold";
+                                             containerStyle = "bg-[#14532D]/30 border border-emerald-800/30 px-1.5 py-0.5 rounded my-0.5";
+                                          } else if (isError) {
+                                             lineStyle = "text-[#F87171] font-semibold";
+                                             containerStyle = "bg-[#7F1D1D]/25 border border-red-900/30 px-1.5 py-0.5 rounded my-0.5";
+                                          } else if (isWarn) {
+                                             lineStyle = "text-[#FBBF24]";
+                                             containerStyle = "bg-[#78350F]/20 border border-amber-900/30 px-1.5 py-0.5 rounded my-0.5";
+                                          } else if (isPlayer) {
+                                             lineStyle = "text-[#2DD4BF] font-medium";
+                                          } else if (isLauncherMeta) {
+                                             lineStyle = "text-[#C084FC] font-medium";
+                                          } else if (isInfo) {
+                                             lineStyle = "text-[#60A5FA]";
+                                          }
                                        }
-                                       return <span key={idx} className="block">{line}</span>;
-                                    });
-                                 })()}
+
+                                       let matchHighlight = "";
+                                       if (isCurrentMatch) {
+                                          matchHighlight = " ring-2 ring-yellow-400 bg-yellow-500/20";
+                                       } else if (isMatch) {
+                                          matchHighlight = " bg-yellow-500/10";
+                                       }
+
+                                       let content: React.ReactNode = line;
+                                       if (logSearchQuery.trim() && isMatch) {
+                                          const escaped = logSearchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                                          const parts = line.split(new RegExp(`(${escaped})`, 'gi'));
+                                          content = parts.map((part, pIdx) => {
+                                             if (part.toLowerCase() === logSearchQuery.toLowerCase()) {
+                                                return (
+                                                   <mark
+                                                      key={pIdx}
+                                                      className={`${
+                                                         isCurrentMatch
+                                                            ? 'bg-yellow-400 text-neutral-950 font-bold ring-1 ring-yellow-300'
+                                                            : 'bg-yellow-500/50 text-yellow-100 font-semibold'
+                                                      } rounded px-0.5 py-0`}
+                                                   >
+                                                      {part}
+                                                   </mark>
+                                                );
+                                             }
+                                             return part;
+                                          });
+                                       }
+
+                                       return (
+                                          <div
+                                             key={idx}
+                                             id={`log-line-${idx}`}
+                                             className={`block leading-relaxed ${lineStyle} ${containerStyle}${matchHighlight}`}
+                                          >
+                                             {content}
+                                          </div>
+                                       );
+                                    })
+                                 )}
                               </pre>
-                              <div className="flex bg-[#1A1A1A] border-x border-b border-[#333] rounded-b-lg p-3 gap-3">
+
+                              {/* Search, Find, and Bottom Navigation Row */}
+                              <div className="flex items-center gap-2 bg-[#202020] border-t border-[#2C2C2C] px-4 py-2.5">
+                                 <div className="relative flex-1">
+                                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
+                                    <input
+                                       type="text"
+                                       placeholder="Search"
+                                       value={logSearchQuery}
+                                       onChange={(e) => {
+                                          setLogSearchQuery(e.target.value);
+                                          setCurrentMatchIndex(0);
+                                       }}
+                                       onKeyDown={(e) => {
+                                          if (e.key === "Enter") {
+                                             e.preventDefault();
+                                             handleFindNext();
+                                          }
+                                       }}
+                                       className="w-full bg-[#141414] border border-[#333] pl-9 pr-24 py-1.5 rounded text-xs text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-[#3E8ED0]"
+                                    />
+                                    {logSearchQuery.trim() && (
+                                       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-neutral-400 font-mono select-none">
+                                          {matchingLineIndices.length > 0
+                                             ? `${currentMatchIndex + 1} of ${matchingLineIndices.length}`
+                                             : "No match"}
+                                       </span>
+                                    )}
+                                 </div>
+                                 <button
+                                    onClick={handleFindNext}
+                                    disabled={matchingLineIndices.length === 0}
+                                    className="px-4 py-1.5 bg-[#2D2D2D] hover:bg-[#3D3D3D] disabled:opacity-40 disabled:hover:bg-[#2D2D2D] text-neutral-200 hover:text-white border border-[#404040] rounded text-xs font-medium transition-colors select-none cursor-pointer"
+                                 >
+                                    Find
+                                 </button>
+                                 <button
+                                    onClick={handleScrollToBottom}
+                                    className="px-4 py-1.5 bg-[#2D2D2D] hover:bg-[#3D3D3D] text-neutral-200 hover:text-white border border-[#404040] rounded text-xs font-medium transition-colors select-none cursor-pointer"
+                                 >
+                                    Bottom
+                                 </button>
+                              </div>
+
+                              {/* Command Input Row */}
+                              <div className="flex bg-[#1A1A1A] p-3 gap-3 border-t border-[#2C2C2C]">
                                  <input
                                     type="text"
                                     placeholder="Type a command (whitelist, op, kick...)"
-                                    className="flex-1 bg-[#050505] border border-[#333] px-3 py-2 rounded text-emerald-500 font-mono text-sm focus:outline-none focus:border-[#3E8ED0]"
+                                    className="flex-1 bg-[#121212] border border-[#333] px-3 py-2 rounded text-emerald-400 font-mono text-sm focus:outline-none focus:border-[#3E8ED0]"
                                     value={consoleCommand}
                                     onChange={(e) => setConsoleCommand(e.target.value)}
                                     onKeyDown={(e) => {
@@ -3206,9 +3441,9 @@ export default function App() {
                                  <button
                                     onClick={() => handleSendCommand(selectedInstance?.id || "", consoleCommand)}
                                     disabled={isExecuting}
-                                    className="px-4 py-2 bg-[#323232] hover:bg-[#404040] rounded text-xs font-bold text-neutral-400 transition-colors flex items-center gap-2"
+                                    className="px-4 py-2 bg-[#2D2D2D] hover:bg-[#3D3D3D] rounded text-xs font-bold text-neutral-300 hover:text-white transition-colors flex items-center gap-2 border border-[#404040] cursor-pointer"
                                  >
-                                    {isExecuting ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Terminal className="w-3 h-3" />}
+                                    {isExecuting ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#3E8ED0]" /> : <Terminal className="w-3.5 h-3.5" />}
                                     Send
                                  </button>
                               </div>
