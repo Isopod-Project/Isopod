@@ -5,13 +5,16 @@ services:
     build: .
     image: isopod:latest
     container_name: isopod
+    privileged: true
     restart: unless-stopped
     ports:
       - "8000:8000"
+      - "25565-25585:25565-25585"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Critical: Host and internal path must match perfectly 
-      # so that compose up commands resolve relative paths on the host daemon natively!
-      - /DATA/AppData/isopod/servers:/DATA/AppData/isopod/servers
+      # Minecraft server instances and worlds
+      - /DATA/AppData/isopod/servers:/servers
+      # Caches pulled Docker images (like itzg/minecraft-server) on host storage
+      - /DATA/AppData/isopod/docker:/var/lib/docker
     environment:
-      - SERVERS_DIR=/DATA/AppData/isopod/servers
+      - SERVERS_DIR=/servers
+

@@ -78,6 +78,16 @@ except docker.errors.DockerException:
     print("Warning: Could not connect to Docker daemon.")
     docker_client = None
 
+def get_docker_client():
+    global docker_client
+    if docker_client is None:
+        try:
+            docker_client = docker.from_env()
+        except Exception:
+            pass
+    return docker_client
+
+
 class InstanceConfig(BaseModel):
     image: str
     environment: Dict[str, str]
@@ -250,17 +260,18 @@ def rename_group(group_name: str, req: RenameGroupRequest):
 @app.get("/api/instances/{instance_id}/status")
 async def get_instance_status(instance_id: str):
     """Pull real running status of the Docker containers for an instance."""
-    if not docker_client:
+    client = get_docker_client()
+    if not client:
         raise HTTPException(status_code=500, detail="Docker client not initialized")
 
     project_label_value = "".join(c for c in instance_id if c.isalnum() or c in ('-', '_')).lower()
     
     filters = {"label": f"com.docker.compose.project={project_label_value}"}
-    containers = docker_client.containers.list(all=True, filters=filters)
+    containers = client.containers.list(all=True, filters=filters)
     
     if not containers:
         filters = {"label": f"com.docker.compose.project={instance_id}"}
-        containers = docker_client.containers.list(all=True, filters=filters)
+        containers = client.containers.list(all=True, filters=filters)
 
     is_running = any(c.status == "running" for c in containers)
     
@@ -999,10 +1010,11 @@ def update_instance_users(
             
     # If container is running, execute commands to sync whitelist and ops
     is_running = False
-    if docker_client:
+    client = get_docker_client()
+    if client:
         try:
             c_name = f"isopod_{instance_id}"
-            c = docker_client.containers.get(c_name)
+            c = client.containers.get(c_name)
             is_running = c.status == "running"
         except: pass
         
@@ -1812,13 +1824,14 @@ def delete_instance(instance_id: str):
     subprocess.run(["docker", "compose", "down", "-v", "--remove-orphans", "--timeout", "5"], cwd=path, capture_output=True)
     
     # Direct fallback: Try to remove by name in case compose lost track
-    if docker_client:
+    client = get_docker_client()
+    if client:
         try:
             # The naming convention is isopod_{slug} 
             # Note: rename_instance also updates this, but instance_id is always the current slug.
             c_name = f"isopod_{instance_id}"
             try:
-                c = docker_client.containers.get(c_name)
+                c = client.containers.get(c_name)
                 c.remove(force=True)
             except: pass
         except: pass

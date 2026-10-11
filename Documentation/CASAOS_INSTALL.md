@@ -27,15 +27,17 @@ services:
   isopod:
     image: isopod:latest
     container_name: isopod
+    privileged: true
     restart: unless-stopped
     network_mode: bridge
     ports:
       - "8000:8000"
+      - "25565-25585:25565-25585"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /DATA/AppData/isopod/servers:/DATA/AppData/isopod/servers
+      - /DATA/AppData/isopod/servers:/servers
+      - /DATA/AppData/isopod/docker:/var/lib/docker
     environment:
-      - SERVERS_DIR=/DATA/AppData/isopod/servers
+      - SERVERS_DIR=/servers
     x-casaos:
       title: Isopod
       icon: https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png
@@ -51,13 +53,19 @@ services:
 ## 3. Configuration Details (Manual Check)
 If you prefer to fill out the form manually, ensure these settings are correct:
 
-- **Web UI Port**: `8000`
-- **Port Mapping**: Host `8000` -> Container `8000`
+- **Privileged Mode**: `Enabled` (Required for internal Docker-in-Docker isolation)
+- **Web UI Port**: `8000` (Host `8000` -> Container `8000`)
+- **Game Server Ports**: Host `25565-25585` -> Container `25565-25585` (Allows up to 21 concurrent server instances)
 - **Volumes**:
-    - `/var/run/docker.sock` -> `/var/run/docker.sock` (Required for Docker-in-Docker support)
-    - `/DATA/AppData/isopod/servers` -> `/DATA/AppData/isopod/servers` (Stores your MC servers)
+    - `/DATA/AppData/isopod/servers` -> `/servers` (Stores your Minecraft servers and world data)
+    - `/DATA/AppData/isopod/docker` -> `/var/lib/docker` (Persists downloaded server images and caches)
 - **Environment Variables**:
-    - `SERVERS_DIR`: `/DATA/AppData/isopod/servers`
+    - `SERVERS_DIR`: `/servers`
+
+> [!NOTE]
+> **Single App Dashboard Experience**:
+> Unlike older versions, Isopod no longer mounts the host `/var/run/docker.sock`. Because Isopod manages its server containers internally, individual Minecraft worlds will no longer spawn separate "Legacy app (To be rebuilt)" entries on your CasaOS home screen. Only the main Isopod application is displayed!
 
 ## 4. Accessing Isopod
 Once installed, the Isopod icon will appear on your dashboard. Clicking it will open the management interface at `http://your-server-ip:8000`.
+

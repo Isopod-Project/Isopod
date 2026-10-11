@@ -11,9 +11,14 @@ RUN npm run build
 FROM python:3.11-slim
 WORKDIR /app
 
-# Install Docker CLI and Docker Compose v2 for subprocess invocation
+# Install Docker CLI, Docker Daemon (docker.io), iptables, and Docker Compose v2 for DinD invocation
 RUN apt-get update && \
-    apt-get install -y docker.io curl && \
+    apt-get install -y --no-install-recommends \
+        docker.io \
+        iptables \
+        kmod \
+        ca-certificates \
+        curl && \
     rm -rf /var/lib/apt/lists/* && \
     mkdir -p /usr/lib/docker/cli-plugins/ && \
     curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" -o /usr/lib/docker/cli-plugins/docker-compose && \
@@ -28,7 +33,13 @@ COPY backend/ backend/
 # Copy compiled frontend securely into place
 COPY --from=frontend-builder /app/dist /app/frontend/dist
 
+# Entrypoint for Docker-in-Docker isolation
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 EXPOSE 8000
 ENV SERVERS_DIR=/servers
 
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
