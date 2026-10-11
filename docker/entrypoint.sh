@@ -21,8 +21,9 @@ if [ "$USE_EXTERNAL_DOCKER" = "false" ]; then
     rm -f /var/run/docker.pid /var/run/docker.sock /var/run/docker/containerd/containerd.pid 2>/dev/null || true
     mkdir -p /var/log /var/run
 
-    # Start dockerd in background
-    dockerd > /var/log/dockerd.log 2>&1 &
+    # Start dockerd in background with isolated non-overlapping subnet to avoid collision with host bridge
+    DOCKERD_FLAGS="--bip=172.28.0.1/16 --default-address-pools base=172.29.0.0/16,size=24"
+    dockerd $DOCKERD_FLAGS > /var/log/dockerd.log 2>&1 &
     DOCKERD_PID=$!
 
     echo "⏳ Waiting for internal Docker daemon to become ready..."
@@ -46,8 +47,9 @@ if [ "$USE_EXTERNAL_DOCKER" = "false" ]; then
         kill -9 $DOCKERD_PID 2>/dev/null || true
         sleep 2
         rm -f /var/run/docker.pid /var/run/docker.sock 2>/dev/null || true
-        dockerd --storage-driver=vfs > /var/log/dockerd.log 2>&1 &
+        dockerd $DOCKERD_FLAGS --storage-driver=vfs > /var/log/dockerd.log 2>&1 &
         DOCKERD_PID=$!
+
 
         WAIT_COUNT=0
         while [ $WAIT_COUNT -lt 20 ]; do
