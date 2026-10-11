@@ -5799,16 +5799,16 @@ export default function App() {
             </div>
          )}
          {dialog && (
-            <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-               <div className="bg-[#2A2A2A] border border-[#3A3A3A] rounded-lg shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
-                  <div className="px-6 py-4 border-b border-[#323232] bg-[#242424] flex items-center gap-3">
+            <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+               <div className="bg-[#2A2A2A] border border-[#3A3A3A] rounded-lg shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden animate-in zoom-in duration-200">
+                  <div className="px-6 py-4 border-b border-[#323232] bg-[#242424] flex items-center gap-3 shrink-0">
                      {dialog.type === 'alert' && <AlertCircle className="w-5 h-5 text-amber-500" />}
                      {dialog.type === 'confirm' && <HelpCircle className="w-5 h-5 text-[#3E8ED0]" />}
                      {dialog.type === 'prompt' && <Edit className="w-5 h-5 text-[#3E8ED0]" />}
                      <h3 className="font-bold text-white tracking-wide uppercase text-[10px]">{dialog.title}</h3>
                   </div>
-                  <div className="p-6">
-                     <p className="text-neutral-300 text-sm leading-relaxed mb-4">{dialog.message}</p>
+                  <div className="p-6 overflow-y-auto max-h-[60vh] scrollbar-custom">
+                     <p className="text-neutral-300 text-sm leading-relaxed mb-4 whitespace-pre-wrap break-words">{dialog.message}</p>
                      {dialog.type === 'prompt' && (
                         <input
                            autoFocus

@@ -514,7 +514,10 @@ async def start_instance(instance_id: str):
     # Start all services
     result = subprocess.run(["docker", "compose", "up", "-d"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
-        raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
+        raw_lines = [l.strip() for l in result.stderr.splitlines() if l.strip()]
+        err_lines = [l for l in raw_lines if not any(k in l for k in ["Downloading", "Extracting", "Waiting", "Pulling fs layer", "Verifying Checksum", "Download complete", "Pull complete"])]
+        clean_err = "\n".join(err_lines).strip() or "\n".join(raw_lines[-5:]).strip() or "Unknown error"
+        raise HTTPException(status_code=400, detail=f"Docker Compose failed: {clean_err}")
     return {"message": "Started"}
 
 @app.post("/api/instances/{instance_id}/stop")
@@ -523,7 +526,8 @@ def stop_instance(instance_id: str):
     # Use 'down' instead of 'stop' to remove the container, which clears Docker logs
     result = subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
-        raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
+        clean_err = result.stderr.strip() or "Unknown error"
+        raise HTTPException(status_code=400, detail=f"Docker Compose failed: {clean_err}")
     return {"message": "Stopped"}
 
 @app.post("/api/instances/{instance_id}/kill")
@@ -531,7 +535,8 @@ def kill_instance(instance_id: str):
     path = get_instance_path(instance_id)
     result = subprocess.run(["docker", "compose", "kill"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
-        raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
+        clean_err = result.stderr.strip() or "Unknown error"
+        raise HTTPException(status_code=400, detail=f"Docker Compose failed: {clean_err}")
     return {"message": "Killed"}
 
 @app.get("/api/instances/{instance_id}/config")

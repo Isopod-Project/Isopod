@@ -21,9 +21,15 @@ if [ "$USE_EXTERNAL_DOCKER" = "false" ]; then
     rm -f /var/run/docker.pid /var/run/docker.sock /var/run/docker/containerd/containerd.pid 2>/dev/null || true
     mkdir -p /var/log /var/run
 
+    # Determine storage driver: prefer fuse-overlayfs if available to avoid DinD vfs disk bloat
+    DRIVER_FLAG=""
+    if which fuse-overlayfs >/dev/null 2>&1; then
+        DRIVER_FLAG="--storage-driver=fuse-overlayfs"
+    fi
+
     # Start dockerd in background with isolated non-overlapping subnet to avoid collision with host bridge
     DOCKERD_FLAGS="--bip=172.28.0.1/16"
-    dockerd $DOCKERD_FLAGS > /var/log/dockerd.log 2>&1 &
+    dockerd $DOCKERD_FLAGS $DRIVER_FLAG > /var/log/dockerd.log 2>&1 &
 
     DOCKERD_PID=$!
 
@@ -42,13 +48,19 @@ if [ "$USE_EXTERNAL_DOCKER" = "false" ]; then
     done
 
     if [ "$DOCKER_READY" = "false" ]; then
-        echo "⚠️  dockerd did not start cleanly with default driver. Checking log:"
+        echo "⚠️  dockerd did not start cleanly with initial driver. Checking log:"
         cat /var/log/dockerd.log || true
-        echo "🔄 Retrying dockerd with vfs storage driver fallback..."
+        echo "🔄 Retrying dockerd with fallback storage driver..."
         kill -9 $DOCKERD_PID 2>/dev/null || true
+        pkill -9 containerd 2>/dev/null || true
         sleep 2
-        rm -f /var/run/docker.pid /var/run/docker.sock 2>/dev/null || true
-        dockerd $DOCKERD_FLAGS --storage-driver=vfs > /var/log/dockerd.log 2>&1 &
+        rm -f /var/run/docker.pid /var/run/docker.sock /var/run/docker/containerd/containerd.pid 2>/dev/null || true
+        if [ "$DRIVER_FLAG" = "" ] && which fuse-overlayfs >/dev/null 2>&1; then
+            FALLBACK_DRIVER="--storage-driver=fuse-overlayfs"
+        else
+            FALLBACK_DRIVER="--storage-driver=vfs"
+        fi
+        dockerd $DOCKERD_FLAGS $FALLBACK_DRIVER > /var/log/dockerd.log 2>&1 &
         DOCKERD_PID=$!
 
 
