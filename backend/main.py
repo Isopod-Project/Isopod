@@ -2515,6 +2515,444 @@ async def get_mod_conflicts(provider: str, project_id: str, current_mods: str = 
     return {"conflicts": []}
 
 
+# ==========================================
+# Instance Mods Management (Prism Launcher Style)
+# ==========================================
+
+def get_instance_mods_dir(instance_id: str) -> str:
+    base = get_instance_path(instance_id)
+    # Check data/mods first (standard Docker mount)
+    data_mods = os.path.join(base, "data", "mods")
+    if os.path.exists(data_mods):
+        return data_mods
+    # Fallback to base/mods
+    plain_mods = os.path.join(base, "mods")
+    if os.path.exists(plain_mods):
+        return plain_mods
+    # Default to data/mods
+    os.makedirs(data_mods, exist_ok=True)
+    return data_mods
+
+
+def parse_mod_jar_metadata(jar_path: str) -> dict:
+    meta = {
+        "id": None,
+        "name": None,
+        "version": None,
+        "summary": None,
+        "url": None,
+        "icon_url": None,
+    }
+    try:
+        with zipfile.ZipFile(jar_path, 'r') as z:
+            names = set(z.namelist())
+            if "fabric.mod.json" in names:
+                data = json.loads(z.read("fabric.mod.json").decode('utf-8', errors='ignore'))
+                meta["id"] = data.get("id")
+                meta["name"] = data.get("name") or data.get("id")
+                meta["version"] = str(data.get("version", ""))
+                meta["summary"] = data.get("description")
+                contact = data.get("contact", {})
+                meta["url"] = contact.get("homepage") or contact.get("sources")
+            elif "quilt.mod.json" in names:
+                data = json.loads(z.read("quilt.mod.json").decode('utf-8', errors='ignore'))
+                q_meta = data.get("quilt_loader", {}).get("metadata", {})
+                meta["id"] = data.get("quilt_loader", {}).get("id")
+                meta["name"] = q_meta.get("name") or meta["id"]
+                meta["version"] = str(data.get("quilt_loader", {}).get("version", ""))
+                meta["summary"] = q_meta.get("description")
+            elif "META-INF/mods.toml" in names:
+                content = z.read("META-INF/mods.toml").decode('utf-8', errors='ignore')
+                import re
+                m_id = re.search(r'modId\s*=\s*["\']([^"\']+)["\']', content)
+                m_name = re.search(r'displayName\s*=\s*["\']([^"\']+)["\']', content)
+                m_ver = re.search(r'version\s*=\s*["\']([^"\']+)["\']', content)
+                m_desc = re.search(r'description\s*=\s*["\']([^"\']+)["\']', content)
+                if m_id: meta["id"] = m_id.group(1)
+                if m_name: meta["name"] = m_name.group(1)
+                if m_ver: meta["version"] = m_ver.group(1)
+                if m_desc: meta["summary"] = m_desc.group(1)
+            elif "mcmod.info" in names:
+                data = json.loads(z.read("mcmod.info").decode('utf-8', errors='ignore'))
+                if isinstance(data, list) and data:
+                    item = data[0]
+                    meta["id"] = item.get("modid")
+                    meta["name"] = item.get("name") or item.get("modid")
+                    meta["version"] = str(item.get("version", ""))
+                    meta["summary"] = item.get("description")
+                    meta["url"] = item.get("url")
+    except Exception as e:
+        pass
+
+    filename = os.path.basename(jar_path)
+    clean_name = filename
+    if clean_name.endswith(".disabled"):
+        clean_name = clean_name[:-9]
+    if clean_name.endswith(".jar"):
+        clean_name = clean_name[:-4]
+
+    if not meta["name"]:
+        import re
+        m = re.match(r"^([A-Za-z0-9_\s\+\-]+?)[-_]([vV]?\d+.*)$", clean_name)
+        if m:
+            meta["name"] = m.group(1).replace("-", " ").replace("_", " ").title()
+            if not meta["version"]:
+                meta["version"] = m.group(2)
+        else:
+            meta["name"] = clean_name.replace("-", " ").replace("_", " ").title()
+
+    if not meta["id"]:
+        meta["id"] = clean_name.lower().replace(" ", "-")
+
+    return meta
+
+
+@app.get("/api/instances/{instance_id}/mods")
+async def list_instance_mods(instance_id: str):
+    """List all mods installed in an instance with enable/disable state and file metadata."""
+    from datetime import datetime
+    mods = []
+    seen_ids = set()
+    mods_dir = get_instance_mods_dir(instance_id)
+
+    # 1. Physical mod files on disk
+    if os.path.exists(mods_dir):
+        for entry in os.scandir(mods_dir):
+            if not entry.is_file():
+                continue
+            fname = entry.name
+            is_enabled = False
+            if fname.lower().endswith(".jar"):
+                is_enabled = True
+            elif fname.lower().endswith(".jar.disabled"):
+                is_enabled = False
+            else:
+                continue
+
+            try:
+                st = entry.stat()
+                mtime_str = datetime.fromtimestamp(st.st_mtime).strftime("%m/%d/%y %H:%M")
+                jar_meta = parse_mod_jar_metadata(entry.path)
+
+                mod_id = jar_meta["id"] or fname
+                seen_ids.add(mod_id.lower())
+                seen_ids.add(fname.lower())
+
+                # Check if we have cached Modrinth / Curseforge metadata
+                cached = mod_metadata_cache.get(mod_id.lower())
+                icon_url = jar_meta.get("icon_url") or (cached.get("icon_url") if cached else None)
+                url = jar_meta.get("url") or (cached.get("url") if cached else None)
+                summary = jar_meta.get("summary") or (cached.get("summary") if cached else None)
+
+                mods.append({
+                    "filename": fname,
+                    "id": mod_id,
+                    "name": jar_meta["name"] or fname,
+                    "version": jar_meta["version"] or "-",
+                    "enabled": is_enabled,
+                    "size": st.st_size,
+                    "modified": st.st_mtime,
+                    "modified_str": mtime_str,
+                    "icon_url": icon_url,
+                    "summary": summary,
+                    "url": url,
+                    "provider": cached.get("provider", "local") if cached else "local",
+                    "source": "file"
+                })
+            except Exception as e:
+                print(f"Error reading mod file {fname}: {e}")
+
+    # 2. Correlate with docker-compose.yml environment mods (Modrinth / Curseforge)
+    try:
+        base_path = get_instance_path(instance_id)
+        compose_path = os.path.join(base_path, "docker-compose.yml")
+        if os.path.exists(compose_path):
+            with open(compose_path, 'r') as f:
+                cdata = yaml.safe_load(f) or {}
+            env = cdata.get("services", {}).get("mc", {}).get("environment", {})
+            env_dict = {}
+            if isinstance(env, list):
+                for item in env:
+                    if "=" in item:
+                        k, v = item.split("=", 1)
+                        env_dict[k] = v
+            elif isinstance(env, dict):
+                env_dict = env
+
+            # Modrinth projects
+            m_enabled = [x.strip() for x in env_dict.get("MODRINTH_PROJECTS", "").split(",") if x.strip()]
+            m_disabled = [x.strip() for x in env_dict.get("MODRINTH_DISABLED", "").split(",") if x.strip()]
+            for mid in m_enabled + m_disabled:
+                if mid.lower() not in seen_ids:
+                    seen_ids.add(mid.lower())
+                    cached = mod_metadata_cache.get(mid.lower())
+                    name = cached.get("name", mid) if cached else mid
+                    version = cached.get("latest_version", "-") if cached else "-"
+                    icon_url = cached.get("icon_url") if cached else None
+                    url = cached.get("url", f"https://modrinth.com/mod/{mid}") if cached else f"https://modrinth.com/mod/{mid}"
+                    summary = cached.get("summary") if cached else None
+                    is_en = mid in m_enabled
+                    mods.append({
+                        "filename": f"{mid}.jar" if is_en else f"{mid}.jar.disabled",
+                        "id": mid,
+                        "name": name,
+                        "version": version,
+                        "enabled": is_en,
+                        "size": 0,
+                        "modified": 0,
+                        "modified_str": "Configured",
+                        "icon_url": icon_url,
+                        "summary": summary,
+                        "url": url,
+                        "provider": "modrinth",
+                        "source": "env"
+                    })
+
+            # CurseForge projects
+            cf_enabled = [x.strip() for x in env_dict.get("CF_PROJECTS", "").split(",") if x.strip()]
+            cf_disabled = [x.strip() for x in env_dict.get("CF_DISABLED", "").split(",") if x.strip()]
+            for cid in cf_enabled + cf_disabled:
+                if cid.lower() not in seen_ids:
+                    seen_ids.add(cid.lower())
+                    cached = mod_metadata_cache.get(cid.lower())
+                    name = cached.get("name", f"CF #{cid}") if cached else f"CF #{cid}"
+                    version = cached.get("latest_version", "-") if cached else "-"
+                    icon_url = cached.get("icon_url") if cached else None
+                    url = cached.get("url") if cached else None
+                    summary = cached.get("summary") if cached else None
+                    is_en = cid in cf_enabled
+                    mods.append({
+                        "filename": f"cf-{cid}.jar" if is_en else f"cf-{cid}.jar.disabled",
+                        "id": cid,
+                        "name": name,
+                        "version": version,
+                        "enabled": is_en,
+                        "size": 0,
+                        "modified": 0,
+                        "modified_str": "Configured",
+                        "icon_url": icon_url,
+                        "summary": summary,
+                        "url": url,
+                        "provider": "curseforge",
+                        "source": "env"
+                    })
+    except Exception as e:
+        print(f"Error checking compose env mods: {e}")
+
+    mods.sort(key=lambda x: x["name"].lower())
+    return mods
+
+
+class ToggleModRequest(BaseModel):
+    filename: Optional[str] = None
+    mod_id: Optional[str] = None
+    enabled: bool
+
+
+@app.post("/api/instances/{instance_id}/mods/toggle")
+def toggle_instance_mod(instance_id: str, req: ToggleModRequest):
+    """Toggle a mod between enabled (.jar) and disabled (.jar.disabled) state."""
+    mods_dir = get_instance_mods_dir(instance_id)
+    target_file = None
+    new_filename = None
+
+    # Check disk file
+    if req.filename:
+        full_path = os.path.join(mods_dir, req.filename)
+        if os.path.exists(full_path):
+            target_file = full_path
+
+    # If filename didn't match directly, try by mod_id or stem
+    if not target_file and os.path.exists(mods_dir):
+        for entry in os.scandir(mods_dir):
+            stem = entry.name.replace(".disabled", "").replace(".jar", "")
+            if req.filename and stem.lower() in req.filename.lower():
+                target_file = entry.path
+                break
+            if req.mod_id and stem.lower() == req.mod_id.lower():
+                target_file = entry.path
+                break
+
+    if target_file:
+        cur_name = os.path.basename(target_file)
+        if req.enabled:
+            # Enabling: remove .disabled
+            if cur_name.endswith(".disabled"):
+                new_name = cur_name[:-9]
+                dest = os.path.join(mods_dir, new_name)
+                os.rename(target_file, dest)
+                new_filename = new_name
+            else:
+                new_filename = cur_name
+        else:
+            # Disabling: add .disabled
+            if not cur_name.endswith(".disabled"):
+                new_name = cur_name + ".disabled"
+                dest = os.path.join(mods_dir, new_name)
+                os.rename(target_file, dest)
+                new_filename = new_name
+            else:
+                new_filename = cur_name
+
+    # Also update compose environment variables if tracked there
+    try:
+        base_path = get_instance_path(instance_id)
+        compose_path = os.path.join(base_path, "docker-compose.yml")
+        if os.path.exists(compose_path):
+            with open(compose_path, 'r') as f:
+                cdata = yaml.safe_load(f) or {}
+            service = cdata.get("services", {}).get("mc", {})
+            env = service.get("environment")
+
+            # Helper to update comma lists in env
+            def move_in_env(enabled_key, disabled_key, target_id):
+                nonlocal env
+                is_list = isinstance(env, list)
+                env_map = {}
+                if is_list:
+                    for item in env:
+                        if "=" in item:
+                            k, v = item.split("=", 1)
+                            env_map[k] = v
+                elif isinstance(env, dict):
+                    env_map = env
+
+                en_list = [x.strip() for x in env_map.get(enabled_key, "").split(",") if x.strip()]
+                dis_list = [x.strip() for x in env_map.get(disabled_key, "").split(",") if x.strip()]
+
+                matched = None
+                for candidate in en_list + dis_list:
+                    if candidate.lower() == target_id.lower():
+                        matched = candidate
+                        break
+
+                if matched:
+                    if req.enabled:
+                        dis_list = [x for x in dis_list if x != matched]
+                        if matched not in en_list:
+                            en_list.append(matched)
+                    else:
+                        en_list = [x for x in en_list if x != matched]
+                        if matched not in dis_list:
+                            dis_list.append(matched)
+
+                    env_map[enabled_key] = ",".join(en_list)
+                    env_map[disabled_key] = ",".join(dis_list)
+
+                    if is_list:
+                        new_env_list = []
+                        for k, v in env_map.items():
+                            new_env_list.append(f"{k}={v}")
+                        service["environment"] = new_env_list
+                    else:
+                        service["environment"] = env_map
+
+            target_identifier = req.mod_id or (req.filename.replace(".disabled", "").replace(".jar", "") if req.filename else "")
+            if target_identifier:
+                move_in_env("MODRINTH_PROJECTS", "MODRINTH_DISABLED", target_identifier)
+                move_in_env("CF_PROJECTS", "CF_DISABLED", target_identifier)
+
+            with open(compose_path, 'w') as f:
+                yaml.dump(cdata, f, default_flow_style=False, sort_keys=False)
+    except Exception as e:
+        print(f"Error updating compose for mod toggle: {e}")
+
+    return {"message": "Mod state updated successfully", "filename": new_filename, "enabled": req.enabled}
+
+
+class DeleteModRequest(BaseModel):
+    filename: Optional[str] = None
+    mod_id: Optional[str] = None
+
+
+@app.post("/api/instances/{instance_id}/mods/delete")
+@app.delete("/api/instances/{instance_id}/mods")
+def delete_instance_mod(instance_id: str, req: DeleteModRequest):
+    """Delete a mod file from an instance and remove it from compose configuration."""
+    mods_dir = get_instance_mods_dir(instance_id)
+    deleted = False
+
+    # Check file
+    if req.filename:
+        for fname in [req.filename, req.filename + ".disabled", req.filename.replace(".disabled", "")]:
+            p = os.path.join(mods_dir, fname)
+            if os.path.exists(p) and os.path.isfile(p):
+                os.remove(p)
+                deleted = True
+                break
+
+    if not deleted and req.mod_id and os.path.exists(mods_dir):
+        for entry in os.scandir(mods_dir):
+            stem = entry.name.replace(".disabled", "").replace(".jar", "")
+            if stem.lower() == req.mod_id.lower():
+                os.remove(entry.path)
+                deleted = True
+                break
+
+    # Remove from docker-compose.yml
+    try:
+        base_path = get_instance_path(instance_id)
+        compose_path = os.path.join(base_path, "docker-compose.yml")
+        if os.path.exists(compose_path):
+            with open(compose_path, 'r') as f:
+                cdata = yaml.safe_load(f) or {}
+            service = cdata.get("services", {}).get("mc", {})
+            env = service.get("environment")
+
+            is_list = isinstance(env, list)
+            env_map = {}
+            if is_list:
+                for item in env:
+                    if "=" in item:
+                        k, v = item.split("=", 1)
+                        env_map[k] = v
+            elif isinstance(env, dict):
+                env_map = env
+
+            target = (req.mod_id or req.filename or "").replace(".disabled", "").replace(".jar", "").lower()
+
+            for key in ["MODRINTH_PROJECTS", "MODRINTH_DISABLED", "CF_PROJECTS", "CF_DISABLED"]:
+                if key in env_map:
+                    items = [x.strip() for x in env_map[key].split(",") if x.strip()]
+                    items = [x for x in items if x.lower() != target]
+                    env_map[key] = ",".join(items)
+
+            if is_list:
+                new_env = [f"{k}={v}" for k, v in env_map.items()]
+                service["environment"] = new_env
+            else:
+                service["environment"] = env_map
+
+            with open(compose_path, 'w') as f:
+                yaml.dump(cdata, f, default_flow_style=False, sort_keys=False)
+            deleted = True
+    except Exception as e:
+        print(f"Error removing mod from compose: {e}")
+
+    return {"message": "Mod deleted successfully", "deleted": deleted}
+
+
+@app.post("/api/instances/{instance_id}/mods/upload")
+async def upload_instance_mod(instance_id: str, file: UploadFile = File(...)):
+    """Upload a custom mod jar or zip to the instance mods directory."""
+    if not file.filename.lower().endswith((".jar", ".zip", ".disabled")):
+        raise HTTPException(status_code=400, detail="Only .jar or .zip mod files are allowed")
+
+    mods_dir = get_instance_mods_dir(instance_id)
+    dest_path = os.path.join(mods_dir, file.filename)
+
+    with open(dest_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    meta = parse_mod_jar_metadata(dest_path)
+    return {
+        "message": f"Mod {file.filename} uploaded successfully",
+        "filename": file.filename,
+        "name": meta["name"],
+        "version": meta["version"]
+    }
+
+
 @app.get("/api/files")
 def list_global_files(path: str = "."):
     """List files within the SERVERS_DIR."""
