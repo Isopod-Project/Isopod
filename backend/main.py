@@ -1249,9 +1249,10 @@ async def get_mc_versions():
         return data
 
 @app.get("/api/meta/loaders/{loader}")
-async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
+async def get_loader_versions(loader: str, mc_version: Optional[str] = None, game_version: Optional[str] = None):
     """Fetch available versions for a specific mod loader, optionally filtered by MC version."""
     loader = loader.lower()
+    mc_version = mc_version or game_version
     print(f"DEBUG: Fetching {loader} versions for MC={mc_version}")
     headers = {"User-Agent": "Isopod-Server-Manager/1.0 (https://github.com/Isopod-Project/Isopod)"}
     try:
@@ -1586,7 +1587,7 @@ async def create_instance(req: CreateInstanceRequest):
 
     env = compose_content["services"]["mc"]["environment"]
     if w_enabled:
-        env.append("ENABLE_WHITELIST=TRUE")
+        env.append("ENABLE_WHITELIST=true")
         if w_users:
             env.append(f"WHITELIST={','.join(w_users)}")
 
@@ -1680,17 +1681,17 @@ async def create_instance(req: CreateInstanceRequest):
     with open(os.path.join(path, "docker-compose.yml"), "w") as f:
         yaml.dump(compose_content, f, default_flow_style=False)
     
-    # Pre-initialize whitelist.json if whitelist users are provided
+    # Pre-initialize users.json if whitelist users are provided
     if w_enabled and w_users:
         data_dir = os.path.join(path, "data")
         os.makedirs(data_dir, exist_ok=True)
-        wl_path = os.path.join(data_dir, "whitelist.json")
+        users_path = os.path.join(data_dir, "users.json")
         try:
-            wl_data = [{"name": u} for u in w_users]
-            with open(wl_path, "w") as wf:
-                json.dump(wl_data, wf, indent=2)
+            users_data = [{"name": u, "uuid": "", "level": 0, "is_op": False, "whitelisted": True, "active": True} for u in w_users]
+            with open(users_path, "w") as uf:
+                json.dump(users_data, uf, indent=2)
         except Exception as e:
-            print(f"Error initializing whitelist.json: {e}")
+            print(f"Error initializing users.json: {e}")
 
     # Save metadata
     save_instance_meta(path, {"group": req.group or "No group"})

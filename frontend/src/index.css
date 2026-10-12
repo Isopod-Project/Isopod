@@ -5,54 +5,111 @@ body {
     color: #E0E0E0;
     margin: 0;
     padding: 0;
-    transition: background-color 0.2s ease, color 0.2s ease;
+    transition: background-color 0.15s ease, color 0.15s ease;
 }
 
-/* OLED Black Theme */
-html[data-theme="oled"] body,
-html[data-theme="oled"] {
-    background-color: #000000 !important;
-}
-html[data-theme="oled"] .bg-\[\#242424\] {
-    background-color: #0c0c0c !important;
-}
-html[data-theme="oled"] .bg-\[\#1A1A1A\] {
-    background-color: #050505 !important;
-}
-html[data-theme="oled"] .bg-\[\#1E1E1E\] {
-    background-color: #080808 !important;
-}
-html[data-theme="oled"] .bg-\[\#2B2B2B\],
-html[data-theme="oled"] .bg-\[\#2A2A2A\] {
-    background-color: #121212 !important;
+/* ==========================================================================
+   Light Mode Theme
+   ========================================================================== */
+html[data-theme="light"],
+html[data-theme="light"] body {
+    background-color: #f1f5f9 !important;
+    color: #0f172a !important;
 }
 
-/* Light Theme */
-html[data-theme="light"] body,
-html[data-theme="light"] {
-    background-color: #f3f4f6 !important;
-    color: #1f2937 !important;
-}
+/* Main structural elements */
+html[data-theme="light"] header,
+html[data-theme="light"] aside,
 html[data-theme="light"] .bg-\[\#242424\],
-html[data-theme="light"] .bg-\[\#1A1A1A\],
-html[data-theme="light"] .bg-\[\#1E1E1E\],
 html[data-theme="light"] .bg-\[\#2B2B2B\],
-html[data-theme="light"] .bg-\[\#2A2A2A\] {
+html[data-theme="light"] .bg-\[\#2A2A2A\],
+html[data-theme="light"] .bg-\[\#1E1E1E\],
+html[data-theme="light"] .bg-\[\#2D2D2D\] {
     background-color: #ffffff !important;
-    color: #1f2937 !important;
+    color: #0f172a !important;
 }
-html[data-theme="light"] .text-white {
-    color: #111827 !important;
+
+html[data-theme="light"] main {
+    background-color: #f8fafc !important;
 }
+
+/* Secondary panels, tables, inner containers */
+html[data-theme="light"] .bg-\[\#1A1A1A\],
+html[data-theme="light"] .bg-\[\#141414\],
+html[data-theme="light"] .bg-\[\#0F0F0F\],
+html[data-theme="light"] .bg-\[\#222\],
+html[data-theme="light"] .bg-\[\#282828\],
+html[data-theme="light"] .bg-\[\#181818\],
+html[data-theme="light"] .bg-\[\#1F1F1F\],
+html[data-theme="light"] .bg-\[\#3B3B3B\] {
+    background-color: #f1f5f9 !important;
+    color: #0f172a !important;
+}
+
+/* Inputs, selects, and textareas */
+html[data-theme="light"] input,
+html[data-theme="light"] select,
+html[data-theme="light"] textarea {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    border-color: #cbd5e1 !important;
+}
+
+html[data-theme="light"] .bg-\[\#323232\],
+html[data-theme="light"] .bg-\[\#333\] {
+    background-color: #e2e8f0 !important;
+    color: #1e293b !important;
+}
+
+/* Hover surfaces */
+html[data-theme="light"] .hover\:bg-\[\#323232\]:hover,
+html[data-theme="light"] .hover\:bg-\[\#3A3A3A\]:hover,
+html[data-theme="light"] .hover\:bg-\[\#4A4A4A\]:hover,
+html[data-theme="light"] .hover\:bg-\[\#404040\]:hover,
+html[data-theme="light"] .hover\:bg-\[\#282828\]:hover,
+html[data-theme="light"] .hover\:bg-\[\#222\]:hover,
+html[data-theme="light"] .hover\:bg-\[\#333\]:hover {
+    background-color: #e2e8f0 !important;
+    color: #0f172a !important;
+}
+
+/* Text colors */
+html[data-theme="light"] .text-white,
+html[data-theme="light"] .text-\[\#E0E0E0\],
+html[data-theme="light"] .text-neutral-100,
+html[data-theme="light"] .text-neutral-200,
+html[data-theme="light"] .text-neutral-300 {
+    color: #0f172a !important;
+}
+
 html[data-theme="light"] .text-neutral-400,
-html[data-theme="light"] .text-neutral-500,
-html[data-theme="light"] .text-neutral-600 {
-    color: #4b5563 !important;
+html[data-theme="light"] .text-neutral-500 {
+    color: #475569 !important;
 }
+
+html[data-theme="light"] .text-neutral-600 {
+    color: #64748b !important;
+}
+
+/* Border overrides */
 html[data-theme="light"] .border-\[\#333\],
 html[data-theme="light"] .border-\[\#323232\],
-html[data-theme="light"] .border-\[\#3A3A3A\] {
-    border-color: #e5e7eb !important;
+html[data-theme="light"] .border-\[\#3A3A3A\],
+html[data-theme="light"] .border-\[\#4A4A4A\],
+html[data-theme="light"] .border-\[\#404040\],
+html[data-theme="light"] .border-\[\#444\],
+html[data-theme="light"] .border-\[\#282828\],
+html[data-theme="light"] .border-\[\#2A2A2A\],
+html[data-theme="light"] .border-\[\#1A1A1A\],
+html[data-theme="light"] .divide-\[\#1A1A1A\] > :not([hidden]) ~ :not([hidden]),
+html[data-theme="light"] .divide-\[\#333\] > :not([hidden]) ~ :not([hidden]) {
+    border-color: #e2e8f0 !important;
+}
+
+/* Modal overlays */
+html[data-theme="light"] .bg-black\/70,
+html[data-theme="light"] .bg-black\/75 {
+    background-color: rgba(15, 23, 42, 0.4) !important;
 }
 
 @keyframes slideInFromTop {

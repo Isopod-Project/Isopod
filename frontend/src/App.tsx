@@ -122,6 +122,10 @@ export default function App() {
    const [newGamemode, setNewGamemode] = useState("survival");
    const [newGenerateStructures, setNewGenerateStructures] = useState(true);
    const [newMemory, setNewMemory] = useState("1G");
+   // Whitelist states for Add Modal
+   const [modalWhitelistEnabled, setModalWhitelistEnabled] = useState(false);
+   const [modalWhitelistUsers, setModalWhitelistUsers] = useState<string[]>([]);
+   const [modalWhitelistUserDraft, setModalWhitelistUserDraft] = useState("");
 
    // Edit Modal states
    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -591,8 +595,8 @@ export default function App() {
             gamemode: newGamemode,
             generate_structures: newGenerateStructures,
             memory: newMemory || globalSettings.defaultMemory || "1G",
-            whitelist_enabled: globalSettings.defaultWhitelistEnabled,
-            whitelist_users: globalSettings.defaultWhitelistUsers
+            whitelist_enabled: modalWhitelistEnabled,
+            whitelist_users: modalWhitelistUsers
          };
 
          const res = await fetch("/api/instances", {
@@ -612,7 +616,7 @@ export default function App() {
          setModpackVersions([]);
          setSelectedModpackVersion("");
          setSelectedAddVersion("latest");
-         setSelectedAddLoader(globalSettings.defaultLoader || "VANILLA");
+         setSelectedAddLoader((globalSettings.defaultLoader || "VANILLA").toUpperCase());
          setSelectedAddLoaderVersion("latest");
          setNewPort(globalSettings.defaultPort || "25565");
          setNewSeed("");
@@ -621,6 +625,9 @@ export default function App() {
          setNewGamemode("survival");
          setNewGenerateStructures(true);
          setNewMemory(globalSettings.defaultMemory || "1G");
+         setModalWhitelistEnabled(globalSettings.defaultWhitelistEnabled ?? false);
+         setModalWhitelistUsers([...(globalSettings.defaultWhitelistUsers || [])]);
+         setModalWhitelistUserDraft("");
 
          fetchInstances();
       } catch (e) {
@@ -814,7 +821,7 @@ export default function App() {
 
    const saveInstanceUsers = async (id: string) => {
       setIsUsersSaving(true);
-      const isWlOn = config.environment["ENABLE_WHITELIST"] === "true";
+      const isWlOn = config.environment["ENABLE_WHITELIST"]?.toLowerCase() === "true";
       try {
          const res = await fetch(`/api/instances/${id}/users`, {
             method: "PUT",
@@ -1738,7 +1745,9 @@ export default function App() {
             setGlobalSettings(data);
             if (data.defaultMemory) setNewMemory(data.defaultMemory);
             if (data.defaultPort) setNewPort(data.defaultPort);
-            if (data.defaultLoader) setSelectedAddLoader(data.defaultLoader);
+            if (data.defaultLoader) setSelectedAddLoader(data.defaultLoader.toUpperCase());
+            if (data.defaultWhitelistEnabled !== undefined) setModalWhitelistEnabled(data.defaultWhitelistEnabled);
+            if (data.defaultWhitelistUsers) setModalWhitelistUsers(data.defaultWhitelistUsers);
             if (data.showSnapshots !== undefined) {
                setVersionFilters(prev => ({ ...prev, Snapshots: !!data.showSnapshots }));
             }
@@ -1763,7 +1772,9 @@ export default function App() {
          }
          if (globalSettings.defaultMemory) setNewMemory(globalSettings.defaultMemory);
          if (globalSettings.defaultPort) setNewPort(globalSettings.defaultPort);
-         if (globalSettings.defaultLoader) setSelectedAddLoader(globalSettings.defaultLoader);
+         if (globalSettings.defaultLoader) setSelectedAddLoader(globalSettings.defaultLoader.toUpperCase());
+         if (globalSettings.defaultWhitelistEnabled !== undefined) setModalWhitelistEnabled(globalSettings.defaultWhitelistEnabled);
+         if (globalSettings.defaultWhitelistUsers) setModalWhitelistUsers(globalSettings.defaultWhitelistUsers);
       } catch (e) {
          console.error(e);
          await showAlert("Failed to save global settings", "Error");
@@ -1773,9 +1784,8 @@ export default function App() {
    };
 
    useEffect(() => {
-      if (globalSettings.theme) {
-         document.documentElement.setAttribute('data-theme', globalSettings.theme.toLowerCase());
-      }
+      const mode = (globalSettings.theme || "Dark").toLowerCase();
+      document.documentElement.setAttribute('data-theme', mode === "light" ? "light" : "dark");
    }, [globalSettings.theme]);
 
    const handleExportSystemLogs = () => {
@@ -2093,9 +2103,18 @@ export default function App() {
                      setAddTab("custom");
                      setNewName("");
                      setNewPort(globalSettings.defaultPort || "25565");
-                     setSelectedAddVersion("latest");
-                     setSelectedAddLoader(globalSettings.defaultLoader || "VANILLA");
+                     const defaultVer = mcVersions.find((v: any) => v.type === 'release')?.id || "latest";
+                     setSelectedAddVersion(defaultVer);
+                     const initialLoader = (globalSettings.defaultLoader || "VANILLA").toUpperCase();
+                     setSelectedAddLoader(initialLoader);
+                     setSelectedAddLoaderVersion("latest");
+                     if (initialLoader !== "VANILLA") {
+                        fetchLoaderVersions(initialLoader, defaultVer === "latest" ? "" : defaultVer);
+                     }
                      setNewMemory(globalSettings.defaultMemory || "1G");
+                     setModalWhitelistEnabled(globalSettings.defaultWhitelistEnabled ?? false);
+                     setModalWhitelistUsers([...(globalSettings.defaultWhitelistUsers || [])]);
+                     setModalWhitelistUserDraft("");
                      setSelectedModpack(null);
                      setImportFile(null);
                   }}
@@ -2675,7 +2694,7 @@ export default function App() {
                                                 <button
                                                    key={l}
                                                    onClick={() => setSelectedAddLoader(l)}
-                                                   className={`px-3 py-1 rounded text-[10px] font-bold transition-all flex-shrink-0 ${selectedAddLoader === l ? 'bg-[#3E8ED0] text-white shadow-md' : 'text-neutral-500 hover:text-white'}`}
+                                                   className={`px-3 py-1 rounded text-[10px] font-bold transition-all flex-shrink-0 ${(selectedAddLoader || '').toUpperCase() === l ? 'bg-[#3E8ED0] text-white shadow-md' : 'text-neutral-500 hover:text-white'}`}
                                                 >
                                                    {l}
                                                 </button>
@@ -2979,6 +2998,98 @@ export default function App() {
                                           </button>
                                        </div>
                                     </div>
+                                 </div>
+
+                                 {/* Server Whitelist & Player Access */}
+                                 <div className="bg-[#242424] border border-[#3A3A3A] p-6 rounded-2xl space-y-4 shadow-xl">
+                                    <div className="flex items-center justify-between">
+                                       <div className="flex items-center gap-3">
+                                          <div className="p-2 bg-amber-500/10 rounded-lg text-amber-400">
+                                             <Shield className="w-5 h-5" />
+                                          </div>
+                                          <div>
+                                             <h4 className="font-bold text-white text-base">Server Whitelist</h4>
+                                             <p className="text-xs text-neutral-400">Restrict access to specified Minecraft usernames.</p>
+                                          </div>
+                                       </div>
+                                       <button
+                                          type="button"
+                                          onClick={() => setModalWhitelistEnabled(!modalWhitelistEnabled)}
+                                          className={`w-12 h-6 rounded-full transition-all relative ${modalWhitelistEnabled ? 'bg-amber-500' : 'bg-[#333]'}`}
+                                       >
+                                          <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${modalWhitelistEnabled ? 'left-7' : 'left-1'}`} />
+                                       </button>
+                                    </div>
+
+                                    {modalWhitelistEnabled && (
+                                       <div className="space-y-3 pt-2 border-t border-[#333] animate-in fade-in duration-200">
+                                          <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest block">
+                                             Allowed Players ({modalWhitelistUsers.length})
+                                          </label>
+                                          <div className="flex gap-2">
+                                             <input
+                                                type="text"
+                                                value={modalWhitelistUserDraft}
+                                                onChange={(e) => setModalWhitelistUserDraft(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                   if (e.key === 'Enter') {
+                                                      e.preventDefault();
+                                                      const val = modalWhitelistUserDraft.trim();
+                                                      if (val && !modalWhitelistUsers.includes(val)) {
+                                                         setModalWhitelistUsers([...modalWhitelistUsers, val]);
+                                                         setModalWhitelistUserDraft("");
+                                                      }
+                                                   }
+                                                }}
+                                                placeholder="Enter Minecraft username..."
+                                                className="flex-1 bg-[#141414] border border-[#3A3A3A] px-3 py-2 rounded-lg text-sm text-white focus:outline-none focus:border-amber-500/50"
+                                             />
+                                             <button
+                                                type="button"
+                                                onClick={() => {
+                                                   const val = modalWhitelistUserDraft.trim();
+                                                   if (val && !modalWhitelistUsers.includes(val)) {
+                                                      setModalWhitelistUsers([...modalWhitelistUsers, val]);
+                                                      setModalWhitelistUserDraft("");
+                                                   }
+                                                }}
+                                                className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold text-xs rounded-lg border border-amber-500/30 transition-colors"
+                                             >
+                                                Add Player
+                                             </button>
+                                          </div>
+
+                                          {modalWhitelistUsers.length > 0 ? (
+                                             <div className="flex flex-wrap gap-2 pt-1">
+                                                {modalWhitelistUsers.map((u) => (
+                                                   <span
+                                                      key={u}
+                                                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#141414] border border-[#3A3A3A] text-xs font-mono text-neutral-200"
+                                                   >
+                                                      <img
+                                                         src={getPlayerAvatarUrl(u, 24)}
+                                                         alt=""
+                                                         className="w-4 h-4 rounded-sm"
+                                                         onError={(e) => {
+                                                            e.currentTarget.src = `https://crafthead.net/avatar/${u}/24`;
+                                                         }}
+                                                      />
+                                                      <span>{u}</span>
+                                                      <button
+                                                         type="button"
+                                                         onClick={() => setModalWhitelistUsers(modalWhitelistUsers.filter(x => x !== u))}
+                                                         className="text-neutral-500 hover:text-red-400 ml-0.5"
+                                                      >
+                                                         <X className="w-3 h-3" />
+                                                      </button>
+                                                   </span>
+                                                ))}
+                                             </div>
+                                          ) : (
+                                             <p className="text-xs text-neutral-500 italic">No players added yet. Anyone will be blocked until added to the whitelist.</p>
+                                          )}
+                                       </div>
+                                    )}
                                  </div>
 
                                  <div className="bg-[#2D2D2D] border border-[#3A3A3A] p-6 rounded-2xl flex gap-5 items-start shadow-xl">
@@ -3488,7 +3599,7 @@ export default function App() {
                                     {/* Whitelist (On/Off) Toggle Switch */}
                                     <div className="flex items-center gap-3 bg-[#242424] border border-[#3A3A3A] px-4 py-2.5 rounded-xl shadow-lg">
                                        <div className="flex items-center gap-2">
-                                          <Shield className={`w-4 h-4 transition-colors ${config.environment["ENABLE_WHITELIST"] === "true" ? 'text-amber-400' : 'text-neutral-500'}`} />
+                                          <Shield className={`w-4 h-4 transition-colors ${config.environment["ENABLE_WHITELIST"]?.toLowerCase() === "true" ? 'text-amber-400' : 'text-neutral-500'}`} />
                                           <div className="flex flex-col">
                                              <span className="text-xs font-bold text-neutral-200 uppercase tracking-wider">Whitelist</span>
                                              <span className="text-[10px] text-neutral-500 font-medium">Access Restriction</span>
@@ -3504,23 +3615,23 @@ export default function App() {
                                              }
                                           }))}
                                           aria-label="Toggle Whitelist"
-                                          className={`w-12 h-6 rounded-full transition-all relative outline-none focus:ring-2 focus:ring-[#3E8ED0]/40 ${config.environment["ENABLE_WHITELIST"] === "true" ? 'bg-amber-500 shadow-md shadow-amber-500/25' : 'bg-neutral-800 border border-neutral-700'
+                                          className={`w-12 h-6 rounded-full transition-all relative outline-none focus:ring-2 focus:ring-[#3E8ED0]/40 ${config.environment["ENABLE_WHITELIST"]?.toLowerCase() === "true" ? 'bg-amber-500 shadow-md shadow-amber-500/25' : 'bg-neutral-800 border border-neutral-700'
                                              }`}
                                        >
-                                          <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow ${config.environment["ENABLE_WHITELIST"] === "true" ? 'left-7' : 'left-1'
+                                          <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow ${config.environment["ENABLE_WHITELIST"]?.toLowerCase() === "true" ? 'left-7' : 'left-1'
                                              }`} />
                                        </button>
-                                       <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold border transition-all ${config.environment["ENABLE_WHITELIST"] === "true"
+                                       <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold border transition-all ${config.environment["ENABLE_WHITELIST"]?.toLowerCase() === "true"
                                              ? 'bg-amber-500/20 border-amber-500/50 text-amber-400'
                                              : 'bg-neutral-800 border-neutral-700 text-neutral-500'
                                           }`}>
-                                          {config.environment["ENABLE_WHITELIST"] === "true" ? 'ON' : 'OFF'}
+                                          {config.environment["ENABLE_WHITELIST"]?.toLowerCase() === "true" ? 'ON' : 'OFF'}
                                        </span>
                                     </div>
                                  </div>
 
                                  {/* State Notification Banner */}
-                                 {config.environment["ENABLE_WHITELIST"] === "true" ? (
+                                 {config.environment["ENABLE_WHITELIST"]?.toLowerCase() === "true" ? (
                                     <div className="flex items-center gap-3 p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300">
                                        <Shield className="w-4 h-4 text-amber-400 shrink-0" />
                                        <div>
@@ -5311,11 +5422,10 @@ export default function App() {
                                  <h3 className="text-lg font-bold mb-1">Appearance</h3>
                                  <p className="text-sm text-neutral-500">Customize the look and feel of Isopod.</p>
                               </div>
-                              <div className="grid grid-cols-3 gap-4">
+                              <div className="grid grid-cols-2 gap-4">
                                  {[
                                     { id: 'Dark', name: 'Dark Mode', icon: Moon },
-                                    { id: 'Light', name: 'Light Mode', icon: Sun },
-                                    { id: 'OLED', name: 'OLED Black', icon: Monitor }
+                                    { id: 'Light', name: 'Light Mode', icon: Sun }
                                  ].map((theme) => (
                                     <button
                                        key={theme.id}
