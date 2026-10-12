@@ -224,7 +224,8 @@ export default function App() {
       showSnapshots: false,
       autoCheckUpdates: true,
       defaultWhitelistEnabled: false,
-      defaultWhitelistUsers: [] as string[]
+      defaultWhitelistUsers: [] as string[],
+      dockerSocket: '/var/run/docker.sock'
    });
    const [originalGlobalSettings, setOriginalGlobalSettings] = useState("");
    const [isSavingGlobal, setIsSavingGlobal] = useState(false);
@@ -578,7 +579,7 @@ export default function App() {
          const body: any = {
             name: newName,
             template: selectedAddLoader.toLowerCase(),
-            port: parseInt(newPort),
+            port: parseInt(newPort || globalSettings.defaultPort || "25565"),
             version: selectedAddVersion === 'latest' ? '' : selectedAddVersion,
             loader_version: selectedAddLoaderVersion,
             modrinth_id: addTab === 'modrinth' && selectedModpack ? selectedModpack.id : null,
@@ -589,7 +590,9 @@ export default function App() {
             difficulty: newDifficulty,
             gamemode: newGamemode,
             generate_structures: newGenerateStructures,
-            memory: newMemory
+            memory: newMemory || globalSettings.defaultMemory || "1G",
+            whitelist_enabled: globalSettings.defaultWhitelistEnabled,
+            whitelist_users: globalSettings.defaultWhitelistUsers
          };
 
          const res = await fetch("/api/instances", {
@@ -609,14 +612,15 @@ export default function App() {
          setModpackVersions([]);
          setSelectedModpackVersion("");
          setSelectedAddVersion("latest");
-         setSelectedAddLoader("VANILLA");
+         setSelectedAddLoader(globalSettings.defaultLoader || "VANILLA");
          setSelectedAddLoaderVersion("latest");
+         setNewPort(globalSettings.defaultPort || "25565");
          setNewSeed("");
          setNewLevelType("DEFAULT");
          setNewDifficulty("easy");
          setNewGamemode("survival");
          setNewGenerateStructures(true);
-         setNewMemory(globalSettings.defaultMemory);
+         setNewMemory(globalSettings.defaultMemory || "1G");
 
          fetchInstances();
       } catch (e) {
@@ -1732,7 +1736,12 @@ export default function App() {
          if (res.ok) {
             const data = await res.json();
             setGlobalSettings(data);
-            setNewMemory(data.defaultMemory || "1G");
+            if (data.defaultMemory) setNewMemory(data.defaultMemory);
+            if (data.defaultPort) setNewPort(data.defaultPort);
+            if (data.defaultLoader) setSelectedAddLoader(data.defaultLoader);
+            if (data.showSnapshots !== undefined) {
+               setVersionFilters(prev => ({ ...prev, Snapshots: !!data.showSnapshots }));
+            }
          }
       } catch (e) {
          console.error("Failed to fetch settings", e);
@@ -1749,12 +1758,33 @@ export default function App() {
          });
          if (!res.ok) throw new Error("Failed to save settings");
          setOriginalGlobalSettings(JSON.stringify(globalSettings));
+         if (globalSettings.showSnapshots !== undefined) {
+            setVersionFilters(prev => ({ ...prev, Snapshots: !!globalSettings.showSnapshots }));
+         }
+         if (globalSettings.defaultMemory) setNewMemory(globalSettings.defaultMemory);
+         if (globalSettings.defaultPort) setNewPort(globalSettings.defaultPort);
+         if (globalSettings.defaultLoader) setSelectedAddLoader(globalSettings.defaultLoader);
       } catch (e) {
          console.error(e);
          await showAlert("Failed to save global settings", "Error");
       } finally {
          setIsSavingGlobal(false);
       }
+   };
+
+   useEffect(() => {
+      if (globalSettings.theme) {
+         document.documentElement.setAttribute('data-theme', globalSettings.theme.toLowerCase());
+      }
+   }, [globalSettings.theme]);
+
+   const handleExportSystemLogs = () => {
+      const link = document.createElement("a");
+      link.href = "/api/system/logs/export";
+      link.download = "isopod_application_logs.txt";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
    };
 
    useEffect(() => {
@@ -2062,8 +2092,10 @@ export default function App() {
                      setAddStep(1);
                      setAddTab("custom");
                      setNewName("");
+                     setNewPort(globalSettings.defaultPort || "25565");
                      setSelectedAddVersion("latest");
-                     setSelectedAddLoader("VANILLA");
+                     setSelectedAddLoader(globalSettings.defaultLoader || "VANILLA");
+                     setNewMemory(globalSettings.defaultMemory || "1G");
                      setSelectedModpack(null);
                      setImportFile(null);
                   }}
@@ -5498,12 +5530,16 @@ export default function App() {
                                     <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Docker Socket Path</label>
                                     <input
                                        type="text"
-                                       defaultValue="/var/run/docker.sock"
-                                       className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-red-500/50 text-xs font-mono text-neutral-400"
+                                       value={globalSettings.dockerSocket || "/var/run/docker.sock"}
+                                       onChange={(e) => setGlobalSettings({ ...globalSettings, dockerSocket: e.target.value })}
+                                       className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-[#3E8ED0] text-xs font-mono text-neutral-300"
                                     />
                                  </div>
-                                 <button className="w-full py-3 bg-[#333] hover:bg-[#3D2525] text-red-400 font-bold rounded-lg border border-[#444] hover:border-red-500/30 transition-all text-xs">
-                                    EXPORT APPLICATION LOGS
+                                 <button
+                                     onClick={handleExportSystemLogs}
+                                     className="w-full py-3 bg-[#333] hover:bg-[#3E8ED0]/20 text-[#3E8ED0] hover:text-white font-bold rounded-lg border border-[#444] hover:border-[#3E8ED0]/50 transition-all text-xs flex items-center justify-center gap-2">
+                                    <FileText className="w-4 h-4" />
+                                     EXPORT APPLICATION LOGS
                                  </button>
                               </div>
                            </div>

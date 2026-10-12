@@ -82,7 +82,19 @@ def get_docker_client():
     global docker_client
     if docker_client is None:
         try:
-            docker_client = docker.from_env()
+            settings_path = os.path.join(SERVERS_DIR, "isopod_settings.json")
+            socket_path = None
+            if os.path.exists(settings_path):
+                try:
+                    with open(settings_path, "r") as f:
+                        cfg = json.load(f)
+                        socket_path = cfg.get("dockerSocket")
+                except Exception:
+                    pass
+            if socket_path and os.path.exists(socket_path):
+                docker_client = docker.DockerClient(base_url=f"unix://{socket_path}")
+            else:
+                docker_client = docker.from_env()
         except Exception:
             pass
     return docker_client
@@ -124,6 +136,8 @@ class CreateInstanceRequest(BaseModel):
     difficulty: Optional[str] = "easy"
     gamemode: Optional[str] = "survival"
     generate_structures: Optional[bool] = True
+    whitelist_enabled: Optional[bool] = None
+    whitelist_users: Optional[List[str]] = None
 
 
 class RenameInstanceRequest(BaseModel):
@@ -1165,23 +1179,30 @@ def get_icon(instance_id: str):
         return FileResponse(icon_path)
     raise HTTPException(status_code=404, detail="Icon not found")
 
+DEFAULT_SETTINGS = {
+    "language": "English",
+    "theme": "Dark",
+    "defaultPort": "25565",
+    "defaultLoader": "VANILLA",
+    "defaultMemory": "1G",
+    "autoRefresh": True,
+    "showSnapshots": False,
+    "defaultWhitelistEnabled": False,
+    "defaultWhitelistUsers": [],
+    "dockerSocket": "/var/run/docker.sock"
+}
+
 @app.get("/api/settings")
 def get_settings():
     settings_path = os.path.join(SERVERS_DIR, "isopod_settings.json")
     if os.path.exists(settings_path):
-        with open(settings_path, "r") as f:
-            return json.load(f)
-    return {
-        "language": "English",
-        "theme": "Dark",
-        "defaultPort": "25565",
-        "defaultLoader": "VANILLA",
-        "defaultMemory": "1G",
-        "autoRefresh": True,
-        "showSnapshots": False,
-        "defaultWhitelistEnabled": False,
-        "defaultWhitelistUsers": []
-    }
+        try:
+            with open(settings_path, "r") as f:
+                saved = json.load(f)
+                return {**DEFAULT_SETTINGS, **saved}
+        except Exception:
+            return DEFAULT_SETTINGS.copy()
+    return DEFAULT_SETTINGS.copy()
 
 @app.put("/api/settings")
 def update_settings(new_settings: Dict[str, Any]):
@@ -1558,8 +1579,17 @@ async def create_instance(req: CreateInstanceRequest):
         }
     }
     
-    # Add modpack/loader if present
+    # Check default whitelist settings if not passed in request
+    settings = get_settings()
+    w_enabled = req.whitelist_enabled if req.whitelist_enabled is not None else settings.get("defaultWhitelistEnabled", False)
+    w_users = req.whitelist_users if req.whitelist_users is not None else settings.get("defaultWhitelistUsers", [])
+
     env = compose_content["services"]["mc"]["environment"]
+    if w_enabled:
+        env.append("ENABLE_WHITELIST=TRUE")
+        if w_users:
+            env.append(f"WHITELIST={','.join(w_users)}")
+
     template = req.template.upper()
     if req.loader_version and req.loader_version != "latest":
         if template == "FABRIC":
@@ -1650,6 +1680,18 @@ async def create_instance(req: CreateInstanceRequest):
     with open(os.path.join(path, "docker-compose.yml"), "w") as f:
         yaml.dump(compose_content, f, default_flow_style=False)
     
+    # Pre-initialize whitelist.json if whitelist users are provided
+    if w_enabled and w_users:
+        data_dir = os.path.join(path, "data")
+        os.makedirs(data_dir, exist_ok=True)
+        wl_path = os.path.join(data_dir, "whitelist.json")
+        try:
+            wl_data = [{"name": u} for u in w_users]
+            with open(wl_path, "w") as wf:
+                json.dump(wl_data, wf, indent=2)
+        except Exception as e:
+            print(f"Error initializing whitelist.json: {e}")
+
     # Save metadata
     save_instance_meta(path, {"group": req.group or "No group"})
 
@@ -3034,6 +3076,14 @@ async def get_latest_release():
                     "release_notes": data.get("body", "No release notes available."),
                     "published_at": data.get("published_at")
                 }
+            elif res.status_code == 404:
+                return {
+                    "current_version": ISOPOD_VERSION,
+                    "latest_version": ISOPOD_VERSION,
+                    "has_update": False,
+                    "release_notes": "You are running the latest version of Isopod.",
+                    "published_at": None
+                }
             return None
     except Exception as e:
         print(f"Error fetching release: {e}")
@@ -3067,12 +3117,11 @@ async def check_updates(force: bool = False):
             cached_update_info = info
             return info
         else:
-             # Fallback if GitHub is down but we want to return something valid
              return {
                 "current_version": ISOPOD_VERSION,
                 "latest_version": ISOPOD_VERSION,
                 "has_update": False,
-                "release_notes": "Could not connect to the update server."
+                "release_notes": "Could not connect to update service."
              }
     
     return cached_update_info
@@ -3121,6 +3170,53 @@ async def perform_update():
     asyncio.create_task(trigger_restart())
     
     return {"message": "Update sequence initiated. The application will restart automatically. Please refresh the page in a few moments."}
+
+@app.get("/api/system/logs/export")
+def export_system_logs():
+    """
+    Exports application diagnostics and system logs for troubleshooting.
+    """
+    settings = get_settings()
+    client = get_docker_client()
+    docker_status = "Available" if client else "Unavailable"
+    
+    instances = []
+    if os.path.exists(SERVERS_DIR):
+        for item in os.listdir(SERVERS_DIR):
+            item_path = os.path.join(SERVERS_DIR, item)
+            if os.path.isdir(item_path) and os.path.exists(os.path.join(item_path, "docker-compose.yml")):
+                instances.append(item)
+
+    report_lines = [
+        "==================================================",
+        "              ISOPOD APPLICATION LOGS              ",
+        "==================================================",
+        f"Export Timestamp : {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}",
+        f"Isopod Version   : {ISOPOD_VERSION}",
+        f"Docker Client    : {docker_status}",
+        f"Docker Socket    : {settings.get('dockerSocket', '/var/run/docker.sock')}",
+        f"Managed Instances: {len(instances)} ({', '.join(instances) if instances else 'None'})",
+        "",
+        "--- [Application Settings] ---",
+        json.dumps(settings, indent=2),
+        "",
+        "--- [System Environment] ---",
+        f"Operating System : {os.name}",
+        f"Working Dir      : {os.getcwd()}",
+        f"Servers Dir      : {SERVERS_DIR}",
+        "",
+        "--- [Diagnostics Summary] ---",
+        f"Update Cache     : {json.dumps(cached_update_info) if cached_update_info else 'Not populated'}",
+        "==================================================",
+        "End of Diagnostics Log",
+        "=================================================="
+    ]
+    log_content = "\n".join(report_lines)
+    return Response(
+        content=log_content,
+        media_type="text/plain",
+        headers={"Content-Disposition": "attachment; filename=isopod_application_logs.txt"}
+    )
 
 # Mount the compiled frontend to be served statically
 
