@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard } from "lucide-react";
 
 interface Instance {
    id: string;
@@ -214,6 +214,22 @@ export default function App() {
    const [isFilesLoading, setIsFilesLoading] = useState(false);
    const [viewingFile, setViewingFile] = useState<{ name: string, content: string } | null>(null);
    const [isGlobalBrowser, setIsGlobalBrowser] = useState(false);
+
+   // Enhanced File Explorer State (#59)
+   const [selectedFileNames, setSelectedFileNames] = useState<string[]>([]);
+   const [fileClipboard, setFileClipboard] = useState<{ action: "cut" | "copy", files: string[], sourceDir: string, instanceId: string | null } | null>(null);
+   const [fileContextMenu, setFileContextMenu] = useState<{ x: number, y: number, target: any | null } | null>(null);
+   const [inlineEditing, setInlineEditing] = useState<{ type: "rename" | "new_file" | "new_folder", targetName?: string, value: string } | null>(null);
+   const [draggedFileNames, setDraggedFileNames] = useState<string[] | null>(null);
+   const [dragTargetFolder, setDragTargetFolder] = useState<string | null>(null);
+   const [isExternalDragOver, setIsExternalDragOver] = useState(false);
+   const [fileConflictModal, setFileConflictModal] = useState<{
+      title: string;
+      message: string;
+      conflicts: string[];
+      onResolve: (strategy: "overwrite" | "rename_new" | "cancel") => void;
+   } | null>(null);
+   const fileUploadInputRef = useRef<HTMLInputElement>(null);
 
    // Global App Settings
    const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
@@ -1119,6 +1135,247 @@ export default function App() {
          await showAlert(e.message, "File Error");
       }
    };
+
+   const getFileApiBase = () => {
+      const id = isGlobalBrowser ? null : selectedId;
+      return id ? `/api/instances/${id}/files` : `/api/files`;
+   };
+
+   const refreshFiles = async () => {
+      const instanceId = isGlobalBrowser ? null : selectedId;
+      await fetchFileList(instanceId, currentFilePath);
+   };
+
+   const handleCreateFileOrFolder = async (name: string, is_dir: boolean) => {
+      if (!name || !name.trim()) {
+         setInlineEditing(null);
+         return;
+      }
+      const base = getFileApiBase();
+      try {
+         const res = await fetch(`${base}/create`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: currentFilePath, name: name.trim(), is_dir })
+         });
+         if (!res.ok) {
+            const err = await res.json().catch(() => ({ detail: "Failed to create" }));
+            throw new Error(err.detail || "Failed to create");
+         }
+         setInlineEditing(null);
+         await refreshFiles();
+      } catch (err: any) {
+         await showAlert(err.message, "Create Error");
+      }
+   };
+
+   const handleRenameFileOrFolder = async (oldName: string, newName: string) => {
+      if (!newName || !newName.trim() || oldName === newName.trim()) {
+         setInlineEditing(null);
+         return;
+      }
+      const base = getFileApiBase();
+      const oldPath = currentFilePath === "." ? oldName : `${currentFilePath}/${oldName}`;
+      try {
+         const res = await fetch(`${base}/rename`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: oldPath, new_name: newName.trim() })
+         });
+         if (!res.ok) {
+            const err = await res.json().catch(() => ({ detail: "Failed to rename" }));
+            throw new Error(err.detail || "Failed to rename");
+         }
+         setInlineEditing(null);
+         await refreshFiles();
+      } catch (err: any) {
+         await showAlert(err.message, "Rename Error");
+      }
+   };
+
+   const handleDeleteFilesOrFolders = async (names: string[]) => {
+      if (!names || names.length === 0) return;
+      const msg = names.length === 1 
+         ? `Are you sure you want to delete "${names[0]}"?`
+         : `Are you sure you want to delete ${names.length} items?`;
+      const confirmed = await showConfirm(msg, "Delete");
+      if (!confirmed) return;
+
+      const base = getFileApiBase();
+      const paths = names.map(n => currentFilePath === "." ? n : `${currentFilePath}/${n}`);
+      try {
+         const res = await fetch(`${base}/delete`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ paths })
+         });
+         if (!res.ok) {
+            const err = await res.json().catch(() => ({ detail: "Failed to delete" }));
+            throw new Error(err.detail || "Failed to delete");
+         }
+         setSelectedFileNames([]);
+         await refreshFiles();
+      } catch (err: any) {
+         await showAlert(err.message, "Delete Error");
+      }
+   };
+
+   const handleDownloadFilesOrFolders = (names: string[]) => {
+      if (!names || names.length === 0) return;
+      const base = getFileApiBase();
+      if (names.length === 1) {
+         const path = currentFilePath === "." ? names[0] : `${currentFilePath}/${names[0]}`;
+         window.open(`${base}/download?path=${encodeURIComponent(path)}`, "_blank");
+      } else {
+         const paths = names.map(n => currentFilePath === "." ? n : `${currentFilePath}/${n}`);
+         window.open(`${base}/download?paths=${encodeURIComponent(paths.join(","))}`, "_blank");
+      }
+   };
+
+   const handleExecuteMoveOrCopy = async (
+      action: "cut" | "copy",
+      sourceRelPaths: string[],
+      destDir: string,
+      strategy: "fail" | "overwrite" | "rename_new" = "fail"
+   ) => {
+      const base = getFileApiBase();
+      const endpoint = action === "cut" ? `${base}/move` : `${base}/copy`;
+      try {
+         const res = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+               source_paths: sourceRelPaths,
+               destination_dir: destDir,
+               collision_strategy: strategy
+            })
+         });
+
+         if (res.status === 409) {
+            const data = await res.json().catch(() => ({ detail: "Conflict detected" }));
+            setFileConflictModal({
+               title: "File Conflict",
+               message: `One or more files already exist in destination:\n${data.detail}`,
+               conflicts: sourceRelPaths,
+               onResolve: async (resolvedStrategy) => {
+                  setFileConflictModal(null);
+                  if (resolvedStrategy === "cancel") return;
+                  await handleExecuteMoveOrCopy(action, sourceRelPaths, destDir, resolvedStrategy);
+               }
+            });
+            return;
+         }
+
+         if (!res.ok) {
+            const err = await res.json().catch(() => ({ detail: "Operation failed" }));
+            throw new Error(err.detail || "Operation failed");
+         }
+
+         if (action === "cut") {
+            setFileClipboard(null);
+         }
+         setSelectedFileNames([]);
+         await refreshFiles();
+      } catch (err: any) {
+         await showAlert(err.message, `${action === "cut" ? "Move" : "Copy"} Error`);
+      }
+   };
+
+   const handlePasteClipboard = async () => {
+      if (!fileClipboard || fileClipboard.files.length === 0) return;
+      const sourcePaths = fileClipboard.files.map(f =>
+         fileClipboard.sourceDir === "." ? f : `${fileClipboard.sourceDir}/${f}`
+      );
+      await handleExecuteMoveOrCopy(fileClipboard.action, sourcePaths, currentFilePath, "fail");
+   };
+
+   const handleUploadFileList = async (files: FileList | File[], targetFolder: string = currentFilePath) => {
+      if (!files || files.length === 0) return;
+      const base = getFileApiBase();
+      const formData = new FormData();
+      formData.append("path", targetFolder);
+      formData.append("collision_strategy", "overwrite");
+      for (let i = 0; i < files.length; i++) {
+         formData.append("files", files[i]);
+      }
+      try {
+         setIsFilesLoading(true);
+         const res = await fetch(`${base}/upload`, {
+            method: "POST",
+            body: formData
+         });
+         if (!res.ok) {
+            const err = await res.json().catch(() => ({ detail: "Upload failed" }));
+            throw new Error(err.detail || "Upload failed");
+         }
+         await refreshFiles();
+      } catch (err: any) {
+         await showAlert(err.message, "Upload Error");
+      } finally {
+         setIsFilesLoading(false);
+      }
+   };
+
+   useEffect(() => {
+      const handleGlobalClick = () => {
+         setFileContextMenu(null);
+      };
+      window.addEventListener('click', handleGlobalClick);
+      return () => window.removeEventListener('click', handleGlobalClick);
+   }, []);
+
+   useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+         const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+         if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+            if (e.key === 'Escape') {
+               setInlineEditing(null);
+               setFileContextMenu(null);
+            }
+            return;
+         }
+
+         if (editTab !== "files") return;
+
+         if (e.key === 'Escape') {
+            setFileContextMenu(null);
+            setInlineEditing(null);
+         } else if (e.key === 'Delete') {
+            if (selectedFileNames.length > 0) {
+               e.preventDefault();
+               handleDeleteFilesOrFolders(selectedFileNames);
+            }
+         } else if (e.key === 'F2') {
+            if (selectedFileNames.length === 1) {
+               e.preventDefault();
+               setInlineEditing({ type: 'rename', targetName: selectedFileNames[0], value: selectedFileNames[0] });
+            }
+         } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+            if (selectedFileNames.length > 0) {
+               e.preventDefault();
+               setFileClipboard({ action: 'copy', files: [...selectedFileNames], sourceDir: currentFilePath, instanceId: isGlobalBrowser ? null : selectedId });
+            }
+         } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x') {
+            if (selectedFileNames.length > 0) {
+               e.preventDefault();
+               setFileClipboard({ action: 'cut', files: [...selectedFileNames], sourceDir: currentFilePath, instanceId: isGlobalBrowser ? null : selectedId });
+            }
+         } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+            if (fileClipboard && fileClipboard.files.length > 0) {
+               e.preventDefault();
+               handlePasteClipboard();
+            }
+         } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+            if (fileList.length > 0) {
+               e.preventDefault();
+               setSelectedFileNames(fileList.map(f => f.name));
+            }
+         }
+      };
+
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+   }, [editTab, selectedFileNames, fileClipboard, fileList, currentFilePath, isGlobalBrowser, selectedId]);
 
    const handleModSearch = async (query: string, provider: string, forceVersion?: string, forceLoader?: string) => {
       setIsModSearching(true);
@@ -4881,45 +5138,237 @@ export default function App() {
                            </div>
                         )}
                         {editTab === "files" && (
-                           <div className="flex flex-col h-full bg-[#1A1A1A] p-6 overflow-hidden">
-                              <div className="flex justify-between items-center mb-6">
+                           <div
+                              className="flex flex-col h-full bg-[#1A1A1A] p-6 overflow-hidden relative select-none"
+                              onContextMenu={(e) => {
+                                 e.preventDefault();
+                                 setFileContextMenu({ x: e.clientX, y: e.clientY, target: null });
+                              }}
+                              onDragOver={(e) => {
+                                 e.preventDefault();
+                                 if (e.dataTransfer.types.includes("Files")) {
+                                    setIsExternalDragOver(true);
+                                 }
+                              }}
+                              onDragLeave={(e) => {
+                                 if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                                    setIsExternalDragOver(false);
+                                    setDragTargetFolder(null);
+                                 }
+                              }}
+                              onDrop={(e) => {
+                                 e.preventDefault();
+                                 setIsExternalDragOver(false);
+                                 setDragTargetFolder(null);
+                                 if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                                    handleUploadFileList(e.dataTransfer.files, currentFilePath);
+                                 }
+                              }}
+                           >
+                              {/* External Drag Overlay */}
+                              {isExternalDragOver && (
+                                 <div className="absolute inset-0 z-40 bg-[#3E8ED0]/20 border-2 border-dashed border-[#3E8ED0] rounded-xl flex flex-col items-center justify-center backdrop-blur-sm pointer-events-none animate-in fade-in duration-150">
+                                    <Upload className="w-12 h-12 text-[#3E8ED0] animate-bounce mb-2" />
+                                    <span className="text-lg font-bold text-white">Drop files to upload here</span>
+                                    <span className="text-xs text-neutral-300 mt-1">Uploading to: {currentFilePath === "." ? "root" : currentFilePath}</span>
+                                 </div>
+                              )}
+
+                              {/* Hidden File Input */}
+                              <input
+                                 type="file"
+                                 multiple
+                                 ref={fileUploadInputRef}
+                                 className="hidden"
+                                 onChange={(e) => {
+                                    if (e.target.files && e.target.files.length > 0) {
+                                       handleUploadFileList(e.target.files, currentFilePath);
+                                       e.target.value = "";
+                                    }
+                                 }}
+                              />
+
+                              {/* Header & Breadcrumbs & Action Toolbar */}
+                              <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
                                  <div className="flex flex-col">
-                                    <h3 className="text-xl font-bold flex items-center gap-2">
+                                    <h3 className="text-xl font-bold flex items-center gap-2 text-white">
                                        <Folder className="w-6 h-6 text-yellow-500" /> {isGlobalBrowser ? "Global Folders" : "Files"}
                                     </h3>
-                                    <div className="flex items-center gap-1.5 text-[11px] text-neutral-500 mt-1">
-                                       <span>{isGlobalBrowser ? "isopod" : "root"}</span>
-                                       {currentFilePath !== "." && currentFilePath.split('/').map((seg, i) => (
-                                          <React.Fragment key={i}>
-                                             <ChevronRight className="w-3 h-3" />
-                                             <span>{seg}</span>
-                                          </React.Fragment>
-                                       ))}
+                                    {/* Breadcrumbs with Drop Targets */}
+                                    <div className="flex items-center gap-1 text-xs text-neutral-400 mt-1 flex-wrap">
+                                       <span
+                                          onClick={() => fetchFileList(isGlobalBrowser ? null : selectedId, ".")}
+                                          onDragOver={(e) => {
+                                             e.preventDefault();
+                                             e.stopPropagation();
+                                             setDragTargetFolder(".");
+                                          }}
+                                          onDragLeave={() => {
+                                             if (dragTargetFolder === ".") setDragTargetFolder(null);
+                                          }}
+                                          onDrop={(e) => {
+                                             e.preventDefault();
+                                             e.stopPropagation();
+                                             setDragTargetFolder(null);
+                                             if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                                                handleUploadFileList(e.dataTransfer.files, ".");
+                                             } else if (draggedFileNames && draggedFileNames.length > 0) {
+                                                const sourcePaths = draggedFileNames.map(f => currentFilePath === "." ? f : `${currentFilePath}/${f}`);
+                                                handleExecuteMoveOrCopy("cut", sourcePaths, ".", "fail");
+                                                setDraggedFileNames(null);
+                                             }
+                                          }}
+                                          className={`px-1.5 py-0.5 rounded cursor-pointer transition ${dragTargetFolder === "." ? 'bg-[#3E8ED0] text-white font-bold ring-2 ring-[#3E8ED0]' : 'hover:bg-[#333] hover:text-white'}`}
+                                       >
+                                          {isGlobalBrowser ? "isopod" : "root"}
+                                       </span>
+                                       {currentFilePath !== "." && currentFilePath.split('/').map((seg, i, arr) => {
+                                          const segPath = arr.slice(0, i + 1).join('/');
+                                          const isLast = i === arr.length - 1;
+                                          return (
+                                             <React.Fragment key={i}>
+                                                <ChevronRight className="w-3.5 h-3.5 text-neutral-600" />
+                                                <span
+                                                   onClick={() => !isLast && fetchFileList(isGlobalBrowser ? null : selectedId, segPath)}
+                                                   onDragOver={(e) => {
+                                                      e.preventDefault();
+                                                      e.stopPropagation();
+                                                      setDragTargetFolder(segPath);
+                                                   }}
+                                                   onDragLeave={() => {
+                                                      if (dragTargetFolder === segPath) setDragTargetFolder(null);
+                                                   }}
+                                                   onDrop={(e) => {
+                                                      e.preventDefault();
+                                                      e.stopPropagation();
+                                                      setDragTargetFolder(null);
+                                                      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                                                         handleUploadFileList(e.dataTransfer.files, segPath);
+                                                      } else if (draggedFileNames && draggedFileNames.length > 0) {
+                                                         const sourcePaths = draggedFileNames.map(f => currentFilePath === "." ? f : `${currentFilePath}/${f}`);
+                                                         handleExecuteMoveOrCopy("cut", sourcePaths, segPath, "fail");
+                                                         setDraggedFileNames(null);
+                                                      }
+                                                   }}
+                                                   className={`px-1.5 py-0.5 rounded transition ${isLast ? 'text-neutral-200 font-semibold cursor-default' : 'cursor-pointer hover:bg-[#333] hover:text-white'} ${dragTargetFolder === segPath ? 'bg-[#3E8ED0] text-white font-bold ring-2 ring-[#3E8ED0]' : ''}`}
+                                                >
+                                                   {seg}
+                                                </span>
+                                             </React.Fragment>
+                                          );
+                                       })}
                                     </div>
                                  </div>
-                                 <div className="flex gap-2">
+
+                                 {/* Toolbar Actions */}
+                                 <div className="flex items-center gap-1.5 flex-wrap">
                                     {currentFilePath !== "." && (
                                        <button
                                           onClick={() => {
                                              const parts = currentFilePath.split('/');
                                              parts.pop();
-                                             const instanceId = isGlobalBrowser ? null : (selectedInstance?.id || null);
+                                             const instanceId = isGlobalBrowser ? null : selectedId;
                                              fetchFileList(instanceId, parts.join('/') || ".");
                                           }}
-                                          className="flex items-center gap-2 px-3 py-1.5 bg-[#323232] hover:bg-[#404040] rounded text-sm transition"
+                                          className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#2A2A2A] hover:bg-[#383838] border border-[#3A3A3A] rounded text-xs text-neutral-300 transition"
+                                          title="Go to parent directory"
                                        >
-                                          <ArrowLeft className="w-4 h-4" /> Go Back
+                                          <ArrowLeft className="w-3.5 h-3.5" /> Back
                                        </button>
                                     )}
+
                                     <button
-                                       onClick={() => fetchFileList(isGlobalBrowser ? null : (selectedInstance?.id || null), currentFilePath)}
-                                       className="flex items-center justify-center p-2 bg-[#323232] hover:bg-[#404040] rounded text-neutral-300 transition"
+                                       onClick={() => setInlineEditing({ type: "new_file", value: "" })}
+                                       className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#2A2A2A] hover:bg-[#383838] border border-[#3A3A3A] rounded text-xs text-neutral-300 hover:text-white transition"
+                                       title="New File"
                                     >
-                                       <RefreshCw className={`w-4 h-4 ${isFilesLoading ? 'animate-spin' : ''}`} />
+                                       <FilePlus className="w-3.5 h-3.5 text-[#3E8ED0]" /> New File
+                                    </button>
+
+                                    <button
+                                       onClick={() => setInlineEditing({ type: "new_folder", value: "" })}
+                                       className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#2A2A2A] hover:bg-[#383838] border border-[#3A3A3A] rounded text-xs text-neutral-300 hover:text-white transition"
+                                       title="New Folder"
+                                    >
+                                       <FolderPlus className="w-3.5 h-3.5 text-yellow-500" /> New Folder
+                                    </button>
+
+                                    <button
+                                       onClick={() => fileUploadInputRef.current?.click()}
+                                       className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#2A2A2A] hover:bg-[#383838] border border-[#3A3A3A] rounded text-xs text-neutral-300 hover:text-white transition"
+                                       title="Upload Files from OS"
+                                    >
+                                       <Upload className="w-3.5 h-3.5 text-green-400" /> Upload
+                                    </button>
+
+                                    {fileClipboard && (
+                                       <button
+                                          onClick={handlePasteClipboard}
+                                          className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#3E8ED0]/20 hover:bg-[#3E8ED0]/30 border border-[#3E8ED0]/50 rounded text-xs text-[#3E8ED0] font-semibold transition"
+                                          title={`Paste ${fileClipboard.files.length} items (${fileClipboard.action})`}
+                                       >
+                                          <Clipboard className="w-3.5 h-3.5" /> Paste ({fileClipboard.files.length})
+                                       </button>
+                                    )}
+
+                                    {selectedFileNames.length > 0 && (
+                                       <>
+                                          <button
+                                             onClick={() => handleDownloadFilesOrFolders(selectedFileNames)}
+                                             className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#2A2A2A] hover:bg-[#383838] border border-[#3A3A3A] rounded text-xs text-neutral-300 hover:text-white transition"
+                                             title="Download selected items"
+                                          >
+                                             <Download className="w-3.5 h-3.5 text-blue-400" /> Download ({selectedFileNames.length})
+                                          </button>
+                                          <button
+                                             onClick={() => {
+                                                setFileClipboard({
+                                                   action: "cut",
+                                                   files: [...selectedFileNames],
+                                                   sourceDir: currentFilePath,
+                                                   instanceId: isGlobalBrowser ? null : selectedId
+                                                });
+                                             }}
+                                             className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#2A2A2A] hover:bg-[#383838] border border-[#3A3A3A] rounded text-xs text-neutral-300 hover:text-white transition"
+                                             title="Cut selected items"
+                                          >
+                                             <Scissors className="w-3.5 h-3.5" /> Cut
+                                          </button>
+                                          <button
+                                             onClick={() => {
+                                                setFileClipboard({
+                                                   action: "copy",
+                                                   files: [...selectedFileNames],
+                                                   sourceDir: currentFilePath,
+                                                   instanceId: isGlobalBrowser ? null : selectedId
+                                                });
+                                             }}
+                                             className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#2A2A2A] hover:bg-[#383838] border border-[#3A3A3A] rounded text-xs text-neutral-300 hover:text-white transition"
+                                             title="Copy selected items"
+                                          >
+                                             <Copy className="w-3.5 h-3.5" /> Copy
+                                          </button>
+                                          <button
+                                             onClick={() => handleDeleteFilesOrFolders(selectedFileNames)}
+                                             className="flex items-center gap-1.5 px-2.5 py-1.5 bg-red-950/40 hover:bg-red-900/60 border border-red-800/60 rounded text-xs text-red-300 font-medium transition"
+                                             title="Delete selected items"
+                                          >
+                                             <Trash2 className="w-3.5 h-3.5" /> Delete ({selectedFileNames.length})
+                                          </button>
+                                       </>
+                                    )}
+
+                                    <button
+                                       onClick={() => fetchFileList(isGlobalBrowser ? null : selectedId, currentFilePath)}
+                                       className="flex items-center justify-center p-2 bg-[#2A2A2A] hover:bg-[#383838] border border-[#3A3A3A] rounded text-neutral-300 transition"
+                                       title="Refresh file list"
+                                    >
+                                       <RefreshCw className={`w-3.5 h-3.5 ${isFilesLoading ? 'animate-spin' : ''}`} />
                                     </button>
                                  </div>
                               </div>
 
+                              {/* File Viewer or Table */}
                               {viewingFile ? (
                                  <div className="flex flex-col flex-1 bg-[#0D0D0D] border border-[#333] rounded-lg overflow-hidden animate-in slide-in-from-bottom-4 duration-300">
                                     <div className="px-4 py-2.5 bg-[#1F1F1F] border-b border-[#333] flex justify-between items-center">
@@ -4927,65 +5376,526 @@ export default function App() {
                                           <FileText className="w-4 h-4 text-[#3E8ED0]" />
                                           <span className="text-sm font-bold text-neutral-300">{viewingFile.name}</span>
                                        </div>
-                                       <button onClick={() => setViewingFile(null)} className="p-1 hover:bg-[#333] rounded text-neutral-500 hover:text-white transition">
-                                          <X className="w-5 h-5" />
-                                       </button>
+                                       <div className="flex items-center gap-2">
+                                          <button
+                                             onClick={() => handleDownloadFilesOrFolders([viewingFile.name])}
+                                             className="p-1 hover:bg-[#333] rounded text-neutral-400 hover:text-white transition"
+                                             title="Download file"
+                                          >
+                                             <Download className="w-4 h-4" />
+                                          </button>
+                                          <button onClick={() => setViewingFile(null)} className="p-1 hover:bg-[#333] rounded text-neutral-500 hover:text-white transition">
+                                             <X className="w-5 h-5" />
+                                          </button>
+                                       </div>
                                     </div>
                                     <pre className="flex-1 p-6 overflow-auto text-xs font-mono text-neutral-400 selection:bg-[#3E8ED0]/30 whitespace-pre scrollbar-custom">
                                        {viewingFile.content}
                                     </pre>
                                  </div>
                               ) : (
-                                 <div className="flex-1 bg-[#1E1E1E]/50 border border-[#333] rounded-lg overflow-hidden shadow-2xl">
-                                    <div className="grid grid-cols-12 px-4 py-2 border-b border-[#333] text-[10px] uppercase font-bold text-neutral-500 tracking-wider bg-[#242424]">
-                                       <div className="col-span-7">Name</div>
+                                 <div
+                                    className="flex-1 flex flex-col bg-[#1E1E1E]/50 border border-[#333] rounded-lg overflow-hidden shadow-2xl"
+                                    onClick={(e) => {
+                                       if (e.target === e.currentTarget) {
+                                          setSelectedFileNames([]);
+                                       }
+                                    }}
+                                 >
+                                    {/* Table Header */}
+                                    <div className="grid grid-cols-12 px-4 py-2.5 border-b border-[#333] text-[10px] uppercase font-bold text-neutral-400 tracking-wider bg-[#242424] items-center">
+                                       <div className="col-span-1 flex items-center">
+                                          <input
+                                             type="checkbox"
+                                             checked={fileList.length > 0 && selectedFileNames.length === fileList.length}
+                                             onChange={(e) => {
+                                                if (e.target.checked) {
+                                                   setSelectedFileNames(fileList.map(f => f.name));
+                                                } else {
+                                                   setSelectedFileNames([]);
+                                                }
+                                             }}
+                                             className="w-3.5 h-3.5 rounded bg-[#1A1A1A] border-[#444] text-[#3E8ED0] focus:ring-0 cursor-pointer"
+                                          />
+                                       </div>
+                                       <div className="col-span-6">Name</div>
                                        <div className="col-span-2">Size</div>
                                        <div className="col-span-3">Modified</div>
                                     </div>
-                                    <div className="flex-1 overflow-auto max-h-[calc(85vh-240px)] scrollbar-custom">
+
+                                    {/* Table Body */}
+                                    <div
+                                       className="flex-1 overflow-auto max-h-[calc(85vh-250px)] scrollbar-custom"
+                                       onClick={(e) => {
+                                          if (e.target === e.currentTarget) {
+                                             setSelectedFileNames([]);
+                                          }
+                                       }}
+                                    >
+                                       {/* Synthetic Inline Creation Row */}
+                                       {inlineEditing && (inlineEditing.type === "new_file" || inlineEditing.type === "new_folder") && (
+                                          <div className="grid grid-cols-12 px-4 py-2.5 border-b border-[#3E8ED0]/40 bg-[#3E8ED0]/10 items-center animate-in fade-in duration-150">
+                                             <div className="col-span-1 flex items-center">
+                                                {inlineEditing.type === "new_folder" ? (
+                                                   <Folder className="w-4 h-4 text-yellow-500 fill-current" />
+                                                ) : (
+                                                   <FileText className="w-4 h-4 text-[#3E8ED0]" />
+                                                )}
+                                             </div>
+                                             <div className="col-span-6 flex items-center gap-2">
+                                                <input
+                                                   type="text"
+                                                   autoFocus
+                                                   placeholder={inlineEditing.type === "new_folder" ? "Folder name..." : "File name..."}
+                                                   value={inlineEditing.value}
+                                                   onChange={(e) => setInlineEditing(prev => prev ? { ...prev, value: e.target.value } : null)}
+                                                   onKeyDown={(e) => {
+                                                      if (e.key === "Enter") {
+                                                         handleCreateFileOrFolder(inlineEditing.value, inlineEditing.type === "new_folder");
+                                                      } else if (e.key === "Escape") {
+                                                         setInlineEditing(null);
+                                                      }
+                                                   }}
+                                                   onBlur={() => {
+                                                      if (inlineEditing.value.trim()) {
+                                                         handleCreateFileOrFolder(inlineEditing.value, inlineEditing.type === "new_folder");
+                                                      } else {
+                                                         setInlineEditing(null);
+                                                      }
+                                                   }}
+                                                   className="bg-[#141414] border border-[#3E8ED0] rounded px-2 py-1 text-xs text-white focus:outline-none w-full"
+                                                />
+                                             </div>
+                                             <div className="col-span-5 text-neutral-500 text-[11px] italic">
+                                                Press Enter to save, Esc to cancel
+                                             </div>
+                                          </div>
+                                       )}
+
                                        {isFilesLoading ? (
-                                          <div className="flex flex-col items-center justify-center h-64 text-neutral-600 gap-3">
-                                             <RefreshCw className="w-8 h-8 animate-spin" />
+                                          <div className="flex flex-col items-center justify-center h-64 text-neutral-500 gap-3">
+                                             <RefreshCw className="w-8 h-8 animate-spin text-[#3E8ED0]" />
                                              <span className="text-sm font-medium">Scanning directory...</span>
                                           </div>
-                                       ) : fileList.length === 0 ? (
-                                          <div className="flex flex-col items-center justify-center h-64 text-neutral-600 gap-2 opacity-50">
+                                       ) : fileList.length === 0 && !inlineEditing ? (
+                                          <div
+                                             className="flex flex-col items-center justify-center h-64 text-neutral-500 gap-2 opacity-60"
+                                             onContextMenu={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                setFileContextMenu({ x: e.clientX, y: e.clientY, target: null });
+                                             }}
+                                          >
                                              <Box className="w-10 h-10" />
                                              <span className="text-sm">Empty folder</span>
+                                             <span className="text-xs text-neutral-600">Drag files here to upload or right-click to create</span>
                                           </div>
                                        ) : (
                                           fileList.map((file, i) => {
-                                             const isText = ['.txt', '.log', '.properties', '.yml', '.yaml', '.json', '.conf', '.cfg', '.env'].includes(file.ext);
+                                             const isText = ['.txt', '.log', '.properties', '.yml', '.yaml', '.json', '.conf', '.cfg', '.env', '.toml'].includes(file.ext);
+                                             const isSelected = selectedFileNames.includes(file.name);
+                                             const isEditingThis = inlineEditing?.type === "rename" && inlineEditing?.targetName === file.name;
+                                             const folderFullPath = currentFilePath === "." ? file.name : `${currentFilePath}/${file.name}`;
+                                             const isDropTarget = file.is_dir && dragTargetFolder === folderFullPath;
+                                             const isCut = fileClipboard?.action === "cut" && fileClipboard.sourceDir === currentFilePath && fileClipboard.files.includes(file.name);
 
                                              return (
                                                 <div
                                                    key={i}
-                                                   onClick={() => {
-                                                      const newPath = currentFilePath === "." ? file.name : `${currentFilePath}/${file.name}`;
-                                                      const instanceId = isGlobalBrowser ? null : (selectedInstance?.id || null);
+                                                   draggable={!isEditingThis}
+                                                   onDragStart={(e) => {
+                                                      const dragged = selectedFileNames.includes(file.name) ? selectedFileNames : [file.name];
+                                                      setDraggedFileNames(dragged);
+                                                      e.dataTransfer.setData("text/plain", file.name);
+                                                      e.dataTransfer.effectAllowed = "move";
+                                                   }}
+                                                   onDragOver={(e) => {
                                                       if (file.is_dir) {
+                                                         e.preventDefault();
+                                                         e.stopPropagation();
+                                                         if (dragTargetFolder !== folderFullPath) {
+                                                            setDragTargetFolder(folderFullPath);
+                                                         }
+                                                      }
+                                                   }}
+                                                   onDragLeave={(e) => {
+                                                      if (file.is_dir && dragTargetFolder === folderFullPath) {
+                                                         setDragTargetFolder(null);
+                                                      }
+                                                   }}
+                                                   onDrop={(e) => {
+                                                      if (file.is_dir) {
+                                                         e.preventDefault();
+                                                         e.stopPropagation();
+                                                         setDragTargetFolder(null);
+                                                         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                                                            handleUploadFileList(e.dataTransfer.files, folderFullPath);
+                                                         } else if (draggedFileNames && draggedFileNames.length > 0) {
+                                                            const sourcePaths = draggedFileNames.map(f => currentFilePath === "." ? f : `${currentFilePath}/${f}`);
+                                                            handleExecuteMoveOrCopy("cut", sourcePaths, folderFullPath, "fail");
+                                                            setDraggedFileNames(null);
+                                                         }
+                                                      }
+                                                   }}
+                                                   onClick={(e) => {
+                                                      if (isEditingThis) return;
+                                                      if (e.shiftKey && selectedFileNames.length > 0) {
+                                                         const lastSelectedIdx = fileList.findIndex(f => f.name === selectedFileNames[selectedFileNames.length - 1]);
+                                                         const start = Math.min(lastSelectedIdx, i);
+                                                         const end = Math.max(lastSelectedIdx, i);
+                                                         const slice = fileList.slice(start, end + 1).map(f => f.name);
+                                                         setSelectedFileNames(Array.from(new Set([...selectedFileNames, ...slice])));
+                                                      } else if (e.ctrlKey || e.metaKey) {
+                                                         setSelectedFileNames(prev =>
+                                                            prev.includes(file.name) ? prev.filter(n => n !== file.name) : [...prev, file.name]
+                                                         );
+                                                      } else {
+                                                         setSelectedFileNames([file.name]);
+                                                      }
+                                                   }}
+                                                   onDoubleClick={() => {
+                                                      const newPath = currentFilePath === "." ? file.name : `${currentFilePath}/${file.name}`;
+                                                      const instanceId = isGlobalBrowser ? null : selectedId;
+                                                      if (file.is_dir) {
+                                                         setSelectedFileNames([]);
                                                          fetchFileList(instanceId, newPath);
                                                       } else if (isText) {
                                                          handleOpenFile(instanceId, newPath, file.name);
                                                       }
                                                    }}
-                                                   className="grid grid-cols-12 px-4 py-3 border-b border-[#282828] hover:bg-white/[0.03] transition-colors cursor-pointer group"
+                                                   onContextMenu={(e) => {
+                                                      e.preventDefault();
+                                                      e.stopPropagation();
+                                                      if (!selectedFileNames.includes(file.name)) {
+                                                         setSelectedFileNames([file.name]);
+                                                      }
+                                                      setFileContextMenu({ x: e.clientX, y: e.clientY, target: file });
+                                                   }}
+                                                   className={`grid grid-cols-12 px-4 py-2.5 border-b border-[#282828] transition-colors cursor-pointer group items-center ${
+                                                      isDropTarget
+                                                         ? 'bg-[#3E8ED0]/20 ring-2 ring-inset ring-[#3E8ED0]'
+                                                         : isSelected
+                                                         ? 'bg-[#3E8ED0]/15 border-[#3E8ED0]/30'
+                                                         : 'hover:bg-white/[0.04]'
+                                                   } ${isCut ? 'opacity-40' : ''}`}
                                                 >
-                                                   <div className="col-span-7 flex items-center gap-3 min-w-0">
-                                                      {file.is_dir ? <Folder className="w-4 h-4 text-yellow-500/80 fill-current" /> : <FileText className="w-4 h-4 text-neutral-500" />}
-                                                      <span className={`text-sm truncate ${file.is_dir ? 'text-neutral-300 font-medium' : 'text-neutral-400 font-normal'} group-hover:text-white transition-colors`}>{file.name}</span>
-                                                      {isText && <span className="bg-[#3E8ED0]/10 text-[9px] px-1.5 py-0.5 rounded text-[#3E8ED0] font-bold border border-[#3E8ED0]/20 hidden group-hover:block">VIEW</span>}
+                                                   {/* Checkbox */}
+                                                   <div
+                                                      className="col-span-1 flex items-center"
+                                                      onClick={(e) => e.stopPropagation()}
+                                                   >
+                                                      <input
+                                                         type="checkbox"
+                                                         checked={isSelected}
+                                                         onChange={(e) => {
+                                                            if (e.target.checked) {
+                                                               setSelectedFileNames(prev => [...prev, file.name]);
+                                                            } else {
+                                                               setSelectedFileNames(prev => prev.filter(n => n !== file.name));
+                                                            }
+                                                         }}
+                                                         className="w-3.5 h-3.5 rounded bg-[#1A1A1A] border-[#444] text-[#3E8ED0] focus:ring-0 cursor-pointer"
+                                                      />
                                                    </div>
-                                                   <div className="col-span-2 text-xs text-neutral-500 flex items-center">
+
+                                                   {/* Name column */}
+                                                   <div className="col-span-6 flex items-center gap-2.5 min-w-0 pr-2">
+                                                      {file.is_dir ? (
+                                                         <Folder className="w-4 h-4 text-yellow-500 fill-current shrink-0" />
+                                                      ) : (
+                                                         <FileText className="w-4 h-4 text-neutral-400 shrink-0" />
+                                                      )}
+
+                                                      {isEditingThis ? (
+                                                         <input
+                                                            type="text"
+                                                            autoFocus
+                                                            value={inlineEditing.value}
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            onChange={(e) => setInlineEditing(prev => prev ? { ...prev, value: e.target.value } : null)}
+                                                            onKeyDown={(e) => {
+                                                               if (e.key === "Enter") {
+                                                                  handleRenameFileOrFolder(file.name, inlineEditing.value);
+                                                               } else if (e.key === "Escape") {
+                                                                  setInlineEditing(null);
+                                                               }
+                                                            }}
+                                                            onBlur={() => {
+                                                               if (inlineEditing.value && inlineEditing.value !== file.name) {
+                                                                  handleRenameFileOrFolder(file.name, inlineEditing.value);
+                                                               } else {
+                                                                  setInlineEditing(null);
+                                                               }
+                                                            }}
+                                                            className="bg-[#141414] border border-[#3E8ED0] rounded px-1.5 py-0.5 text-xs text-white focus:outline-none w-full"
+                                                         />
+                                                      ) : (
+                                                         <span className={`text-sm truncate ${file.is_dir ? 'text-neutral-200 font-medium' : 'text-neutral-300 font-normal'} group-hover:text-white transition-colors`}>
+                                                            {file.name}
+                                                         </span>
+                                                      )}
+
+                                                      {isText && !isEditingThis && (
+                                                         <span
+                                                            onClick={(e) => {
+                                                               e.stopPropagation();
+                                                               const instanceId = isGlobalBrowser ? null : selectedId;
+                                                               handleOpenFile(instanceId, folderFullPath, file.name);
+                                                            }}
+                                                            className="bg-[#3E8ED0]/15 text-[9px] px-1.5 py-0.5 rounded text-[#3E8ED0] font-bold border border-[#3E8ED0]/30 hidden group-hover:block shrink-0 cursor-pointer hover:bg-[#3E8ED0]/30"
+                                                         >
+                                                            VIEW
+                                                         </span>
+                                                      )}
+                                                   </div>
+
+                                                   {/* Size column */}
+                                                   <div className="col-span-2 text-xs text-neutral-400 flex items-center">
                                                       {file.is_dir ? '--' : (file.size > 1024 * 1024 ? `${(file.size / (1024 * 1024)).toFixed(1)} MB` : `${(file.size / 1024).toFixed(1)} KB`)}
                                                    </div>
-                                                   <div className="col-span-3 text-xs text-neutral-600 flex items-center italic">
-                                                      {new Date(file.modified * 1000).toLocaleDateString()}
+
+                                                   {/* Modified column */}
+                                                   <div className="col-span-3 text-xs text-neutral-500 flex items-center justify-between pr-2">
+                                                      <span>{new Date(file.modified * 1000).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}</span>
+                                                      <button
+                                                         onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleDownloadFilesOrFolders([file.name]);
+                                                         }}
+                                                         className="opacity-0 group-hover:opacity-100 p-1 hover:bg-[#333] rounded text-neutral-400 hover:text-white transition"
+                                                         title="Download"
+                                                      >
+                                                         <Download className="w-3.5 h-3.5" />
+                                                      </button>
                                                    </div>
                                                 </div>
                                              );
                                           })
                                        )}
+                                    </div>
+                                 </div>
+                              )}
+
+                              {/* Right-Click Context Menu */}
+                              {fileContextMenu && (
+                                 <div
+                                    className="fixed z-50 bg-[#222222] border border-[#3A3A3A] rounded-lg shadow-2xl py-1 text-xs text-neutral-200 min-w-[170px] backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
+                                    style={{
+                                       top: Math.min(fileContextMenu.y, window.innerHeight - 250),
+                                       left: Math.min(fileContextMenu.x, window.innerWidth - 190)
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                 >
+                                    {fileContextMenu.target ? (
+                                       <>
+                                          {fileContextMenu.target.is_dir ? (
+                                             <button
+                                                onClick={() => {
+                                                   const newPath = currentFilePath === "." ? fileContextMenu.target.name : `${currentFilePath}/${fileContextMenu.target.name}`;
+                                                   const instanceId = isGlobalBrowser ? null : selectedId;
+                                                   setSelectedFileNames([]);
+                                                   fetchFileList(instanceId, newPath);
+                                                   setFileContextMenu(null);
+                                                }}
+                                                className="w-full text-left px-3 py-1.5 hover:bg-[#3E8ED0] hover:text-white flex items-center gap-2 transition"
+                                             >
+                                                <Folder className="w-3.5 h-3.5 text-yellow-500" /> Open Folder
+                                             </button>
+                                          ) : (
+                                             <button
+                                                onClick={() => {
+                                                   const newPath = currentFilePath === "." ? fileContextMenu.target.name : `${currentFilePath}/${fileContextMenu.target.name}`;
+                                                   const instanceId = isGlobalBrowser ? null : selectedId;
+                                                   handleOpenFile(instanceId, newPath, fileContextMenu.target.name);
+                                                   setFileContextMenu(null);
+                                                }}
+                                                className="w-full text-left px-3 py-1.5 hover:bg-[#3E8ED0] hover:text-white flex items-center gap-2 transition"
+                                             >
+                                                <FileText className="w-3.5 h-3.5 text-[#3E8ED0]" /> View Content
+                                             </button>
+                                          )}
+
+                                          <button
+                                             onClick={() => {
+                                                const targets = selectedFileNames.includes(fileContextMenu.target.name)
+                                                   ? selectedFileNames
+                                                   : [fileContextMenu.target.name];
+                                                handleDownloadFilesOrFolders(targets);
+                                                setFileContextMenu(null);
+                                             }}
+                                             className="w-full text-left px-3 py-1.5 hover:bg-[#3E8ED0] hover:text-white flex items-center gap-2 transition"
+                                          >
+                                             <Download className="w-3.5 h-3.5 text-blue-400" /> Download
+                                          </button>
+
+                                          <div className="h-[1px] bg-[#333] my-1" />
+
+                                          <button
+                                             onClick={() => {
+                                                setInlineEditing({
+                                                   type: "rename",
+                                                   targetName: fileContextMenu.target.name,
+                                                   value: fileContextMenu.target.name
+                                                });
+                                                setFileContextMenu(null);
+                                             }}
+                                             className="w-full text-left px-3 py-1.5 hover:bg-[#3E8ED0] hover:text-white flex items-center gap-2 transition"
+                                          >
+                                             <Edit className="w-3.5 h-3.5 text-neutral-400" /> Rename (F2)
+                                          </button>
+
+                                          <button
+                                             onClick={() => {
+                                                const targets = selectedFileNames.includes(fileContextMenu.target.name)
+                                                   ? selectedFileNames
+                                                   : [fileContextMenu.target.name];
+                                                setFileClipboard({
+                                                   action: "cut",
+                                                   files: targets,
+                                                   sourceDir: currentFilePath,
+                                                   instanceId: isGlobalBrowser ? null : selectedId
+                                                });
+                                                setFileContextMenu(null);
+                                             }}
+                                             className="w-full text-left px-3 py-1.5 hover:bg-[#3E8ED0] hover:text-white flex items-center gap-2 transition"
+                                          >
+                                             <Scissors className="w-3.5 h-3.5 text-neutral-400" /> Cut (Ctrl+X)
+                                          </button>
+
+                                          <button
+                                             onClick={() => {
+                                                const targets = selectedFileNames.includes(fileContextMenu.target.name)
+                                                   ? selectedFileNames
+                                                   : [fileContextMenu.target.name];
+                                                setFileClipboard({
+                                                   action: "copy",
+                                                   files: targets,
+                                                   sourceDir: currentFilePath,
+                                                   instanceId: isGlobalBrowser ? null : selectedId
+                                                });
+                                                setFileContextMenu(null);
+                                             }}
+                                             className="w-full text-left px-3 py-1.5 hover:bg-[#3E8ED0] hover:text-white flex items-center gap-2 transition"
+                                          >
+                                             <Copy className="w-3.5 h-3.5 text-neutral-400" /> Copy (Ctrl+C)
+                                          </button>
+
+                                          <div className="h-[1px] bg-[#333] my-1" />
+
+                                          <button
+                                             onClick={() => {
+                                                const targets = selectedFileNames.includes(fileContextMenu.target.name)
+                                                   ? selectedFileNames
+                                                   : [fileContextMenu.target.name];
+                                                handleDeleteFilesOrFolders(targets);
+                                                setFileContextMenu(null);
+                                             }}
+                                             className="w-full text-left px-3 py-1.5 hover:bg-red-600 hover:text-white text-red-400 flex items-center gap-2 transition"
+                                          >
+                                             <Trash2 className="w-3.5 h-3.5" /> Delete (Del)
+                                          </button>
+                                       </>
+                                    ) : (
+                                       <>
+                                          <button
+                                             onClick={() => {
+                                                setInlineEditing({ type: "new_file", value: "" });
+                                                setFileContextMenu(null);
+                                             }}
+                                             className="w-full text-left px-3 py-1.5 hover:bg-[#3E8ED0] hover:text-white flex items-center gap-2 transition"
+                                          >
+                                             <FilePlus className="w-3.5 h-3.5 text-[#3E8ED0]" /> New File
+                                          </button>
+
+                                          <button
+                                             onClick={() => {
+                                                setInlineEditing({ type: "new_folder", value: "" });
+                                                setFileContextMenu(null);
+                                             }}
+                                             className="w-full text-left px-3 py-1.5 hover:bg-[#3E8ED0] hover:text-white flex items-center gap-2 transition"
+                                          >
+                                             <FolderPlus className="w-3.5 h-3.5 text-yellow-500" /> New Folder
+                                          </button>
+
+                                          <button
+                                             onClick={() => {
+                                                fileUploadInputRef.current?.click();
+                                                setFileContextMenu(null);
+                                             }}
+                                             className="w-full text-left px-3 py-1.5 hover:bg-[#3E8ED0] hover:text-white flex items-center gap-2 transition"
+                                          >
+                                             <Upload className="w-3.5 h-3.5 text-green-400" /> Upload Files...
+                                          </button>
+
+                                          {fileClipboard && (
+                                             <button
+                                                onClick={() => {
+                                                   handlePasteClipboard();
+                                                   setFileContextMenu(null);
+                                                }}
+                                                className="w-full text-left px-3 py-1.5 hover:bg-[#3E8ED0] hover:text-white flex items-center gap-2 transition"
+                                             >
+                                                <Clipboard className="w-3.5 h-3.5 text-neutral-300" /> Paste ({fileClipboard.files.length})
+                                             </button>
+                                          )}
+
+                                          <div className="h-[1px] bg-[#333] my-1" />
+
+                                          <button
+                                             onClick={() => {
+                                                setSelectedFileNames(fileList.map(f => f.name));
+                                                setFileContextMenu(null);
+                                             }}
+                                             className="w-full text-left px-3 py-1.5 hover:bg-[#3E8ED0] hover:text-white flex items-center gap-2 transition"
+                                          >
+                                             <Check className="w-3.5 h-3.5" /> Select All (Ctrl+A)
+                                          </button>
+
+                                          <button
+                                             onClick={() => {
+                                                fetchFileList(isGlobalBrowser ? null : selectedId, currentFilePath);
+                                                setFileContextMenu(null);
+                                             }}
+                                             className="w-full text-left px-3 py-1.5 hover:bg-[#3E8ED0] hover:text-white flex items-center gap-2 transition"
+                                          >
+                                             <RefreshCw className="w-3.5 h-3.5" /> Refresh
+                                          </button>
+                                       </>
+                                    )}
+                                 </div>
+                              )}
+
+                              {/* Conflict Modal */}
+                              {fileConflictModal && (
+                                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
+                                    <div className="bg-[#242424] border border-[#3E3E3E] rounded-xl p-6 max-w-md w-full shadow-2xl space-y-4">
+                                       <div className="flex items-center gap-3 text-amber-400">
+                                          <AlertCircle className="w-6 h-6 shrink-0" />
+                                          <h4 className="text-lg font-bold text-white">{fileConflictModal.title}</h4>
+                                       </div>
+                                       <p className="text-xs text-neutral-300 whitespace-pre-line leading-relaxed">
+                                          {fileConflictModal.message}
+                                       </p>
+                                       <div className="flex justify-end gap-2 pt-2">
+                                          <button
+                                             onClick={() => fileConflictModal.onResolve("cancel")}
+                                             className="px-3 py-1.5 bg-[#333] hover:bg-[#444] rounded text-xs text-neutral-300 transition"
+                                          >
+                                             Cancel
+                                          </button>
+                                          <button
+                                             onClick={() => fileConflictModal.onResolve("rename_new")}
+                                             className="px-3 py-1.5 bg-[#3E8ED0]/20 hover:bg-[#3E8ED0]/30 border border-[#3E8ED0]/40 rounded text-xs text-[#3E8ED0] font-semibold transition"
+                                          >
+                                             Keep Both (Auto-Rename)
+                                          </button>
+                                          <button
+                                             onClick={() => fileConflictModal.onResolve("overwrite")}
+                                             className="px-3 py-1.5 bg-red-600 hover:bg-red-700 rounded text-xs text-white font-semibold transition shadow-md"
+                                          >
+                                             Overwrite
+                                          </button>
+                                       </div>
                                     </div>
                                  </div>
                               )}

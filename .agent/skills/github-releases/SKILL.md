@@ -67,14 +67,24 @@ docker compose pull && docker compose up -d
 
 ---
 
-### Step 3: Coordinate Version Number
+### Step 3: Update Project Documentation
+Whenever tickets are closed with new features or fixed bugs, ensure repository documentation reflects the updates before creating the release:
+1. **Identify Affected Docs**: Check `README.md`, user guides in `Documentation/everyone/`, or developer guides in `Documentation/developers/` (or `docs/`).
+2. **Document New Features & Changes**:
+   - Add new capabilities (e.g., UI interactions, context menus, drag-and-drop, new API endpoints, keyboard shortcuts).
+   - Update configuration options, guides, or troubleshooting steps if changed.
+3. **Commit Documentation Updates**: Ensure documentation changes are committed to the repository so documentation accurately represents the released version.
+
+---
+
+### Step 4: Coordinate Version Number
 1. Determine the tag following semantic versioning (e.g., `v0.1.0`).
 2. Confirm the version tag with the user before publishing.
 3. If publishing a new build of the application image, ensure `ISOPOD_VERSION` in `backend/main.py` is appropriately aligned so future instances reflect their running version.
 
 ---
 
-### Step 4: Publish Release via GitHub CLI
+### Step 5: Publish Release via GitHub CLI
 Execute the release creation using `gh release create`:
 
 ```bash
@@ -93,7 +103,7 @@ gh release create <TAG> --draft --title "<TAG> - <TITLE>" --notes "<MARKDOWN_NOT
 
 ---
 
-### Step 5: Verify Release & Dashboard Update Notification
+### Step 6: Verify Release & Dashboard Update Notification
 1. Verify the release exists on GitHub:
    ```bash
    gh release view <TAG>

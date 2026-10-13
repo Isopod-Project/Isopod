@@ -25,7 +25,7 @@ load_dotenv()
 
 app = FastAPI(title="Isopod Backend")
 
-ISOPOD_VERSION = "v0.0.1"
+ISOPOD_VERSION = "v0.1.0"
 GITHUB_REPO = os.getenv("GITHUB_REPO", "Isopod-Project/Isopod")
 
 # Internal state for background update checks
@@ -3059,6 +3059,312 @@ def get_file_content(instance_id: str, path: str):
             return {"content": f.read()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+class FileCreateRequest(BaseModel):
+    path: str = "."
+    name: str
+    is_dir: bool = False
+
+class FileRenameRequest(BaseModel):
+    path: str
+    new_name: str
+
+class FileMoveCopyRequest(BaseModel):
+    source_paths: List[str]
+    destination_dir: str = "."
+    collision_strategy: str = "fail"  # "fail", "overwrite", "rename_new"
+
+class FileDeleteRequest(BaseModel):
+    paths: List[str]
+
+def get_safe_target_path(base_path: str, rel_path: str) -> str:
+    base = os.path.abspath(base_path)
+    clean_rel = rel_path.lstrip("/\\")
+    target = os.path.abspath(os.path.join(base, clean_rel))
+    if not target.startswith(base):
+        raise HTTPException(status_code=403, detail="Access denied: Path traversal detected")
+    return target
+
+def get_unique_name(target_dir: str, name: str) -> str:
+    base_name, ext = os.path.splitext(name)
+    counter = 1
+    new_name = name
+    while os.path.exists(os.path.join(target_dir, new_name)):
+        if ext:
+            new_name = f"{base_name} ({counter}){ext}"
+        else:
+            new_name = f"{base_name} ({counter})"
+        counter += 1
+    return new_name
+
+def cleanup_temp_file(path: str):
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+def core_create_file_or_dir(base_path: str, req: FileCreateRequest):
+    target_dir = get_safe_target_path(base_path, req.path)
+    if not os.path.exists(target_dir):
+        os.makedirs(target_dir, exist_ok=True)
+    target = get_safe_target_path(target_dir, req.name)
+    if os.path.exists(target):
+        raise HTTPException(status_code=409, detail="An item with that name already exists")
+    if req.is_dir:
+        os.makedirs(target, exist_ok=True)
+    else:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, 'w', encoding='utf-8') as f:
+            pass
+    return {"success": True, "name": req.name, "is_dir": req.is_dir}
+
+def core_rename_file_or_dir(base_path: str, req: FileRenameRequest):
+    src = get_safe_target_path(base_path, req.path)
+    if not os.path.exists(src):
+        raise HTTPException(status_code=404, detail="Item not found")
+    parent_dir = os.path.dirname(src)
+    dst = get_safe_target_path(parent_dir, req.new_name)
+    if os.path.exists(dst):
+        raise HTTPException(status_code=409, detail="An item with that name already exists")
+    os.rename(src, dst)
+    return {"success": True, "name": req.new_name}
+
+def core_move_files(base_path: str, req: FileMoveCopyRequest):
+    dst_dir = get_safe_target_path(base_path, req.destination_dir)
+    if not os.path.isdir(dst_dir):
+        raise HTTPException(status_code=400, detail="Destination must be a directory")
+    
+    if req.collision_strategy == "fail":
+        conflicts = [
+            os.path.basename(p.rstrip("/\\"))
+            for p in req.source_paths
+            if os.path.exists(os.path.join(dst_dir, os.path.basename(p.rstrip("/\\"))))
+        ]
+        if conflicts:
+            raise HTTPException(status_code=409, detail=f"Conflicts detected: {', '.join(conflicts)}")
+
+    moved = []
+    for p in req.source_paths:
+        src = get_safe_target_path(base_path, p)
+        if not os.path.exists(src):
+            continue
+        if os.path.isdir(src) and (dst_dir == src or dst_dir.startswith(src + os.sep)):
+            continue
+        name = os.path.basename(src)
+        final_name = name
+        target = os.path.join(dst_dir, final_name)
+        if os.path.exists(target):
+            if req.collision_strategy == "rename_new":
+                final_name = get_unique_name(dst_dir, name)
+                target = os.path.join(dst_dir, final_name)
+            elif req.collision_strategy == "overwrite":
+                if os.path.isdir(target):
+                    shutil.rmtree(target)
+                else:
+                    os.remove(target)
+        shutil.move(src, target)
+        moved.append(final_name)
+    return {"success": True, "moved": moved}
+
+def core_copy_files(base_path: str, req: FileMoveCopyRequest):
+    dst_dir = get_safe_target_path(base_path, req.destination_dir)
+    if not os.path.isdir(dst_dir):
+        raise HTTPException(status_code=400, detail="Destination must be a directory")
+
+    if req.collision_strategy == "fail":
+        conflicts = [
+            os.path.basename(p.rstrip("/\\"))
+            for p in req.source_paths
+            if os.path.exists(os.path.join(dst_dir, os.path.basename(p.rstrip("/\\"))))
+        ]
+        if conflicts:
+            raise HTTPException(status_code=409, detail=f"Conflicts detected: {', '.join(conflicts)}")
+
+    copied = []
+    for p in req.source_paths:
+        src = get_safe_target_path(base_path, p)
+        if not os.path.exists(src):
+            continue
+        name = os.path.basename(src)
+        final_name = name
+        target = os.path.join(dst_dir, final_name)
+        if os.path.exists(target):
+            if req.collision_strategy == "rename_new":
+                final_name = get_unique_name(dst_dir, name)
+                target = os.path.join(dst_dir, final_name)
+            elif req.collision_strategy == "overwrite":
+                if os.path.isdir(target):
+                    shutil.rmtree(target)
+                else:
+                    os.remove(target)
+        if os.path.isdir(src):
+            shutil.copytree(src, target)
+        else:
+            shutil.copy2(src, target)
+        copied.append(final_name)
+    return {"success": True, "copied": copied}
+
+def core_delete_files(base_path: str, req: FileDeleteRequest):
+    deleted = []
+    for p in req.paths:
+        target = get_safe_target_path(base_path, p)
+        if os.path.isdir(target):
+            shutil.rmtree(target)
+            deleted.append(p)
+        elif os.path.isfile(target):
+            os.remove(target)
+            deleted.append(p)
+    return {"success": True, "deleted": deleted}
+
+def core_upload_files(base_path: str, files: List[UploadFile], path: str = ".", collision_strategy: str = "overwrite"):
+    dst_dir = get_safe_target_path(base_path, path)
+    os.makedirs(dst_dir, exist_ok=True)
+    uploaded = []
+    for f in files:
+        filename = os.path.basename(f.filename or "uploaded_file")
+        if collision_strategy == "rename_new" and os.path.exists(os.path.join(dst_dir, filename)):
+            filename = get_unique_name(dst_dir, filename)
+        target = os.path.join(dst_dir, filename)
+        with open(target, "wb") as out:
+            shutil.copyfileobj(f.file, out)
+        uploaded.append(filename)
+    return {"success": True, "uploaded": uploaded}
+
+def core_download_files(base_path: str, background_tasks: BackgroundTasks, path: str = ".", paths: Optional[str] = None):
+    if paths:
+        path_list = [p.strip() for p in paths.split(",") if p.strip()]
+        if not path_list:
+            raise HTTPException(status_code=400, detail="No paths specified")
+        
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        tmp.close()
+        with zipfile.ZipFile(tmp.name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for p in path_list:
+                item_target = get_safe_target_path(base_path, p)
+                if not os.path.exists(item_target):
+                    continue
+                if os.path.isfile(item_target):
+                    zipf.write(item_target, arcname=os.path.basename(item_target))
+                elif os.path.isdir(item_target):
+                    base_dir_name = os.path.basename(item_target.rstrip("/\\"))
+                    for root, _, flist in os.walk(item_target):
+                        for f in flist:
+                            full_f = os.path.join(root, f)
+                            rel_f = os.path.relpath(full_f, os.path.dirname(item_target))
+                            zipf.write(full_f, arcname=rel_f)
+        background_tasks.add_task(cleanup_temp_file, tmp.name)
+        return FileResponse(tmp.name, media_type="application/zip", filename="archive.zip")
+
+    target = get_safe_target_path(base_path, path)
+    if not os.path.exists(target):
+        raise HTTPException(status_code=404, detail="File or folder not found")
+    
+    if os.path.isfile(target):
+        return FileResponse(target, filename=os.path.basename(target))
+    
+    # Directory download as zip
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    tmp.close()
+    folder_name = os.path.basename(target.rstrip("/\\")) or "folder"
+    with zipfile.ZipFile(tmp.name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, _, flist in os.walk(target):
+            for f in flist:
+                full_f = os.path.join(root, f)
+                rel_f = os.path.relpath(full_f, target)
+                zipf.write(full_f, arcname=rel_f)
+    background_tasks.add_task(cleanup_temp_file, tmp.name)
+    return FileResponse(tmp.name, media_type="application/zip", filename=f"{folder_name}.zip")
+
+# Instance file operations
+@app.post("/api/instances/{instance_id}/files/create")
+def instance_create_file(instance_id: str, req: FileCreateRequest):
+    base_path = get_instance_path(instance_id)
+    return core_create_file_or_dir(base_path, req)
+
+@app.post("/api/instances/{instance_id}/files/rename")
+def instance_rename_file(instance_id: str, req: FileRenameRequest):
+    base_path = get_instance_path(instance_id)
+    return core_rename_file_or_dir(base_path, req)
+
+@app.post("/api/instances/{instance_id}/files/move")
+def instance_move_files(instance_id: str, req: FileMoveCopyRequest):
+    base_path = get_instance_path(instance_id)
+    return core_move_files(base_path, req)
+
+@app.post("/api/instances/{instance_id}/files/copy")
+def instance_copy_files(instance_id: str, req: FileMoveCopyRequest):
+    base_path = get_instance_path(instance_id)
+    return core_copy_files(base_path, req)
+
+@app.post("/api/instances/{instance_id}/files/delete")
+def instance_delete_files(instance_id: str, req: FileDeleteRequest):
+    base_path = get_instance_path(instance_id)
+    return core_delete_files(base_path, req)
+
+@app.post("/api/instances/{instance_id}/files/upload")
+def instance_upload_files(
+    instance_id: str,
+    files: List[UploadFile] = File(...),
+    path: str = Form("."),
+    collision_strategy: str = Form("overwrite")
+):
+    base_path = get_instance_path(instance_id)
+    return core_upload_files(base_path, files, path, collision_strategy)
+
+@app.get("/api/instances/{instance_id}/files/download")
+def instance_download_files(
+    instance_id: str,
+    background_tasks: BackgroundTasks,
+    path: str = ".",
+    paths: Optional[str] = None
+):
+    base_path = get_instance_path(instance_id)
+    return core_download_files(base_path, background_tasks, path, paths)
+
+# Global file operations
+@app.post("/api/files/create")
+def global_create_file(req: FileCreateRequest):
+    base_path = os.path.abspath(SERVERS_DIR)
+    return core_create_file_or_dir(base_path, req)
+
+@app.post("/api/files/rename")
+def global_rename_file(req: FileRenameRequest):
+    base_path = os.path.abspath(SERVERS_DIR)
+    return core_rename_file_or_dir(base_path, req)
+
+@app.post("/api/files/move")
+def global_move_files(req: FileMoveCopyRequest):
+    base_path = os.path.abspath(SERVERS_DIR)
+    return core_move_files(base_path, req)
+
+@app.post("/api/files/copy")
+def global_copy_files(req: FileMoveCopyRequest):
+    base_path = os.path.abspath(SERVERS_DIR)
+    return core_copy_files(base_path, req)
+
+@app.post("/api/files/delete")
+def global_delete_files(req: FileDeleteRequest):
+    base_path = os.path.abspath(SERVERS_DIR)
+    return core_delete_files(base_path, req)
+
+@app.post("/api/files/upload")
+def global_upload_files(
+    files: List[UploadFile] = File(...),
+    path: str = Form("."),
+    collision_strategy: str = Form("overwrite")
+):
+    base_path = os.path.abspath(SERVERS_DIR)
+    return core_upload_files(base_path, files, path, collision_strategy)
+
+@app.get("/api/files/download")
+def global_download_files(
+    background_tasks: BackgroundTasks,
+    path: str = ".",
+    paths: Optional[str] = None
+):
+    base_path = os.path.abspath(SERVERS_DIR)
+    return core_download_files(base_path, background_tasks, path, paths)
 
 @app.get("/api/system/info", response_model=SystemInfo)
 def get_system_info():
