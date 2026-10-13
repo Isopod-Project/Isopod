@@ -3444,46 +3444,52 @@ async def check_updates(force: bool = False):
 async def perform_update():
     """
     Attempts to update the launcher by pulling the latest code/images 
-    and restarting the container via the mounted Docker socket.
+    and rebuilding/restarting the container via the mounted Docker socket.
     """
+    global cached_update_info
+    cached_update_info = None  # Immediately clear cached update info
+
     if not os.path.exists("/var/run/docker.sock"):
         raise HTTPException(status_code=500, detail="Docker socket not found. Cannot perform self-update.")
 
-    # In a real environment, we'd trigger a background process to pull and restart
-    # Since this container will be killed when restarted, we need to run it in a way that continues
-    
-    # Example command to update if using compose:
-    # docker compose -f isopod-compose.yml pull && docker compose -f isopod-compose.yml up -d
-    
-    # For now, we'll provide a response and then attempt to trigger a restart
-    # We'll use a small delay so the response reaches the client
-    
     async def trigger_restart():
         await asyncio.sleep(2)
-        # We try to determine the compose file name.
         compose_file = "isopod-compose.yml" if os.path.exists("isopod-compose.yml") else "docker-compose.yml"
         
-        # Pull (if possible) and up -d
-        # If built from source, this only works if 'git pull' happened, which we haven't implemented yet.
-        # But if the user uses a pre-built image, 'pull' is exactly what they need.
+        has_build = False
+        if os.path.exists(compose_file):
+            try:
+                with open(compose_file, "r", encoding="utf-8") as cf:
+                    content = cf.read()
+                    if "build:" in content or "build :" in content:
+                        has_build = True
+            except Exception:
+                pass
+
         try:
-            # If we are in a git repository, pull the latest code first
             if os.path.exists(".git"):
                 print("Git repository detected. Pulling latest code...")
-                subprocess.run(["git", "pull"], check=True, timeout=30)
+                try:
+                    subprocess.run(["git", "pull"], check=False, timeout=30)
+                except Exception as ge:
+                    print(f"Git pull warning: {ge}")
 
-            # We run this in the background using subprocess.Popen to avoid being killed immediately
-            subprocess.Popen(
-                ["docker", "compose", "-f", compose_file, "up", "-d", "--pull", "always"],
-                start_new_session=True
-            )
+            if has_build:
+                cmd = ["docker", "compose", "-f", compose_file, "up", "-d", "--build"]
+            else:
+                cmd = ["docker", "compose", "-f", compose_file, "up", "-d", "--pull", "always"]
+
+            print(f"Executing update sequence: {' '.join(cmd)}")
+            subprocess.Popen(cmd, start_new_session=True)
         except Exception as e:
             print(f"Self-update trigger failed: {e}")
 
-
     asyncio.create_task(trigger_restart())
     
-    return {"message": "Update sequence initiated. The application will restart automatically. Please refresh the page in a few moments."}
+    return {
+        "status": "initiated",
+        "message": "Update sequence initiated. The container will rebuild and restart."
+    }
 
 @app.get("/api/system/logs/export")
 def export_system_logs():

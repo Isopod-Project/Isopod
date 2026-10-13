@@ -81,6 +81,13 @@ export default function App() {
    const [updateInfo, setUpdateInfo] = useState<any>(null);
    const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
    const [isUpdatingSystem, setIsUpdatingSystem] = useState(false);
+   const [updateProgressState, setUpdateProgressState] = useState<{
+      stage: "initiating" | "rebuilding" | "waiting_reconnect" | "success" | "error";
+      progress: number;
+      message: string;
+      errorDetails?: string;
+   } | null>(null);
+   const [updateSuccessToast, setUpdateSuccessToast] = useState<string | null>(null);
    const [isVerbose, setIsVerbose] = useState(false);
 
    // Modal states
@@ -1828,19 +1835,111 @@ export default function App() {
    };
 
    const performSystemUpdate = async () => {
-      const confirmed = await showConfirm("This will update Isopod to the latest version and restart the application. All your instance data is safe. Proceed?", "Update Isopod");
+      const confirmed = await showConfirm("This will pull the latest release, rebuild/restart the container, and update Isopod. All server instances and data remain safe. Proceed?", "Update Isopod");
       if (!confirmed) return;
 
       setIsUpdatingSystem(true);
+      setUpdateProgressState({
+         stage: "initiating",
+         progress: 15,
+         message: "Initiating update sequence with server..."
+      });
+
       try {
          const res = await fetch("/api/system/update", { method: "POST" });
-         const data = await res.json();
-         await showAlert(data.message, "Update Started");
-         // Reload after a delay
-         setTimeout(() => window.location.reload(), 5000);
-      } catch (e) {
-         await showAlert("Failed to start update", "Error");
-      } finally {
+         if (!res.ok) {
+            const errData = await res.json().catch(() => ({ detail: "Failed to trigger update" }));
+            throw new Error(errData.detail || "Failed to trigger update");
+         }
+
+         setUpdateProgressState({
+            stage: "rebuilding",
+            progress: 35,
+            message: "Pulling latest changes and rebuilding container..."
+         });
+
+         // Record update flag in localStorage so when page reloads, it checks version & shows success toast
+         localStorage.setItem("isopod_just_updated", "true");
+         localStorage.setItem("isopod_target_version", updateInfo?.latest_version || "");
+
+         // Begin active polling
+         let attempts = 0;
+         const maxAttempts = 60; // 60 * 1.5s = 90s
+         let serverDropped = false;
+
+         // Progress animation incrementer
+         const progressInterval = setInterval(() => {
+            setUpdateProgressState(prev => {
+               if (!prev || prev.stage === "success" || prev.stage === "error") return prev;
+               const nextProgress = Math.min(prev.progress + 1, 85);
+               return { ...prev, progress: nextProgress };
+            });
+         }, 1000);
+
+         // Wait 3 seconds to give the backend time to initiate shutdown/rebuild
+         await new Promise(r => setTimeout(r, 3000));
+         setUpdateProgressState(prev => prev ? {
+            ...prev,
+            stage: "waiting_reconnect",
+            progress: 55,
+            message: "Container restarting. Waiting for application to come back online..."
+         } : null);
+
+         const pollInterval = setInterval(async () => {
+            attempts++;
+            try {
+               const controller = new AbortController();
+               const timeoutId = setTimeout(() => controller.abort(), 2000);
+               const pingRes = await fetch("/api/system/info", { signal: controller.signal });
+               clearTimeout(timeoutId);
+
+               if (pingRes.ok) {
+                  const info = await pingRes.json();
+                  if (serverDropped || attempts >= 4) {
+                     clearInterval(pollInterval);
+                     clearInterval(progressInterval);
+
+                     setUpdateProgressState({
+                        stage: "success",
+                        progress: 100,
+                        message: `Update complete! Running ${info.version || 'latest version'}. Refreshing...`
+                     });
+
+                     setTimeout(() => {
+                        window.location.reload();
+                     }, 1500);
+                     return;
+                  }
+               }
+            } catch (err) {
+               serverDropped = true;
+               setUpdateProgressState(prev => prev ? {
+                  ...prev,
+                  progress: Math.max(prev.progress, 70),
+                  message: "Rebuilding and starting updated container..."
+               } : null);
+            }
+
+            if (attempts >= maxAttempts) {
+               clearInterval(pollInterval);
+               clearInterval(progressInterval);
+               setUpdateProgressState(prev => prev ? {
+                  ...prev,
+                  stage: "error",
+                  progress: 85,
+                  message: "The restart is taking longer than expected.",
+                  errorDetails: "The container may still be compiling or starting. You can manually reload the page or check your docker logs."
+               } : null);
+            }
+         }, 1500);
+
+      } catch (e: any) {
+         setUpdateProgressState({
+            stage: "error",
+            progress: 0,
+            message: "Failed to initiate update",
+            errorDetails: e.message || "Could not connect to the update service."
+         });
          setIsUpdatingSystem(false);
       }
    };
@@ -2071,7 +2170,18 @@ export default function App() {
       fetchInstances();
       fetchMcVersions();
       fetchGlobalSettings();
-      checkSystemUpdates();
+
+      const justUpdated = localStorage.getItem("isopod_just_updated");
+      if (justUpdated) {
+         localStorage.removeItem("isopod_just_updated");
+         const targetVer = localStorage.getItem("isopod_target_version") || "";
+         localStorage.removeItem("isopod_target_version");
+         setUpdateSuccessToast(targetVer ? `Successfully updated to ${targetVer}!` : "Successfully updated to the latest version!");
+         setTimeout(() => setUpdateSuccessToast(null), 6000);
+         checkSystemUpdates(true);
+      } else {
+         checkSystemUpdates();
+      }
    }, []);
 
    useEffect(() => {
@@ -7006,6 +7116,123 @@ export default function App() {
             accept="image/*"
             onChange={handleIconUpload}
          />
+
+         {/* System Update Progress Overlay Modal */}
+         {updateProgressState && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-md animate-in fade-in duration-200 select-none p-4">
+               <div className="bg-[#1E1E1E] border border-[#383838] rounded-2xl p-8 max-w-lg w-full shadow-2xl space-y-6 text-center animate-in zoom-in-95 duration-200">
+                  {/* Status Icon */}
+                  <div className="flex justify-center">
+                     {updateProgressState.stage === "success" ? (
+                        <div className="w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-500/40 flex items-center justify-center text-emerald-400 shadow-[0_0_25px_rgba(16,185,129,0.25)] animate-in zoom-in duration-300">
+                           <Check className="w-8 h-8" />
+                        </div>
+                     ) : updateProgressState.stage === "error" ? (
+                        <div className="w-16 h-16 rounded-full bg-amber-500/20 border-2 border-amber-500/40 flex items-center justify-center text-amber-400 shadow-[0_0_25px_rgba(245,158,11,0.25)]">
+                           <AlertCircle className="w-8 h-8" />
+                        </div>
+                     ) : (
+                        <div className="w-16 h-16 rounded-full bg-[#3E8ED0]/20 border-2 border-[#3E8ED0]/40 flex items-center justify-center text-[#3E8ED0] shadow-[0_0_25px_rgba(62,142,208,0.25)]">
+                           <RefreshCw className="w-8 h-8 animate-spin" />
+                        </div>
+                     )}
+                  </div>
+
+                  {/* Title and Message */}
+                  <div className="space-y-2">
+                     <h3 className="text-xl font-bold text-white tracking-tight">
+                        {updateProgressState.stage === "success"
+                           ? "Update Completed!"
+                           : updateProgressState.stage === "error"
+                           ? "Update Notice"
+                           : "Updating Isopod..."}
+                     </h3>
+                     <p className="text-xs text-neutral-300 leading-relaxed font-medium">
+                        {updateProgressState.message}
+                     </p>
+                  </div>
+
+                  {/* Animated Progress Bar */}
+                  <div className="space-y-2 pt-2">
+                     <div className="w-full h-3.5 bg-[#141414] border border-[#333] rounded-full overflow-hidden p-0.5 relative shadow-inner">
+                        <div
+                           className={`h-full rounded-full transition-all duration-500 ease-out ${
+                              updateProgressState.stage === "success"
+                                 ? "bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.5)]"
+                                 : updateProgressState.stage === "error"
+                                 ? "bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.5)]"
+                                 : "bg-gradient-to-r from-[#3E8ED0] to-emerald-400 shadow-[0_0_15px_rgba(62,142,208,0.5)]"
+                           }`}
+                           style={{ width: `${Math.max(5, Math.min(100, updateProgressState.progress))}%` }}
+                        />
+                     </div>
+                     <div className="flex justify-between items-center text-[10px] text-neutral-400 px-1 font-mono">
+                        <span className="capitalize text-neutral-400">
+                           {updateProgressState.stage === "initiating" && "Step 1 of 3: Requesting update..."}
+                           {updateProgressState.stage === "rebuilding" && "Step 2 of 3: Rebuilding container..."}
+                           {updateProgressState.stage === "waiting_reconnect" && "Step 3 of 3: Restarting services..."}
+                           {updateProgressState.stage === "success" && "Finalizing: Ready"}
+                           {updateProgressState.stage === "error" && "Notice"}
+                        </span>
+                        <span className="font-bold text-neutral-200">
+                           {Math.round(updateProgressState.progress)}%
+                        </span>
+                     </div>
+                  </div>
+
+                  {/* Error Details & Recovery Actions */}
+                  {updateProgressState.stage === "error" && (
+                     <div className="space-y-4 animate-in fade-in duration-200">
+                        {updateProgressState.errorDetails && (
+                           <div className="bg-[#161616] border border-[#333] p-3 rounded-lg text-left text-[11px] text-neutral-400 font-mono leading-relaxed max-h-28 overflow-auto scrollbar-custom">
+                              {updateProgressState.errorDetails}
+                           </div>
+                        )}
+                        <div className="flex justify-center gap-3 pt-2">
+                           <button
+                              onClick={() => setUpdateProgressState(null)}
+                              className="px-4 py-2 bg-[#2D2D2D] hover:bg-[#383838] text-neutral-300 rounded-lg text-xs font-semibold transition"
+                           >
+                              Dismiss
+                           </button>
+                           <button
+                              onClick={() => window.location.reload()}
+                              className="px-5 py-2 bg-[#3E8ED0] hover:bg-[#347ab5] text-white rounded-lg text-xs font-bold transition shadow-lg shadow-[#3E8ED0]/20 flex items-center gap-2"
+                           >
+                              <RefreshCw className="w-3.5 h-3.5" /> Reload Page
+                           </button>
+                        </div>
+                     </div>
+                  )}
+
+                  {/* Safety note */}
+                  {updateProgressState.stage !== "error" && (
+                     <p className="text-[10px] text-neutral-400 pt-2 border-t border-[#2A2A2A]">
+                        Please keep this browser window open while Isopod updates. All server instances and data remain safe.
+                     </p>
+                  )}
+               </div>
+            </div>
+         )}
+
+         {/* Post-Update Success Toast */}
+         {updateSuccessToast && (
+            <div className="fixed bottom-6 right-6 z-[90] bg-emerald-950/95 border border-emerald-500/40 text-emerald-100 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-in slide-in-from-bottom-5 fade-in duration-300 backdrop-blur-md">
+               <div className="w-7 h-7 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
+                  <Check className="w-4 h-4" />
+               </div>
+               <div className="flex flex-col pr-2">
+                  <span className="text-xs font-bold text-white">System Updated</span>
+                  <span className="text-[11px] text-emerald-300/80">{updateSuccessToast}</span>
+               </div>
+               <button
+                  onClick={() => setUpdateSuccessToast(null)}
+                  className="p-1 hover:bg-emerald-800/40 rounded text-emerald-400/60 hover:text-white transition"
+               >
+                  <X className="w-4 h-4" />
+               </button>
+            </div>
+         )}
       </div>
 
    );
