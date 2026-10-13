@@ -1896,7 +1896,9 @@ export default function App() {
 
                if (pingRes.ok) {
                   const info = await pingRes.json();
-                  if (serverDropped || attempts >= 4) {
+                  const targetVer = updateInfo?.latest_version;
+                  const isTarget = Boolean(targetVer && info.version === targetVer);
+                  if (serverDropped || isTarget) {
                      clearInterval(pollInterval);
                      clearInterval(progressInterval);
 

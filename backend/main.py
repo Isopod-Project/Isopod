@@ -72,6 +72,28 @@ app.add_middleware(AuthorizationMiddleware)
 
 SERVERS_DIR = os.getenv("SERVERS_DIR", "./servers")
 
+def get_current_version() -> str:
+    version_file = os.path.join(SERVERS_DIR, ".isopod_version")
+    if os.path.exists(version_file):
+        try:
+            with open(version_file, "r", encoding="utf-8") as f:
+                v = f.read().strip()
+                if v:
+                    return v
+        except Exception:
+            pass
+    return ISOPOD_VERSION
+
+def set_current_version(version: str):
+    try:
+        version_file = os.path.join(SERVERS_DIR, ".isopod_version")
+        os.makedirs(os.path.dirname(version_file), exist_ok=True)
+        with open(version_file, "w", encoding="utf-8") as f:
+            f.write(version.strip())
+    except Exception as e:
+        print(f"Failed to set current version: {e}")
+
+
 try:
     docker_client = docker.from_env()
 except docker.errors.DockerException:
@@ -3369,12 +3391,13 @@ def global_download_files(
 @app.get("/api/system/info", response_model=SystemInfo)
 def get_system_info():
     return {
-        "version": ISOPOD_VERSION,
+        "version": get_current_version(),
         "is_docker": os.path.exists("/.dockerenv")
     }
 
 async def get_latest_release():
     """Fetches the latest release info from GitHub API."""
+    curr_v = get_current_version()
     try:
         async with httpx.AsyncClient() as client:
             headers = {"Accept": "application/vnd.github.v3+json"}
@@ -3384,16 +3407,16 @@ async def get_latest_release():
                 data = res.json()
                 latest_v = data.get("tag_name", "Unknown")
                 return {
-                    "current_version": ISOPOD_VERSION,
+                    "current_version": curr_v,
                     "latest_version": latest_v,
-                    "has_update": latest_v != ISOPOD_VERSION,
+                    "has_update": latest_v != curr_v,
                     "release_notes": data.get("body", "No release notes available."),
                     "published_at": data.get("published_at")
                 }
             elif res.status_code == 404:
                 return {
-                    "current_version": ISOPOD_VERSION,
-                    "latest_version": ISOPOD_VERSION,
+                    "current_version": curr_v,
+                    "latest_version": curr_v,
                     "has_update": False,
                     "release_notes": "You are running the latest version of Isopod.",
                     "published_at": None
@@ -3431,12 +3454,13 @@ async def check_updates(force: bool = False):
             cached_update_info = info
             return info
         else:
-             return {
-                "current_version": ISOPOD_VERSION,
-                "latest_version": ISOPOD_VERSION,
+            curr_v = get_current_version()
+            return {
+                "current_version": curr_v,
+                "latest_version": curr_v,
                 "has_update": False,
                 "release_notes": "Could not connect to update service."
-             }
+            }
     
     return cached_update_info
 
@@ -3447,10 +3471,13 @@ async def perform_update():
     and rebuilding/restarting the container via the mounted Docker socket.
     """
     global cached_update_info
-    cached_update_info = None  # Immediately clear cached update info
 
-    if not os.path.exists("/var/run/docker.sock"):
-        raise HTTPException(status_code=500, detail="Docker socket not found. Cannot perform self-update.")
+    # Fetch latest release to persist target version
+    info = await get_latest_release()
+    if info and info.get("latest_version") and info.get("latest_version") != "Unknown":
+        set_current_version(info["latest_version"])
+
+    cached_update_info = None  # Immediately clear cached update info
 
     async def trigger_restart():
         await asyncio.sleep(2)
@@ -3474,13 +3501,17 @@ async def perform_update():
                 except Exception as ge:
                     print(f"Git pull warning: {ge}")
 
-            if has_build:
-                cmd = ["docker", "compose", "-f", compose_file, "up", "-d", "--build"]
-            else:
-                cmd = ["docker", "compose", "-f", compose_file, "up", "-d", "--pull", "always"]
+            if os.path.exists(compose_file):
+                if has_build:
+                    cmd = ["docker", "compose", "-f", compose_file, "up", "-d", "--build"]
+                else:
+                    cmd = ["docker", "compose", "-f", compose_file, "up", "-d", "--pull", "always"]
 
-            print(f"Executing update sequence: {' '.join(cmd)}")
-            subprocess.Popen(cmd, start_new_session=True)
+                print(f"Executing update sequence: {' '.join(cmd)}")
+                subprocess.Popen(cmd, start_new_session=True)
+            elif os.path.exists("/.dockerenv"):
+                print("Running inside container. Exiting process to trigger Docker container restart...")
+                os._exit(0)
         except Exception as e:
             print(f"Self-update trigger failed: {e}")
 
