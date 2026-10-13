@@ -53,6 +53,7 @@ html[data-theme="light"] main {
 /* Secondary inner panels, sub-panels, search bars, table containers */
 html[data-theme="light"] [class*="bg-[#1A1A1A]"],
 html[data-theme="light"] [class*="bg-[#141414]"],
+html[data-theme="light"] [class*="bg-[#121212]"],
 html[data-theme="light"] [class*="bg-[#0F0F0F]"],
 html[data-theme="light"] [class*="bg-[#181818]"],
 html[data-theme="light"] [class*="bg-[#1F1F1F]"],
@@ -95,6 +96,9 @@ html[data-theme="light"] textarea {
 html[data-theme="light"] input::placeholder,
 html[data-theme="light"] textarea::placeholder {
     color: #94a3b8 !important;
+}
+html[data-theme="light"] input.text-emerald-400 {
+    color: #047857 !important;
 }
 
 /* Hover surfaces */
@@ -157,11 +161,70 @@ html[data-theme="light"] [class*="divide-neutral-"] > :not([hidden]) ~ :not([hid
     border-color: #e2e8f0 !important;
 }
 
-/* Keep console log terminal pre readable as a slate dark terminal */
+/* ==========================================================================
+   Console Output / Pre Terminal in Light Mode
+   ========================================================================== */
 html[data-theme="light"] pre,
+html[data-theme="light"] pre[class*="bg-[#0D0D0D]"],
 html[data-theme="light"] [class*="bg-[#0D0D0D]"] {
-    background-color: #0f172a !important;
-    color: #f8fafc !important;
+    background-color: #ffffff !important;
+    color: #1e293b !important;
+    border-color: #cbd5e1 !important;
+}
+
+html[data-theme="light"] pre .text-neutral-300,
+html[data-theme="light"] pre [class*="text-neutral-300"] {
+    color: #1e293b !important;
+}
+
+html[data-theme="light"] pre .text-neutral-400,
+html[data-theme="light"] pre [class*="text-neutral-400"] {
+    color: #475569 !important;
+}
+
+html[data-theme="light"] pre .text-neutral-500,
+html[data-theme="light"] pre [class*="text-neutral-500"] {
+    color: #64748b !important;
+}
+
+/* Syntax colored lines in console readable on white background */
+html[data-theme="light"] pre .text-\[\#4ADE80\],
+html[data-theme="light"] pre [class*="text-[#4ADE80]"] {
+    color: #15803d !important;
+}
+html[data-theme="light"] pre .text-\[\#F87171\],
+html[data-theme="light"] pre [class*="text-[#F87171]"] {
+    color: #dc2626 !important;
+}
+html[data-theme="light"] pre .text-\[\#FBBF24\],
+html[data-theme="light"] pre [class*="text-[#FBBF24]"] {
+    color: #b45309 !important;
+}
+html[data-theme="light"] pre .text-\[\#60A5FA\],
+html[data-theme="light"] pre [class*="text-[#60A5FA]"] {
+    color: #2563eb !important;
+}
+html[data-theme="light"] pre .text-\[\#2DD4BF\],
+html[data-theme="light"] pre [class*="text-[#2DD4BF]"] {
+    color: #0f766e !important;
+}
+html[data-theme="light"] pre .text-\[\#C084FC\],
+html[data-theme="light"] pre [class*="text-[#C084FC]"] {
+    color: #7e22ce !important;
+}
+
+/* Light mode container highlights for console rows */
+html[data-theme="light"] pre [class*="bg-[#14532D]"] {
+    background-color: #dcfce7 !important;
+    border-color: #bbf7d0 !important;
+}
+html[data-theme="light"] pre [class*="bg-[#7F1D1D]"] {
+    background-color: #fee2e2 !important;
+    border-color: #fecaca !important;
+}
+html[data-theme="light"] pre [class*="bg-[#78350F]"] {
+    background-color: #fef3c7 !important;
+    border-color: #fde68a !important;
 }
 
 /* Modal overlays */
