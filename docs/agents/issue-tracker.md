@@ -11,6 +11,7 @@ Issues and specs for this repo live as GitHub issues on `Isopod-Project/Isopod`.
 - **Make an issue a sub-issue of a parent**: `gh issue create --parent <parent> ...`, or add `Part of #<parent>` at the top of the body.
 - **Comment on an issue**: `gh issue comment <number> --body "..."`
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
+- **Branch per issue**: Whenever a new issue is created or requested for work, always create and check out a dedicated branch named after the issue number (e.g. `git checkout -b <number>`). Never commit or implement changes directly on `main`.
 - **Close**: `gh issue close <number> --comment "..."`
 
 ## Pull requests as a triage surface

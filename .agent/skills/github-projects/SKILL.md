@@ -91,8 +91,9 @@ To move an item to a new column (e.g., from Todo to In Progress or Done):
 
 ## Agent Execution Rules
 
+- **Dedicated Branch per Issue**: Whenever creating a new issue or beginning work on an issue, the agent MUST immediately create and check out a dedicated git branch named after the issue number (e.g., `git checkout -b <ISSUE_NUMBER>`). Never implement or commit new issue code directly on `main`.
 - **Always query IDs first**: Never hardcode status IDs if they are unknown; query `gh project field-list` before executing status edits.
-- **Link Issues to Branches/Commits**: When creating tickets intended for immediate work, report the issue number back to the user so it can be referenced in branch names or commit messages (e.g., `feat/#12-task`).
+- **Link Issues to Branches/Commits**: When creating tickets intended for immediate work, report the issue number back to the user and ensure commit messages reference it (e.g., `feat(#12): ...`).
 - **Verify Transitions**: After moving or editing an item, verify the JSON output to ensure the status change succeeded before confirming completion.
 
 ---

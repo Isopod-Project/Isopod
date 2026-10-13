@@ -5,6 +5,7 @@
 ### Issue tracker
 
 GitHub Issues via `gh` CLI. Linked with Isopod-Project GitHub Project #1. See [issue-tracker.md](file:///c:/Coding/Isopod/docs/agents/issue-tracker.md).
+- **Branch Strategy**: Always create and check out a dedicated branch named after the issue number (`git checkout -b <number>`) whenever an issue is created or requested for work. Never implement directly on `main`.
 
 ### Domain docs
 
