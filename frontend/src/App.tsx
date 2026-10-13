@@ -1838,6 +1838,7 @@ export default function App() {
       const confirmed = await showConfirm("This will pull the latest release, rebuild/restart the container, and update Isopod. All server instances and data remain safe. Proceed?", "Update Isopod");
       if (!confirmed) return;
 
+      setIsSettingsModalOpen(false);
       setIsUpdatingSystem(true);
       setUpdateProgressState({
          stage: "initiating",
