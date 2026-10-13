@@ -3399,7 +3399,7 @@ async def get_latest_release():
     """Fetches the latest release info from GitHub API."""
     curr_v = get_current_version()
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
             headers = {"Accept": "application/vnd.github.v3+json"}
             res = await client.get(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", headers=headers, timeout=10)
             
