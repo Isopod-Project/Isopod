@@ -1590,6 +1590,9 @@ async def create_instance(req: CreateInstanceRequest):
         env.append("ENABLE_WHITELIST=true")
         if w_users:
             env.append(f"WHITELIST={','.join(w_users)}")
+    elif w_users:
+        env.append("ENABLE_WHITELIST=false")
+        env.append(f"WHITELIST={','.join(w_users)}")
 
     template = req.template.upper()
     if req.loader_version and req.loader_version != "latest":
@@ -1681,17 +1684,21 @@ async def create_instance(req: CreateInstanceRequest):
     with open(os.path.join(path, "docker-compose.yml"), "w") as f:
         yaml.dump(compose_content, f, default_flow_style=False)
     
-    # Pre-initialize users.json if whitelist users are provided
-    if w_enabled and w_users:
+    # Pre-initialize users.json and whitelist.json if whitelist users are provided
+    if w_users:
         data_dir = os.path.join(path, "data")
         os.makedirs(data_dir, exist_ok=True)
         users_path = os.path.join(data_dir, "users.json")
+        wl_path = os.path.join(data_dir, "whitelist.json")
         try:
             users_data = [{"name": u, "uuid": "", "level": 0, "is_op": False, "whitelisted": True, "active": True} for u in w_users]
             with open(users_path, "w") as uf:
                 json.dump(users_data, uf, indent=2)
+            wl_data = [{"name": u, "uuid": ""} for u in w_users]
+            with open(wl_path, "w") as wf:
+                json.dump(wl_data, wf, indent=2)
         except Exception as e:
-            print(f"Error initializing users.json: {e}")
+            print(f"Error initializing users.json and whitelist.json: {e}")
 
     # Save metadata
     save_instance_meta(path, {"group": req.group or "No group"})

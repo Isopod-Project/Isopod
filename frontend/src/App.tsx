@@ -596,7 +596,7 @@ export default function App() {
             generate_structures: newGenerateStructures,
             memory: newMemory || globalSettings.defaultMemory || "1G",
             whitelist_enabled: modalWhitelistEnabled,
-            whitelist_users: modalWhitelistUsers
+            whitelist_users: (modalWhitelistUsers && modalWhitelistUsers.length > 0) ? modalWhitelistUsers : (globalSettings.defaultWhitelistUsers || [])
          };
 
          const res = await fetch("/api/instances", {
@@ -1759,11 +1759,18 @@ export default function App() {
 
    const handleSaveGlobalSettings = async () => {
       setIsSavingGlobal(true);
+      let updatedSettings = { ...globalSettings };
+      if (newWhitelistUser.trim() && !updatedSettings.defaultWhitelistUsers.includes(newWhitelistUser.trim())) {
+         updatedSettings.defaultWhitelistUsers = [...updatedSettings.defaultWhitelistUsers, newWhitelistUser.trim()];
+         setGlobalSettings(updatedSettings);
+         setNewWhitelistUser("");
+         setWhitelistPreview(null);
+      }
       try {
          const res = await fetch("/api/settings", {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(globalSettings)
+            body: JSON.stringify(updatedSettings)
          });
          if (!res.ok) throw new Error("Failed to save settings");
          setOriginalGlobalSettings(JSON.stringify(globalSettings));
@@ -3021,11 +3028,15 @@ export default function App() {
                                        </button>
                                     </div>
 
-                                    {modalWhitelistEnabled && (
-                                       <div className="space-y-3 pt-2 border-t border-[#333] animate-in fade-in duration-200">
+                                    <div className="space-y-3 pt-2 border-t border-[#333]">
+                                       <div className="flex items-center justify-between">
                                           <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest block">
                                              Allowed Players ({modalWhitelistUsers.length})
                                           </label>
+                                          <span className="text-[10px] text-neutral-500 font-medium">
+                                             {modalWhitelistEnabled ? "Whitelist active" : "Whitelist inactive (players saved to server roster)"}
+                                          </span>
+                                       </div>
                                           <div className="flex gap-2">
                                              <input
                                                 type="text"
@@ -3089,7 +3100,6 @@ export default function App() {
                                              <p className="text-xs text-neutral-500 italic">No players added yet. Anyone will be blocked until added to the whitelist.</p>
                                           )}
                                        </div>
-                                    )}
                                  </div>
 
                                  <div className="bg-[#2D2D2D] border border-[#3A3A3A] p-6 rounded-2xl flex gap-5 items-start shadow-xl">
@@ -5511,9 +5521,8 @@ export default function App() {
                                        </button>
                                     </div>
 
-                                    {globalSettings.defaultWhitelistEnabled && (
-                                       <div className="space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
-                                          <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest block">Default Whitelisted Players</label>
+                                    <div className="space-y-3 pt-2 border-t border-[#333]">
+                                       <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest block">Default Whitelisted Players ({globalSettings.defaultWhitelistUsers.length})</label>
                                           <div className="flex gap-2">
                                              <div className="relative flex-1">
                                                 <div className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-sm bg-[#1A1A1A] border border-[#333] flex items-center justify-center overflow-hidden">
@@ -5617,8 +5626,7 @@ export default function App() {
                                              )}
                                           </div>
                                        </div>
-                                    )}
-                                 </div>
+                                    </div>
                               </div>
                            </div>
                         )}
