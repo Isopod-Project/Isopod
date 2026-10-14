@@ -2275,7 +2275,7 @@ export default function App() {
 
    // Re-run modpack search when toggle changes
    useEffect(() => {
-      if (isAddModalOpen && addTab === "modrinth" && searchModpacks) {
+      if (isAddModalOpen && addTab === "modrinth") {
          handleModpackSearch(searchModpacks, addTab);
       }
    }, [onlyServerSideModpacks]);
@@ -4903,7 +4903,10 @@ export default function App() {
                                           <select
                                              className="bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-2 rounded text-xs focus:outline-none focus:border-[#3E8ED0]"
                                              value={modSearchVersion}
-                                             onChange={(e) => setModSearchVersion(e.target.value)}
+                                             onChange={(e) => {
+                                                setModSearchVersion(e.target.value);
+                                                handleModSearch(modSearchQuery, modSearchProvider, e.target.value, modSearchLoader);
+                                             }}
                                           >
                                              <option value="">Any Version</option>
                                              {mcVersions.filter((v: any) => v.type === "release").slice(0, 150).map((v: any) => (
@@ -4914,7 +4917,10 @@ export default function App() {
                                           <select
                                              className="bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-2 rounded text-xs focus:outline-none focus:border-[#3E8ED0]"
                                              value={modSearchLoader}
-                                             onChange={(e) => setModSearchLoader(e.target.value)}
+                                             onChange={(e) => {
+                                                setModSearchLoader(e.target.value);
+                                                handleModSearch(modSearchQuery, modSearchProvider, modSearchVersion, e.target.value);
+                                             }}
                                           >
                                              <option value="">Any Loader</option>
                                              <option value="VANILLA">Vanilla</option>
