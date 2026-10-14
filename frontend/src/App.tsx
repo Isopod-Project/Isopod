@@ -613,6 +613,7 @@ export default function App() {
             modrinth_id: addTab === 'modrinth' && selectedModpack ? selectedModpack.id : null,
             cf_id: null,
             modpack_version: addTab === 'modrinth' && selectedModpack ? selectedModpackVersion : null,
+            icon_url: addTab === 'modrinth' && selectedModpack ? selectedModpack.icon_url : null,
             seed: newSeed,
             level_type: newLevelType,
             difficulty: newDifficulty,
@@ -3234,7 +3235,8 @@ export default function App() {
                                                 key={pack.id}
                                                 onClick={() => {
                                                    setSelectedModpack(pack);
-                                                   if (!newName) setNewName(pack.name);
+                                                   // Follow the selected pack's name unless the user has typed a custom one
+                                                   if (!newName || newName === selectedModpack?.name) setNewName(pack.name);
                                                    fetchModpackVersions(pack.id, addTab);
                                                 }}
                                                 className={`flex items-center gap-4 p-3 rounded-lg border cursor-pointer transition-all ${selectedModpack?.id === pack.id ? 'bg-[#3E8ED0]/20 border-[#3E8ED0] shadow-lg shadow-[#3E8ED0]/5' : 'bg-[#222] border-[#333] hover:bg-[#282828] hover:border-[#444]'}`}
