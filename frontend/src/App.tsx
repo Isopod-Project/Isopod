@@ -36,6 +36,19 @@ export default function App() {
    const [pendingIconId, setPendingIconId] = useState<string | null>(null);
    const iconInputRef = useRef<HTMLInputElement>(null);
    const [iconCacheBuster, setIconCacheBuster] = useState(Date.now());
+   // Icon chosen in the New Instance modal; uploaded once the instance exists
+   const [newIconFile, setNewIconFile] = useState<File | null>(null);
+   const [newIconPreview, setNewIconPreview] = useState<string | null>(null);
+   const newIconInputRef = useRef<HTMLInputElement>(null);
+   useEffect(() => {
+      if (!newIconFile) {
+         setNewIconPreview(null);
+         return;
+      }
+      const url = URL.createObjectURL(newIconFile);
+      setNewIconPreview(url);
+      return () => URL.revokeObjectURL(url);
+   }, [newIconFile]);
 
 
    // Selected Instance for the right sidebar
@@ -592,6 +605,7 @@ export default function App() {
             });
 
             const data = await promise;
+            if (data?.id) await uploadNewInstanceIcon(data.id);
             setInstances((prev: Instance[]) => [...prev, data]);
             setIsAddModalOpen(false);
             setImportFile(null);
@@ -633,6 +647,7 @@ export default function App() {
          });
          if (!res.ok) throw new Error("Failed to create instance");
          const data = await res.json();
+         await uploadNewInstanceIcon(data.id);
 
          setInstances((prev: Instance[]) => [...prev, data]);
          setIsAddModalOpen(false);
@@ -725,6 +740,18 @@ export default function App() {
       }
       setPendingIconId(null);
       e.target.value = "";
+   };
+
+   const uploadNewInstanceIcon = async (instanceId: string) => {
+      if (!newIconFile) return;
+      const formData = new FormData();
+      formData.append("file", newIconFile);
+      try {
+         const res = await fetch(`/api/instances/${instanceId}/icon`, { method: "POST", body: formData });
+         if (res.ok) setIconCacheBuster(Date.now());
+      } catch (err) {
+         console.error("Failed to upload instance icon", err);
+      }
    };
 
    const handleExport = (id: string) => {
@@ -2482,6 +2509,7 @@ export default function App() {
                <button
                   onClick={() => {
                      setIsAddModalOpen(true);
+                     setNewIconFile(null);
                      setAddStep(1);
                      setAddTab("custom");
                      setNewName("");
@@ -2893,8 +2921,12 @@ export default function App() {
 
                   {/* Top Bar: Name, Icon, Group, Port */}
                   <div className="px-6 py-5 border-b border-[#323232] bg-[#2B2B2B] flex items-center gap-6">
-                     <div className="w-16 h-16 bg-[#3B3B3B] rounded flex items-center justify-center shadow-inner relative group border border-[#444]">
-                        {selectedModpack?.icon_url ? <img src={selectedModpack.icon_url} className="w-full h-full object-cover rounded" /> : <Gamepad2 className="w-8 h-8 text-neutral-600" />}
+                     <div
+                        onClick={() => newIconInputRef.current?.click()}
+                        title="Click to choose an icon"
+                        className="w-16 h-16 bg-[#3B3B3B] rounded flex items-center justify-center shadow-inner relative group border border-[#444] cursor-pointer"
+                     >
+                        {(newIconPreview || selectedModpack?.icon_url) ? <img src={newIconPreview || selectedModpack.icon_url} className="w-full h-full object-cover rounded" /> : <Gamepad2 className="w-8 h-8 text-neutral-600" />}
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity cursor-pointer rounded">
                            <Edit className="w-4 h-4 text-white" />
                         </div>
@@ -7144,6 +7176,16 @@ export default function App() {
             className="hidden"
             accept="image/*"
             onChange={handleIconUpload}
+         />
+         <input
+            type="file"
+            ref={newIconInputRef}
+            className="hidden"
+            accept="image/*"
+            onChange={(e) => {
+               if (e.target.files?.[0]) setNewIconFile(e.target.files[0]);
+               e.target.value = "";
+            }}
          />
 
          {/* System Update Progress Overlay Modal */}
