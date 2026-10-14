@@ -599,7 +599,9 @@ export default function App() {
             setImportProgress(null);
             setImportStatus("");
             await showAlert("Instance imported successfully!", "Success");
-            fetchInstances();
+            // Await the refresh before selecting so its first-instance fallback doesn't override the new selection
+            await fetchInstances();
+            if (data?.id) setSelectedId(data.id);
             setIsCreating(false);
             return;
          }
@@ -654,7 +656,9 @@ export default function App() {
          setModalWhitelistUsers([...(globalSettings.defaultWhitelistUsers || [])]);
          setModalWhitelistUserDraft("");
 
-         fetchInstances();
+         // Await the refresh before selecting so its first-instance fallback doesn't override the new selection
+         await fetchInstances();
+         setSelectedId(data.id);
       } catch (e) {
          console.error(e);
          await showAlert("Failed to create instance", "Creation Failed");
