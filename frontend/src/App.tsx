@@ -1384,12 +1384,16 @@ export default function App() {
       return () => window.removeEventListener('keydown', handleKeyDown);
    }, [editTab, selectedFileNames, fileClipboard, fileList, currentFilePath, isGlobalBrowser, selectedId]);
 
+   // Modpack instances run as TYPE=MODRINTH; mod searches need the pack's underlying loader instead
+   const getInstanceModLoader = (env: Record<string, string>) =>
+      env["TYPE"] === "MODRINTH" ? (env["ISOPOD_MODPACK_LOADER"] || "") : (env["TYPE"] || "");
+
    const handleModSearch = async (query: string, provider: string, forceVersion?: string, forceLoader?: string) => {
       setIsModSearching(true);
       try {
          // Default to what's in the search inputs, or fallback to instance configuration
          let mc_version = forceVersion !== undefined ? forceVersion : (modSearchVersion || (config?.environment ? (config.environment["VERSION"] || "") : ""));
-         let raw_loader = forceLoader !== undefined ? forceLoader : (modSearchLoader || (config?.environment ? (config.environment["TYPE"] || "") : ""));
+         let raw_loader = forceLoader !== undefined ? forceLoader : (modSearchLoader || (config?.environment ? getInstanceModLoader(config.environment) : ""));
 
          // Fix potential "undefined" literals
          if (mc_version === "undefined") mc_version = "";
@@ -2233,7 +2237,7 @@ export default function App() {
    useEffect(() => {
       if (isEditModalOpen && config.environment) {
          const v = config.environment["VERSION"] || "";
-         const l = config.environment["TYPE"] || "";
+         const l = getInstanceModLoader(config.environment);
          setModSearchVersion(v);
          setModSearchLoader(l);
          fetchInstalledModsMeta();
@@ -4962,7 +4966,7 @@ export default function App() {
                                                                <span className="text-[10px] text-neutral-500 font-mono">By {res.author} • {res.downloads.toLocaleString()} downloads</span>
                                                                {/* Conflict/Warning display */}
                                                                {(() => {
-                                                                  const instanceLoader = config.environment["TYPE"] || "";
+                                                                  const instanceLoader = getInstanceModLoader(config.environment);
                                                                   const modCats = res.categories || [];
                                                                   const hasFabric = modCats.includes("fabric");
                                                                   const hasForge = modCats.includes("forge") || modCats.includes("neoforge");

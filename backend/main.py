@@ -1506,13 +1506,26 @@ async def get_modrinth_project_versions(project_id: str):
         raise HTTPException(status_code=502, detail=f"Modrinth API error: {str(e)}")
 
 
+MODPACK_SERVER_TYPES = {"modrinth", "auto_curseforge", "curseforge", "ftba"}
+
+# modrinth.index.json dependency keys -> itzg TYPE loader names
+MRPACK_LOADER_DEPENDENCIES = {
+    "neoforge": "NEOFORGE",
+    "forge": "FORGE",
+    "fabric-loader": "FABRIC",
+    "quilt-loader": "QUILT",
+}
+
 @app.get("/api/mods/search/modrinth")
 async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None, class_type: str = "mod", only_server_side: bool = True):
     # Handle "undefined" literals from frontend
     q = None if q == "undefined" or not q else q
     mc_version = None if mc_version == "undefined" or not mc_version else mc_version
     loader = None if loader == "undefined" or not loader else loader
-    
+    # Modpack server types (e.g. TYPE=MODRINTH) aren't Modrinth loader categories and would match 0 hits
+    if loader and loader.lower() in MODPACK_SERVER_TYPES:
+        loader = None
+
     # If query is empty, we browse via facets
     query_str = q if q else ""
         
@@ -1669,6 +1682,12 @@ async def create_instance(req: CreateInstanceRequest):
                             with zipfile.ZipFile(io.BytesIO(mrpack_res.content)) as z:
                                 if "modrinth.index.json" in z.namelist():
                                     index_data = json.loads(z.read("modrinth.index.json").decode("utf-8"))
+                                    # Record the pack's underlying mod loader so mod searches can filter by it
+                                    pack_deps = index_data.get("dependencies", {})
+                                    for dep_key, loader_type in MRPACK_LOADER_DEPENDENCIES.items():
+                                        if dep_key in pack_deps:
+                                            env.append(f"ISOPOD_MODPACK_LOADER={loader_type}")
+                                            break
                                     excludes = []
                                     for f in index_data.get("files", []):
                                         env_cfg = f.get("env", {})
