@@ -3494,7 +3494,11 @@ export default function App() {
                   {/* Bottom Actions */}
                   <div className="p-4 bg-[#2D2D2D] border-t border-[#3A3A3A] flex justify-between items-center px-6">
                      <div className="flex items-center gap-4">
-                        <button className="flex items-center gap-2 text-neutral-500 hover:text-white transition-colors text-xs font-medium">
+                        <button
+                           onClick={() => window.open("https://isopod-project.github.io/Isopod-Website/", "_blank", "noopener,noreferrer")}
+                           title="Open the Isopod website and wiki"
+                           className="flex items-center gap-2 text-neutral-500 hover:text-white transition-colors text-xs font-medium"
+                        >
                            <AlertCircle className="w-4 h-4" /> Help
                         </button>
                         {isCreating && addTab === 'import' && (
