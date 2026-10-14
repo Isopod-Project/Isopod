@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from "react";
 import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard } from "lucide-react";
+import { HelpButton } from "./components/HelpButton";
 
 interface Instance {
    id: string;
@@ -2525,6 +2526,12 @@ export default function App() {
                      </span>
                   )}
                </button>
+               <HelpButton
+                  topic="dashboard"
+                  label="Help"
+                  className="text-white hover:bg-[#4A4A4A] px-3 py-1.5 rounded text-sm font-medium"
+                  iconClassName="text-neutral-300"
+               />
                <div className="ml-auto flex items-center gap-4">
                   <div className="flex flex-col items-end">
                      <span className="text-[9px] font-black text-neutral-500 uppercase tracking-tighter leading-none mb-0.5">Version</span>
@@ -2834,7 +2841,10 @@ export default function App() {
                            className="flex items-center justify-between text-[11px] cursor-pointer hover:bg-[#323232] p-1.5 -mx-1.5 rounded-md transition group"
                            title="Click to copy server address"
                         >
-                           <span className="text-neutral-500 uppercase font-bold tracking-wider">Address</span>
+                           <span className="flex items-center gap-1 text-neutral-500 uppercase font-bold tracking-wider">
+                              Address
+                              <HelpButton topic="networking" className="text-neutral-600" iconClassName="w-3 h-3" />
+                           </span>
                            <div className="flex items-center gap-1.5">
                               <span className={`font-mono font-bold transition-colors ${copiedId === 'sidebar' ? 'text-emerald-400' : 'text-emerald-500 group-hover:underline'}`}>
                                  {copiedId === 'sidebar' ? 'COPIED!' : `${selectedStatus.public_ip}:${selectedStatus.port || 25565}`}
@@ -3494,13 +3504,7 @@ export default function App() {
                   {/* Bottom Actions */}
                   <div className="p-4 bg-[#2D2D2D] border-t border-[#3A3A3A] flex justify-between items-center px-6">
                      <div className="flex items-center gap-4">
-                        <button
-                           onClick={() => window.open("https://isopod-project.github.io/Isopod-Website/", "_blank", "noopener,noreferrer")}
-                           title="Open the Isopod website and wiki"
-                           className="flex items-center gap-2 text-neutral-500 hover:text-white transition-colors text-xs font-medium"
-                        >
-                           <AlertCircle className="w-4 h-4" /> Help
-                        </button>
+                        <HelpButton topic={`new-${addTab}`} label="Help" className="text-xs font-medium" />
                         {isCreating && addTab === 'import' && (
                            <div className="flex flex-col gap-1.5 w-64 md:w-80">
                               <div className="flex justify-between text-xs font-semibold text-neutral-300">
@@ -3591,9 +3595,12 @@ export default function App() {
 
                         </div>
                      </div>
-                     <button onClick={closeEditModal} className="p-1 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition" title="Close without saving">
-                        <X className="w-6 h-6" />
-                     </button>
+                     <div className="flex items-center gap-2">
+                        <HelpButton topic={editTab} className="p-1.5 hover:bg-[#3A3A3A] rounded-full text-neutral-400" iconClassName="w-5 h-5" />
+                        <button onClick={closeEditModal} className="p-1 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition" title="Close without saving">
+                           <X className="w-6 h-6" />
+                        </button>
+                     </div>
                   </div>
 
                   <div className="flex flex-1 overflow-hidden">
@@ -6348,12 +6355,15 @@ export default function App() {
                            <p className="text-[10px] text-neutral-500 uppercase tracking-widest font-bold mt-0.5">Global Configuration & Defaults</p>
                         </div>
                      </div>
-                     <button
-                        onClick={() => setIsSettingsModalOpen(false)}
-                        className="p-1.5 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition"
-                     >
-                        <X className="w-6 h-6" />
-                     </button>
+                     <div className="flex items-center gap-2">
+                        <HelpButton topic={`settings-${settingsTab}`} className="p-1.5 hover:bg-[#3A3A3A] rounded-full text-neutral-400" iconClassName="w-5 h-5" />
+                        <button
+                           onClick={() => setIsSettingsModalOpen(false)}
+                           className="p-1.5 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition"
+                        >
+                           <X className="w-6 h-6" />
+                        </button>
+                     </div>
                   </div>
 
                   <div className="flex-1 flex overflow-hidden">
