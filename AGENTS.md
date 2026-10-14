@@ -15,7 +15,9 @@ Single-context documentation layout. See [domain.md](file:///c:/Coding/Isopod/do
 
 ### Installed Skills in `.agent/skills/`
 
-- [code-review](file:///c:/Coding/Isopod/.agent/skills/code-review/SKILL.md): Strict pre-commit review along repo standards and spec fulfillment.
+`.agent/skills/` is the source of truth. `.claude/skills/` is a generated mirror for Claude Code; after editing a skill, run `python scripts/sync_skills.py` and commit both.
+
+- [spec-review](file:///c:/Coding/Isopod/.agent/skills/spec-review/SKILL.md): Strict pre-commit review along repo standards and spec fulfillment. (For bug-hunting reviews in Claude Code, use the built-in `/code-review`.)
 - [diagnosing-bugs](file:///c:/Coding/Isopod/.agent/skills/diagnosing-bugs/SKILL.md): Hypothesis-driven bug reproduction and resolution.
 - [domain-modeling](file:///c:/Coding/Isopod/.agent/skills/domain-modeling/SKILL.md): Expand and maintain `GLOSSARY.md` and ADR records.
 - [handoff](file:///c:/Coding/Isopod/.agent/skills/handoff/SKILL.md): Structured state handoff across agent turns or sessions.
