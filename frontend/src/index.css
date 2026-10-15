@@ -8,6 +8,34 @@ body {
     transition: background-color 0.15s ease, color 0.15s ease;
 }
 
+/* Interactive elements show the hand cursor by default (Tailwind preflight
+   resets buttons to `default`). Utility classes such as `cursor-default` still
+   override this, since utilities sit in a later layer. */
+@layer base {
+    button,
+    [role="button"],
+    [role="tab"],
+    [role="menuitem"],
+    [role="option"],
+    a[href],
+    summary,
+    select,
+    label[for],
+    input[type="checkbox"],
+    input[type="radio"],
+    input[type="range"],
+    input[type="file"] {
+        cursor: pointer;
+    }
+}
+
+/* Disabled controls never show the hand cursor. !important so that
+   `cursor-pointer` utility classes on disabled elements are overridden too. */
+:disabled,
+[aria-disabled="true"] {
+    cursor: not-allowed !important;
+}
+
 /* ==========================================================================
    Light Mode Theme
    ========================================================================== */
