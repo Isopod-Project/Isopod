@@ -837,8 +837,10 @@ export default function App() {
          const data = await res.json();
          setConfig(data);
          setOriginalConfig(JSON.stringify(data));
+         return data;
       } catch (e) {
          console.error("Failed to fetch config", e);
+         return null;
       }
    };
 
@@ -1112,8 +1114,8 @@ export default function App() {
       }
    };
 
-   const handleVersionClick = async (vId: string) => {
-      if (vId === config.environment["VERSION"]) return;
+   const handleVersionClick = async (vId: string, environment: Record<string, string> = config.environment) => {
+      if (vId === environment["VERSION"]) return;
 
       setPendingVersion(vId);
       setIsVersionModalOpen(true);
@@ -1121,8 +1123,8 @@ export default function App() {
       setCompatibility({ compatible: [], incompatible: [] });
 
       try {
-         const loader = config.environment["TYPE"] || "VANILLA";
-         const modrinthIds = (config.environment["MODRINTH_PROJECTS"] || "").split(',').filter(Boolean);
+         const loader = environment["TYPE"] || "VANILLA";
+         const modrinthIds = (environment["MODRINTH_PROJECTS"] || "").split(',').filter(Boolean);
 
          const res = await fetch("/api/mods/check-compatibility", {
             method: "POST",
@@ -1139,6 +1141,29 @@ export default function App() {
          console.error("Compatibility check failed", e);
       } finally {
          setIsCheckingCompatibility(false);
+      }
+   };
+
+   // Newest stable release in the Mojang manifest (ordered newest first).
+   const latestRelease: { id: string; type: string } | undefined = mcVersions.find((v: { type: string }) => v.type === 'release');
+
+   // Compare by manifest position rather than parsing version strings, so year-based ids (e.g. 26.1) order correctly.
+   const isOutdatedRelease = (version?: string) => {
+      if (!version || !latestRelease) return false;
+      const idx = mcVersions.findIndex((v: { id: string }) => v.id === version);
+      const latestIdx = mcVersions.indexOf(latestRelease);
+      return idx > latestIdx;
+   };
+
+   const openVersionUpdate = async () => {
+      if (!selectedId || !latestRelease) return;
+      setIsGlobalBrowser(false);
+      setIsEditModalOpen(true);
+      setEditTab("version");
+      fetchInstanceMods(selectedId, true);
+      const data = await fetchConfig(selectedId);
+      if (data?.environment) {
+         handleVersionClick(latestRelease.id, data.environment);
       }
    };
 
@@ -2896,6 +2921,15 @@ export default function App() {
                            {selectedStatus?.version || "Unknown"}
                         </span>
                      </div>
+                     {isOutdatedRelease(selectedStatus?.version) && latestRelease && (
+                        <button
+                           onClick={openVersionUpdate}
+                           className="w-full flex items-center justify-center gap-2 px-3 py-1.5 text-[11px] font-bold rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors"
+                           title={`Update this world to Minecraft ${latestRelease.id}`}
+                        >
+                           <RefreshCw className="w-3 h-3" /> Update to {latestRelease.id}
+                        </button>
+                     )}
                      <div className="flex items-center justify-between text-[11px]">
                         <span className="text-neutral-500 uppercase font-bold tracking-wider">Last Activity</span>
                         <span className="text-neutral-400">
