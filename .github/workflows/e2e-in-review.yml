@@ -16,6 +16,7 @@ permissions:
 jobs:
   e2e:
     if: >-
+      github.event_name == 'projects_v2_item' &&
       github.event.changes.field_value.field_type == 'single_select' &&
       github.event.changes.field_value.to.name == 'In review'
     runs-on: ubuntu-latest
