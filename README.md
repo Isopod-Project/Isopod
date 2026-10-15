@@ -22,6 +22,7 @@
 2. Clone this repository: `git clone https://github.com/Tacoz234/Isopod.git`
 3. Start the application: `docker compose -f isopod-compose.yml up -d --build`
 4. Access the dashboard at `http://localhost:8000`.
+   - On Windows, `scripts\start-isopod.ps1` runs the same command, waits for the dashboard to come up, and opens it in your default browser.
 
 ## 🛠 Tech Stack
 - **Frontend**: React, TypeScript, Vite, TailwindCSS, Lucide Icons.
