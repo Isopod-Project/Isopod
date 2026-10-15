@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useMemo } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Archive } from "lucide-react";
 import { HelpButton } from "./components/HelpButton";
+import { BackupsPanel } from "./components/BackupsPanel";
 
 interface Instance {
    id: string;
@@ -3722,6 +3723,13 @@ export default function App() {
                               World
                            </button>
                            <button
+                              onClick={() => setEditTab("backups")}
+                              className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "backups" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                           >
+                              <Archive className="w-4 h-4" />
+                              Backups
+                           </button>
+                           <button
                               onClick={() => setEditTab("mods")}
                               className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "mods" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
                            >
@@ -4558,6 +4566,10 @@ export default function App() {
                                  )}
                               </div>
                            </div>
+                        )}
+
+                        {editTab === "backups" && selectedId && (
+                           <BackupsPanel instanceId={selectedId} showAlert={showAlert} showConfirm={showConfirm} />
                         )}
 
                         {editTab === "world" && (
