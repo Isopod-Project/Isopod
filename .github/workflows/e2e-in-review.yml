@@ -6,7 +6,8 @@ name: E2E on In review
 #
 # This workflow only runs from the default branch, so it takes effect after merge.
 on:
-  projects_v2_item:
+  workflow_dispatch:
+  projects_v2_item_disabled:
     types: [edited]
 
 permissions:
