@@ -14,6 +14,8 @@
   - Auto-scrolling logs with real-time updates.
   - Integrated RCON command input to execute commands on the fly.
 - **Status Awareness**: Distinguishes between `Offline`, `Starting`, and `Online` states using log-based heartbeat detection.
+- **Update World**: Offers a one-click Minecraft version upgrade when a newer release is available for an instance.
+- **Self-Updating Dashboard**: Built-in updater with a progress overlay, automatic health-check reload, and in-dashboard release notes.
 - **Desktop-Grade File Explorer**: Built-in file manager with right-click context menu (delete, rename, download, cut, copy, paste), drag-and-drop file moves & direct OS uploads, breadcrumb drop targets, multi-select batch actions, and collision resolution.
 - **Modern UI**: Dark-mode, glassmorphic design built with React, Tailwind, and Lucide icons.
 
