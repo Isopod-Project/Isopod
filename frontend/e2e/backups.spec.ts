@@ -33,14 +33,21 @@ test.describe("Instance backups tab", () => {
     await expect(page.getByText(/backup-20261015-130000\.zip/)).toBeVisible()
   })
 
-  test("saves the backup schedule", async ({ page }) => {
-    const request = page.waitForRequest((req) => req.url().endsWith("/backups/settings") && req.method() === "PUT")
-    await page.getByLabel("Automatic backups").check()
-    await page.getByLabel("Frequency").selectOption({ label: "Every 6 hours" })
-    await page.getByLabel("Backups to keep").fill("3")
-    await page.getByRole("button", { name: "Save Schedule" }).click()
+  test("saves each schedule change immediately", async ({ page }) => {
+    const savedSchedule = () => page.waitForRequest((req) => req.url().endsWith("/backups/settings") && req.method() === "PUT")
 
+    let request = savedSchedule()
+    await page.getByLabel("Automatic backups").check()
+    expect((await request).postDataJSON()).toEqual({ enabled: true, interval_hours: 24, keep: 7 })
+    await expect(page.getByText("Schedule saved")).toBeVisible()
+
+    request = savedSchedule()
+    await page.getByLabel("Frequency").selectOption({ label: "Every 6 hours" })
+    expect((await request).postDataJSON()).toEqual({ enabled: true, interval_hours: 6, keep: 7 })
+
+    request = savedSchedule()
+    await page.getByLabel("Backups to keep").fill("3")
+    await page.getByLabel("Backups to keep").press("Enter")
     expect((await request).postDataJSON()).toEqual({ enabled: true, interval_hours: 6, keep: 3 })
-    await expect(page.getByText("Backup schedule saved.")).toBeVisible()
   })
 })

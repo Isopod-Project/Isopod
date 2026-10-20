@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Archive, Download, RefreshCw, RotateCcw, Save, Trash2 } from "lucide-react";
+import { Archive, Check, Download, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 
 interface BackupSettings {
    enabled: boolean;
@@ -49,7 +49,9 @@ export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPane
    const [worlds, setWorlds] = useState<string[]>([]);
    const [location, setLocation] = useState("");
    const [isLoading, setIsLoading] = useState(true);
-   const [isSaving, setIsSaving] = useState(false);
+   // Last schedule the server accepted, restored if a save fails
+   const [savedSettings, setSavedSettings] = useState<BackupSettings>({ enabled: false, interval_hours: 24, keep: 7 });
+   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
    const [isBackingUp, setIsBackingUp] = useState(false);
    const [busyName, setBusyName] = useState<string | null>(null);
 
@@ -58,7 +60,10 @@ export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPane
          const res = await fetch(`/api/instances/${instanceId}/backups`);
          if (!res.ok) throw new Error(await errorDetail(res, "Failed to load backups"));
          const data = await res.json();
-         if (data.settings) setSettings(data.settings);
+         if (data.settings) {
+            setSettings(data.settings);
+            setSavedSettings(data.settings);
+         }
          setBackups(Array.isArray(data.backups) ? data.backups : []);
          setWorlds(Array.isArray(data.worlds) ? data.worlds : []);
          setLocation(data.location || "");
@@ -74,22 +79,30 @@ export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPane
       fetchBackups();
    }, [fetchBackups]);
 
-   const saveSettings = async () => {
-      setIsSaving(true);
+   // Every schedule change is saved immediately
+   const saveSettings = async (next: BackupSettings) => {
+      setSettings(next);
+      setSaveState("saving");
       try {
          const res = await fetch(`/api/instances/${instanceId}/backups/settings`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(settings),
+            body: JSON.stringify(next),
          });
          if (!res.ok) throw new Error(await errorDetail(res, "Failed to save backup schedule"));
-         setSettings(await res.json());
-         await showAlert("Backup schedule saved.", "Backups");
+         const saved = await res.json();
+         setSettings(saved);
+         setSavedSettings(saved);
+         setSaveState("saved");
       } catch (e) {
+         setSettings(savedSettings);
+         setSaveState("idle");
          await showAlert((e as Error).message, "Backup Error");
-      } finally {
-         setIsSaving(false);
       }
+   };
+
+   const saveKeep = () => {
+      if (settings.keep !== savedSettings.keep) saveSettings(settings);
    };
 
    const backupNow = async () => {
@@ -171,7 +184,7 @@ export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPane
                      aria-label="Automatic backups"
                      className="w-5 h-5 accent-[#3E8ED0]"
                      checked={settings.enabled}
-                     onChange={(e) => setSettings(prev => ({ ...prev, enabled: e.target.checked }))}
+                     onChange={(e) => saveSettings({ ...settings, enabled: e.target.checked })}
                   />
                </label>
 
@@ -182,7 +195,7 @@ export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPane
                         id="backup-interval"
                         className="w-full bg-[#141414] border border-[#3A3A3A] p-2.5 rounded focus:outline-none focus:border-[#3E8ED0] text-[#E0E0E0] text-sm"
                         value={settings.interval_hours}
-                        onChange={(e) => setSettings(prev => ({ ...prev, interval_hours: Number(e.target.value) }))}
+                        onChange={(e) => saveSettings({ ...settings, interval_hours: Number(e.target.value) })}
                      >
                         {!isPreset && <option value={settings.interval_hours}>Every {settings.interval_hours} hours</option>}
                         {INTERVAL_PRESETS.map(p => (
@@ -199,20 +212,19 @@ export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPane
                         className="w-full bg-[#141414] border border-[#3A3A3A] p-2.5 rounded focus:outline-none focus:border-[#3E8ED0] text-[#E0E0E0] text-sm"
                         value={settings.keep}
                         onChange={(e) => setSettings(prev => ({ ...prev, keep: Math.max(1, Number(e.target.value) || 1) }))}
+                        onBlur={saveKeep}
+                        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
                      />
                   </div>
                </div>
 
-               <div className="flex justify-end">
-                  <button
-                     type="button"
-                     onClick={saveSettings}
-                     disabled={isSaving}
-                     className="px-5 py-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white rounded-lg font-bold text-xs shadow-md shadow-[#3E8ED0]/15 transition-all flex items-center gap-2 disabled:opacity-50"
-                  >
-                     {isSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                     Save Schedule
-                  </button>
+               <div className="flex justify-end h-4 text-xs text-neutral-500" aria-live="polite">
+                  {saveState === "saving" && (
+                     <span className="flex items-center gap-1.5"><RefreshCw className="w-3 h-3 animate-spin" /> Saving…</span>
+                  )}
+                  {saveState === "saved" && (
+                     <span className="flex items-center gap-1.5 text-emerald-400"><Check className="w-3 h-3" /> Schedule saved</span>
+                  )}
                </div>
             </div>
 
