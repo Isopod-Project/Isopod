@@ -29,7 +29,7 @@ function jsonFor(path: string): unknown {
   if (path === "/api/system/check-updates")
     return { current_version: "0.0.0-test", has_update: false }
   if (path.endsWith("/status")) return { instance_id: "alpha", is_running: false, is_ready: false, containers: [] }
-  if (path.endsWith("/logs")) return { logs: [] }
+  if (path.endsWith("/logs")) return { logs: "" }
   if (path.endsWith("/users")) return { whitelist: [], ops: [], banned: [] }
   if (path.endsWith("/mods")) return []
   if (path.endsWith("/config")) return {}

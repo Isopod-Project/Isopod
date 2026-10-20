@@ -20,6 +20,7 @@ import httpx
 import json
 import time
 from . import resource_packs as rp
+from . import backups
 
 load_dotenv()
 
@@ -167,6 +168,11 @@ class RenameInstanceRequest(BaseModel):
 
 class DuplicateInstanceRequest(BaseModel):
     name: Optional[str] = None
+
+class BackupSettingsRequest(BaseModel):
+    enabled: bool
+    interval_hours: float
+    keep: int
 
 class CommandRequest(BaseModel):
     command: str
@@ -1228,8 +1234,16 @@ DEFAULT_SETTINGS = {
     "showSnapshots": False,
     "defaultWhitelistEnabled": False,
     "defaultWhitelistUsers": [],
-    "dockerSocket": "/var/run/docker.sock"
+    "dockerSocket": "/var/run/docker.sock",
+    "backupsPath": ""
 }
+
+def get_backup_root() -> Optional[str]:
+    """Global backup folder from settings; empty means backups stay inside each instance."""
+    root = (get_settings().get("backupsPath") or "").strip()
+    return root if root and os.path.isabs(root) else None
+
+backups.set_backup_root_provider(get_backup_root)
 
 @app.get("/api/settings")
 def get_settings():
@@ -1245,6 +1259,9 @@ def get_settings():
 
 @app.put("/api/settings")
 def update_settings(new_settings: Dict[str, Any]):
+    backups_path = (new_settings.get("backupsPath") or "").strip()
+    if backups_path and not os.path.isabs(backups_path):
+        raise HTTPException(status_code=400, detail="Backup folder must be an absolute path.")
     settings_path = os.path.join(SERVERS_DIR, "isopod_settings.json")
     os.makedirs(SERVERS_DIR, exist_ok=True)
     with open(settings_path, "w") as f:
@@ -1840,10 +1857,19 @@ def rename_instance(instance_id: str, req: RenameInstanceRequest):
         raise HTTPException(status_code=400, detail="Instance with that name already exists")
 
     # Rename the directory
+    old_backups = backups.backups_dir(old_path)
     try:
         os.rename(old_path, new_path)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    # Backups kept in a global folder are keyed by instance id, so move them along
+    new_backups = backups.backups_dir(new_path)
+    if not old_backups.startswith(old_path + os.sep) and os.path.isdir(old_backups) and not os.path.exists(new_backups):
+        try:
+            shutil.move(old_backups, new_backups)
+        except Exception as e:
+            print(f"Failed to move backups for renamed instance: {e}")
     
     # Update docker-compose.yml
     compose_path = os.path.join(new_path, "docker-compose.yml")
@@ -1898,7 +1924,7 @@ def duplicate_instance(instance_id: str, req: DuplicateInstanceRequest):
     
     # Clone the entire directory
     try:
-        shutil.copytree(old_path, new_path)
+        shutil.copytree(old_path, new_path, ignore=shutil.ignore_patterns(backups.BACKUPS_DIR_NAME))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to copy directory: {str(e)}")
         
@@ -1987,7 +2013,10 @@ def export_instance(
                     parts = rel_path.split(os.sep)
                     include = False
                     
-                    if len(parts) == 1:
+                    if parts[0] == backups.BACKUPS_DIR_NAME:
+                        # Stored backups would bloat the export; they stay with the original instance.
+                        include = False
+                    elif len(parts) == 1:
                         # Root files like docker-compose.yml, icon.png, metadata.json
                         if configs:
                             include = True
@@ -2290,6 +2319,83 @@ def execute_command(instance_id: str, req: CommandRequest):
         }
     except Exception as e:
         return {"output": f"Execution error: {str(e)}", "success": False}
+
+def is_instance_running(path: str) -> bool:
+    result = subprocess.run(
+        ["docker", "compose", "ps", "--status", "running", "-q"],
+        cwd=path, capture_output=True, text=True, timeout=10
+    )
+    return bool(result.stdout.strip())
+
+@app.get("/api/instances/{instance_id}/backups")
+def get_backups(instance_id: str):
+    path = get_instance_path(instance_id)
+    return {
+        "settings": backups.get_settings(get_instance_meta(path)),
+        "backups": backups.list_backups(path),
+        "worlds": backups.find_world_dirs(path),
+        "location": backups.backups_dir(path),
+    }
+
+@app.put("/api/instances/{instance_id}/backups/settings")
+def update_backup_settings(instance_id: str, req: BackupSettingsRequest):
+    path = get_instance_path(instance_id)
+    try:
+        settings = backups.validate_settings(req.enabled, req.interval_hours, req.keep)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    save_instance_meta(path, {"backups": settings})
+    return settings
+
+@app.post("/api/instances/{instance_id}/backups")
+async def create_backup(instance_id: str):
+    path = get_instance_path(instance_id)
+    try:
+        backup = await asyncio.to_thread(backups.create_backup, path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    backups.prune_backups(path, backups.get_settings(get_instance_meta(path))["keep"])
+    return backup
+
+@app.get("/api/instances/{instance_id}/backups/{name}")
+def download_backup(instance_id: str, name: str):
+    path = get_instance_path(instance_id)
+    try:
+        file_path = backups.backup_file_path(path, name)
+    except (ValueError, FileNotFoundError):
+        raise HTTPException(status_code=404, detail="Backup not found")
+    return FileResponse(file_path, media_type="application/zip", filename=f"{instance_id}-{name}")
+
+@app.delete("/api/instances/{instance_id}/backups/{name}")
+def delete_backup(instance_id: str, name: str):
+    path = get_instance_path(instance_id)
+    try:
+        os.remove(backups.backup_file_path(path, name))
+    except (ValueError, FileNotFoundError):
+        raise HTTPException(status_code=404, detail="Backup not found")
+    return {"deleted": name}
+
+@app.post("/api/instances/{instance_id}/backups/{name}/restore")
+async def restore_backup(instance_id: str, name: str):
+    path = get_instance_path(instance_id)
+    if is_instance_running(path):
+        raise HTTPException(status_code=409, detail="Stop the server before restoring a backup.")
+    try:
+        worlds = await asyncio.to_thread(backups.restore_backup, path, name)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Backup not found")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"restored": worlds}
+
+async def backup_schedule_loop():
+    """Background task that runs due scheduled backups once a minute."""
+    while True:
+        try:
+            await asyncio.to_thread(backups.run_due_backups, SERVERS_DIR, get_instance_meta)
+        except Exception as e:
+            print(f"Backup scheduler error: {e}")
+        await asyncio.sleep(60)
 
 @app.get("/api/mods/metadata")
 async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = "", modrinth_modpack: str = "", cf_modpack: str = ""):
@@ -3476,6 +3582,7 @@ async def update_check_loop():
 async def startup_event():
     # Start the periodic update check in the background
     asyncio.create_task(update_check_loop())
+    asyncio.create_task(backup_schedule_loop())
 
 @app.get("/api/system/check-updates", response_model=UpdateInfo)
 async def check_updates(force: bool = False):

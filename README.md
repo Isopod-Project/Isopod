@@ -17,6 +17,7 @@
 - **Update World**: Offers a one-click Minecraft version upgrade when a newer release is available for an instance.
 - **Self-Updating Dashboard**: Built-in updater with a progress overlay, automatic health-check reload, and in-dashboard release notes.
 - **Desktop-Grade File Explorer**: Built-in file manager with right-click context menu (delete, rename, download, cut, copy, paste), drag-and-drop file moves & direct OS uploads, breadcrumb drop targets, multi-select batch actions, and collision resolution.
+- **Automatic World Backups**: Schedule per-instance world backups with retention limits, or back up on demand; download, restore, or delete backups from the instance's Backups tab.
 - **Modern UI**: Dark-mode, glassmorphic design built with React, Tailwind, and Lucide icons.
 
 ## 🚀 Quick Start

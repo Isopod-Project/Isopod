@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useMemo } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Archive } from "lucide-react";
 import { HelpButton } from "./components/HelpButton";
+import { BackupsPanel } from "./components/BackupsPanel";
 
 interface Instance {
    id: string;
@@ -266,7 +267,8 @@ export default function App() {
       autoCheckUpdates: true,
       defaultWhitelistEnabled: false,
       defaultWhitelistUsers: [] as string[],
-      dockerSocket: '/var/run/docker.sock'
+      dockerSocket: '/var/run/docker.sock',
+      backupsPath: ''
    });
    const [originalGlobalSettings, setOriginalGlobalSettings] = useState("");
    const [isSavingGlobal, setIsSavingGlobal] = useState(false);
@@ -2193,7 +2195,10 @@ export default function App() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(updatedSettings)
          });
-         if (!res.ok) throw new Error("Failed to save settings");
+         if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.detail || "Failed to save global settings");
+         }
          setOriginalGlobalSettings(JSON.stringify(globalSettings));
          if (globalSettings.showSnapshots !== undefined) {
             setVersionFilters(prev => ({ ...prev, Snapshots: !!globalSettings.showSnapshots }));
@@ -2205,7 +2210,7 @@ export default function App() {
          if (globalSettings.defaultWhitelistUsers) setModalWhitelistUsers(globalSettings.defaultWhitelistUsers);
       } catch (e) {
          console.error(e);
-         await showAlert("Failed to save global settings", "Error");
+         await showAlert((e as Error).message, "Error");
       } finally {
          setIsSavingGlobal(false);
       }
@@ -3722,6 +3727,13 @@ export default function App() {
                               World
                            </button>
                            <button
+                              onClick={() => setEditTab("backups")}
+                              className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "backups" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                           >
+                              <Archive className="w-4 h-4" />
+                              Backups
+                           </button>
+                           <button
                               onClick={() => setEditTab("mods")}
                               className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "mods" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
                            >
@@ -4558,6 +4570,10 @@ export default function App() {
                                  )}
                               </div>
                            </div>
+                        )}
+
+                        {editTab === "backups" && selectedId && (
+                           <BackupsPanel instanceId={selectedId} showAlert={showAlert} showConfirm={showConfirm} />
                         )}
 
                         {editTab === "world" && (
@@ -6519,6 +6535,21 @@ export default function App() {
                                     >
                                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${globalSettings.showSnapshots ? 'left-7' : 'left-1'}`} />
                                     </button>
+                                 </div>
+                                 <div className="flex flex-col gap-2 p-4 bg-[#242424] rounded-lg border border-[#333]">
+                                    <label htmlFor="backups-path" className="font-bold text-sm">Backup Folder</label>
+                                    <span className="text-xs text-neutral-500">
+                                       Where world backups are stored. Leave empty to keep them in each instance's <span className="font-mono">backups</span> folder.
+                                       Otherwise each instance gets its own subfolder here. When running in Docker, the folder must be mounted into the Isopod container.
+                                    </span>
+                                    <input
+                                       id="backups-path"
+                                       type="text"
+                                       placeholder="/servers/<instance>/backups"
+                                       value={globalSettings.backupsPath || ""}
+                                       onChange={(e) => setGlobalSettings({ ...globalSettings, backupsPath: e.target.value })}
+                                       className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-[#3E8ED0] text-xs font-mono text-neutral-300"
+                                    />
                                  </div>
                               </div>
                            </div>
