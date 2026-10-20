@@ -2377,36 +2377,41 @@ export default function App() {
    const selectedInstance = instances.find(i => i.id === selectedId);
    const selectedStatus = selectedId ? statuses[selectedId] : null;
 
-   const getMergedLogs = (id: string) => {
+   // Merge server logs with output from console commands. Each line is tagged
+   // so Simplified mode can always keep what the user ran and its response.
+   const getMergedLogLines = (id: string) => {
       const base = serverLogs[id] || "";
       const offset = clearedLogsOffset[id] || 0;
       const baseLogs = base.length >= offset ? base.slice(offset) : "";
-      const manual = manualLogs[id] || [];
-      if (manual.length === 0) return baseLogs;
-
-      const lines = baseLogs.split('\n');
-      const mergedLines = [...lines];
-      manual.forEach(entry => {
+      const merged = baseLogs.split('\n').map(text => ({ text, fromCommand: false }));
+      (manualLogs[id] || []).forEach(entry => {
          if (!entry.content) return;
-         const anchorIdx = mergedLines.lastIndexOf(entry.anchor);
+         const added = entry.content.split('\n').map(text => ({ text, fromCommand: true }));
+         let anchorIdx = -1;
+         for (let i = merged.length - 1; i >= 0; i--) {
+            if (merged[i].text === entry.anchor) { anchorIdx = i; break; }
+         }
          if (anchorIdx !== -1) {
-            mergedLines.splice(anchorIdx + 1, 0, ...entry.content.split('\n'));
+            merged.splice(anchorIdx + 1, 0, ...added);
          } else {
-            mergedLines.push(...entry.content.split('\n'));
+            merged.push(...added);
          }
       });
-      return mergedLines.join('\n');
+      return merged;
    };
 
-   const logs = selectedId ? getMergedLogs(selectedId) : "";
+   const logLines = useMemo(
+      () => selectedId ? getMergedLogLines(selectedId) : [],
+      [selectedId, serverLogs, clearedLogsOffset, manualLogs]
+   );
+   const logs = logLines.map(l => l.text).join('\n');
 
    const displayLogLines = useMemo(() => {
       if (!logs) return [];
-      const rawLines = logs.split('\n');
-      if (isVerbose) return rawLines;
+      if (isVerbose) return logLines.map(l => l.text);
       const allowedPatterns = [
          /ERROR/, /FATAL/, /Exception/,
-         /Loading \d+ mods/, / - /, / \\-- /,
+         /Loading \d+ mods/, / - /, / \-- /,
          /Done \(/,
          /> /,
          /issued (server )?command/i,
@@ -2415,11 +2420,14 @@ export default function App() {
          /Starting minecraft server version/,
          /\[Server thread\/INFO\]: \[(?!Rcon: Stopping)/
       ];
-      return rawLines.filter(line => {
-         if (line.includes('> ')) return true;
-         return allowedPatterns.some(p => p.test(line));
-      });
-   }, [logs, isVerbose]);
+      return logLines
+         .filter(({ text, fromCommand }) => {
+            if (fromCommand) return true;
+            if (text.includes('> ')) return true;
+            return allowedPatterns.some(p => p.test(text));
+         })
+         .map(l => l.text);
+   }, [logLines, logs, isVerbose]);
 
    const matchingLineIndices = useMemo(() => {
       if (!logSearchQuery.trim()) return [];
