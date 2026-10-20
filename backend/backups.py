@@ -1,8 +1,9 @@
 """Scheduled and on-demand world backups for Isopod instances.
 
 Backups are zip files of an instance's world folders (any folder under data/ that
-contains a level.dat), stored in <instance>/backups/. Per-instance schedule settings
-live in isopod-meta.json under the "backups" key.
+contains a level.dat), stored in <instance>/backups/, or in <root>/<instance id>/ when a
+backup folder is set in the global settings. Per-instance schedule settings live in
+isopod-meta.json under the "backups" key.
 """
 import os
 import re
@@ -11,7 +12,7 @@ import subprocess
 import time
 import zipfile
 from datetime import datetime
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Optional
 
 BACKUPS_DIR_NAME = "backups"
 BACKUP_NAME_RE = re.compile(r"^backup-\d{8}-\d{6}(-\d+)?\.zip$")
@@ -37,7 +38,19 @@ def validate_settings(enabled: bool, interval_hours: float, keep: int) -> dict:
     return {"enabled": bool(enabled), "interval_hours": float(interval_hours), "keep": int(keep)}
 
 
+# Returns the global backup folder, or None to keep backups inside each instance.
+_backup_root: Callable[[], Optional[str]] = lambda: None
+
+
+def set_backup_root_provider(provider: Callable[[], Optional[str]]) -> None:
+    global _backup_root
+    _backup_root = provider
+
+
 def backups_dir(instance_path: str) -> str:
+    root = _backup_root()
+    if root:
+        return os.path.join(root, os.path.basename(os.path.normpath(instance_path)))
     return os.path.join(instance_path, BACKUPS_DIR_NAME)
 
 

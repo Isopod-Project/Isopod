@@ -1217,8 +1217,16 @@ DEFAULT_SETTINGS = {
     "showSnapshots": False,
     "defaultWhitelistEnabled": False,
     "defaultWhitelistUsers": [],
-    "dockerSocket": "/var/run/docker.sock"
+    "dockerSocket": "/var/run/docker.sock",
+    "backupsPath": ""
 }
+
+def get_backup_root() -> Optional[str]:
+    """Global backup folder from settings; empty means backups stay inside each instance."""
+    root = (get_settings().get("backupsPath") or "").strip()
+    return root if root and os.path.isabs(root) else None
+
+backups.set_backup_root_provider(get_backup_root)
 
 @app.get("/api/settings")
 def get_settings():
@@ -1234,6 +1242,9 @@ def get_settings():
 
 @app.put("/api/settings")
 def update_settings(new_settings: Dict[str, Any]):
+    backups_path = (new_settings.get("backupsPath") or "").strip()
+    if backups_path and not os.path.isabs(backups_path):
+        raise HTTPException(status_code=400, detail="Backup folder must be an absolute path.")
     settings_path = os.path.join(SERVERS_DIR, "isopod_settings.json")
     os.makedirs(SERVERS_DIR, exist_ok=True)
     with open(settings_path, "w") as f:
@@ -1829,10 +1840,19 @@ def rename_instance(instance_id: str, req: RenameInstanceRequest):
         raise HTTPException(status_code=400, detail="Instance with that name already exists")
 
     # Rename the directory
+    old_backups = backups.backups_dir(old_path)
     try:
         os.rename(old_path, new_path)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    # Backups kept in a global folder are keyed by instance id, so move them along
+    new_backups = backups.backups_dir(new_path)
+    if not old_backups.startswith(old_path + os.sep) and os.path.isdir(old_backups) and not os.path.exists(new_backups):
+        try:
+            shutil.move(old_backups, new_backups)
+        except Exception as e:
+            print(f"Failed to move backups for renamed instance: {e}")
     
     # Update docker-compose.yml
     compose_path = os.path.join(new_path, "docker-compose.yml")
@@ -2297,6 +2317,7 @@ def get_backups(instance_id: str):
         "settings": backups.get_settings(get_instance_meta(path)),
         "backups": backups.list_backups(path),
         "worlds": backups.find_world_dirs(path),
+        "location": backups.backups_dir(path),
     }
 
 @app.put("/api/instances/{instance_id}/backups/settings")

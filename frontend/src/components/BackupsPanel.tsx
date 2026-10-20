@@ -47,6 +47,7 @@ export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPane
    const [settings, setSettings] = useState<BackupSettings>({ enabled: false, interval_hours: 24, keep: 7 });
    const [backups, setBackups] = useState<BackupItem[]>([]);
    const [worlds, setWorlds] = useState<string[]>([]);
+   const [location, setLocation] = useState("");
    const [isLoading, setIsLoading] = useState(true);
    const [isSaving, setIsSaving] = useState(false);
    const [isBackingUp, setIsBackingUp] = useState(false);
@@ -60,6 +61,7 @@ export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPane
          if (data.settings) setSettings(data.settings);
          setBackups(Array.isArray(data.backups) ? data.backups : []);
          setWorlds(Array.isArray(data.worlds) ? data.worlds : []);
+         setLocation(data.location || "");
       } catch (e) {
          console.error("Failed to fetch backups", e);
       } finally {
@@ -105,7 +107,7 @@ export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPane
 
    const restoreBackup = async (name: string) => {
       const confirmed = await showConfirm(
-         `Restore ${name}? The current world folders will be replaced with the ones in this backup. The server must be stopped.`,
+         `Restore ${name}? This reverts the world to this backup. Everything since then is lost, so consider backing up first. The server must be stopped.`,
          "Restore Backup",
       );
       if (!confirmed) return;
@@ -147,8 +149,14 @@ export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPane
                   <h3 className="text-2xl font-bold text-white">World Backups</h3>
                </div>
                <p className="text-neutral-500 text-sm">
-                  Schedule automatic backups of this instance's worlds. Backups are saved in the instance's <span className="font-mono">backups</span> folder; the oldest are removed once the limit is reached.
+                  Schedule automatic backups of this instance's worlds. The oldest are removed once the limit is reached.
+                  You can change where backups are stored under Settings &rarr; General.
                </p>
+               {location && (
+                  <p className="text-xs text-neutral-500 mt-2">
+                     Saved to <span className="font-mono text-neutral-400 break-all">{location}</span>
+                  </p>
+               )}
             </div>
 
             {/* Schedule */}
@@ -253,10 +261,11 @@ export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPane
                                  type="button"
                                  onClick={() => restoreBackup(b.name)}
                                  disabled={busyName === b.name}
-                                 className="p-1.5 rounded border border-[#3A3A3A] text-sky-400 hover:bg-sky-500/10 transition-all disabled:opacity-50"
-                                 title="Restore backup"
+                                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-[#3A3A3A] text-sky-400 hover:bg-sky-500/10 transition-all disabled:opacity-50 text-xs font-bold"
+                                 title="Revert the world to this backup (server must be stopped)"
                               >
                                  <RotateCcw className="w-3.5 h-3.5" />
+                                 Restore
                               </button>
                               <button
                                  type="button"
