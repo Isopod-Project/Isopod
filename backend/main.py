@@ -534,6 +534,23 @@ async def start_instance(instance_id: str):
             wl_entries = [{"uuid": u["uuid"] or "", "name": u["name"]} for u in users if u.get("whitelisted") and u.get("active")]
             with open(wl_path, "w") as f:
                 json.dump(wl_entries, f, indent=2)
+        # Repair entries saved with undashed UUIDs, which Minecraft ignores
+        for access_file in ("whitelist.json", "ops.json"):
+            access_path = os.path.join(data_dir, access_file)
+            if not os.path.exists(access_path):
+                continue
+            with open(access_path, "r") as f:
+                entries = json.load(f)
+            if not isinstance(entries, list):
+                continue
+            changed = False
+            for entry in entries:
+                if isinstance(entry, dict) and isinstance(entry.get("uuid"), str) and entry["uuid"] != format_uuid(entry["uuid"]):
+                    entry["uuid"] = format_uuid(entry["uuid"])
+                    changed = True
+            if changed:
+                with open(access_path, "w") as f:
+                    json.dump(entries, f, indent=2)
     except Exception as e:
         print(f"Error syncing user management on start: {e}")
 
@@ -937,8 +954,8 @@ def update_instance_users(
         if not name:
             continue
             
-        if not uuid:
-            uuid = get_minecraft_uuid(name)
+        # Minecraft silently drops whitelist/ops entries whose UUID lacks dashes
+        uuid = format_uuid(uuid) if uuid else get_minecraft_uuid(name)
             
         full_users_data.append({
             "name": name,

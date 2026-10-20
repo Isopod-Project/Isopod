@@ -913,7 +913,7 @@ export default function App() {
                   if (data.success && data.data && data.data.player) {
                      const p = {
                         name: data.data.player.username,
-                        uuid: data.data.player.raw_id || data.data.player.id
+                        uuid: data.data.player.id
                      };
                      setUserSearchPreview(p);
                      setSeenPlayers(prev => {
