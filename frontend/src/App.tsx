@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Cat } from "lucide-react";
 import { HelpButton } from "./components/HelpButton";
 
 interface Instance {
@@ -2599,6 +2599,13 @@ export default function App() {
                      <span className="text-[9px] font-black text-neutral-500 uppercase tracking-tighter leading-none mb-0.5">Version</span>
                      <span className="text-[11px] font-mono font-bold text-neutral-400 leading-none">{updateInfo?.current_version || "..."}</span>
                   </div>
+                  <button
+                     onClick={() => showAlert("Meow! A nod to the cat button in Prism Launcher.", "Meow")}
+                     title="Meow"
+                     className="hover:bg-[#4A4A4A] p-1.5 rounded transition-colors"
+                  >
+                     <Cat className="w-4 h-4 text-orange-300" />
+                  </button>
                   <button
                      onClick={fetchInstances}
                      className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium"
