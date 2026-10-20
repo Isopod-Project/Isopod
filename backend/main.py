@@ -25,7 +25,7 @@ load_dotenv()
 
 app = FastAPI(title="Isopod Backend")
 
-ISOPOD_VERSION = "v0.1.0"
+ISOPOD_VERSION = "v0.2.0"
 GITHUB_REPO = os.getenv("GITHUB_REPO", "Isopod-Project/Isopod")
 
 # Internal state for background update checks
