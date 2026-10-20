@@ -26,6 +26,8 @@ interface InstanceStatus {
 }
 
 
+const MEOW_BACKGROUND = `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='260' height='130'><text x='10' y='90' font-family='sans-serif' font-size='44' font-weight='bold' fill='rgba(255,255,255,0.06)' transform='rotate(-20 130 65)'>MEOW</text></svg>")`;
+
 export default function App() {
    const [instances, setInstances] = useState<Instance[]>([]);
    const [statuses, setStatuses] = useState<Record<string, InstanceStatus>>({});
@@ -33,6 +35,7 @@ export default function App() {
    // States from branch 3
    const [groups, setGroups] = useState<string[]>(["No group"]);
    const [simplifiedConsole, setSimplifiedConsole] = useState(true);
+   const [catMode, setCatMode] = useState(false);
    const [pendingIconId, setPendingIconId] = useState<string | null>(null);
    const iconInputRef = useRef<HTMLInputElement>(null);
    const [iconCacheBuster, setIconCacheBuster] = useState(Date.now());
@@ -2528,7 +2531,10 @@ export default function App() {
 
 
    return (
-      <div className="flex h-screen bg-[#242424] text-[#E0E0E0] font-sans selection:bg-[#3E8ED0]/40 overflow-hidden">
+      <div
+         className="flex h-screen bg-[#242424] text-[#E0E0E0] font-sans selection:bg-[#3E8ED0]/40 overflow-hidden"
+         style={catMode ? { backgroundImage: MEOW_BACKGROUND } : undefined}
+      >
          <div className="flex-1 flex flex-col">
             <header className="h-[52px] min-h-[52px] bg-[#3B3B3B] border-b border-[#1E1E1E] flex items-center px-4 gap-4 flex-shrink-0 shadow-sm z-10">
                <div className="flex items-center gap-2 mr-4 border-r border-[#4A4A4A] pr-4 py-1">
@@ -2600,9 +2606,10 @@ export default function App() {
                      <span className="text-[11px] font-mono font-bold text-neutral-400 leading-none">{updateInfo?.current_version || "..."}</span>
                   </div>
                   <button
-                     onClick={() => showAlert("Meow! A nod to the cat button in Prism Launcher.", "Meow")}
+                     onClick={() => setCatMode(prev => !prev)}
                      title="Meow"
-                     className="hover:bg-[#4A4A4A] p-1.5 rounded transition-colors"
+                     aria-pressed={catMode}
+                     className={`hover:bg-[#4A4A4A] p-1.5 rounded transition-colors ${catMode ? "bg-[#4A4A4A]" : ""}`}
                   >
                      <Cat className="w-4 h-4 text-orange-300" />
                   </button>
