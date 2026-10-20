@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useMemo } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Cat } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Archive, Cat } from "lucide-react";
 import { HelpButton } from "./components/HelpButton";
+import { BackupsPanel } from "./components/BackupsPanel";
 
 interface Instance {
    id: string;
@@ -269,7 +270,8 @@ export default function App() {
       autoCheckUpdates: true,
       defaultWhitelistEnabled: false,
       defaultWhitelistUsers: [] as string[],
-      dockerSocket: '/var/run/docker.sock'
+      dockerSocket: '/var/run/docker.sock',
+      backupsPath: ''
    });
    const [originalGlobalSettings, setOriginalGlobalSettings] = useState("");
    const [isSavingGlobal, setIsSavingGlobal] = useState(false);
@@ -916,7 +918,7 @@ export default function App() {
                   if (data.success && data.data && data.data.player) {
                      const p = {
                         name: data.data.player.username,
-                        uuid: data.data.player.raw_id || data.data.player.id
+                        uuid: data.data.player.id
                      };
                      setUserSearchPreview(p);
                      setSeenPlayers(prev => {
@@ -2196,7 +2198,10 @@ export default function App() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(updatedSettings)
          });
-         if (!res.ok) throw new Error("Failed to save settings");
+         if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.detail || "Failed to save global settings");
+         }
          setOriginalGlobalSettings(JSON.stringify(globalSettings));
          if (globalSettings.showSnapshots !== undefined) {
             setVersionFilters(prev => ({ ...prev, Snapshots: !!globalSettings.showSnapshots }));
@@ -2208,7 +2213,7 @@ export default function App() {
          if (globalSettings.defaultWhitelistUsers) setModalWhitelistUsers(globalSettings.defaultWhitelistUsers);
       } catch (e) {
          console.error(e);
-         await showAlert("Failed to save global settings", "Error");
+         await showAlert((e as Error).message, "Error");
       } finally {
          setIsSavingGlobal(false);
       }
@@ -2375,36 +2380,41 @@ export default function App() {
    const selectedInstance = instances.find(i => i.id === selectedId);
    const selectedStatus = selectedId ? statuses[selectedId] : null;
 
-   const getMergedLogs = (id: string) => {
+   // Merge server logs with output from console commands. Each line is tagged
+   // so Simplified mode can always keep what the user ran and its response.
+   const getMergedLogLines = (id: string) => {
       const base = serverLogs[id] || "";
       const offset = clearedLogsOffset[id] || 0;
       const baseLogs = base.length >= offset ? base.slice(offset) : "";
-      const manual = manualLogs[id] || [];
-      if (manual.length === 0) return baseLogs;
-
-      const lines = baseLogs.split('\n');
-      const mergedLines = [...lines];
-      manual.forEach(entry => {
+      const merged = baseLogs.split('\n').map(text => ({ text, fromCommand: false }));
+      (manualLogs[id] || []).forEach(entry => {
          if (!entry.content) return;
-         const anchorIdx = mergedLines.lastIndexOf(entry.anchor);
+         const added = entry.content.split('\n').map(text => ({ text, fromCommand: true }));
+         let anchorIdx = -1;
+         for (let i = merged.length - 1; i >= 0; i--) {
+            if (merged[i].text === entry.anchor) { anchorIdx = i; break; }
+         }
          if (anchorIdx !== -1) {
-            mergedLines.splice(anchorIdx + 1, 0, ...entry.content.split('\n'));
+            merged.splice(anchorIdx + 1, 0, ...added);
          } else {
-            mergedLines.push(...entry.content.split('\n'));
+            merged.push(...added);
          }
       });
-      return mergedLines.join('\n');
+      return merged;
    };
 
-   const logs = selectedId ? getMergedLogs(selectedId) : "";
+   const logLines = useMemo(
+      () => selectedId ? getMergedLogLines(selectedId) : [],
+      [selectedId, serverLogs, clearedLogsOffset, manualLogs]
+   );
+   const logs = logLines.map(l => l.text).join('\n');
 
    const displayLogLines = useMemo(() => {
       if (!logs) return [];
-      const rawLines = logs.split('\n');
-      if (isVerbose) return rawLines;
+      if (isVerbose) return logLines.map(l => l.text);
       const allowedPatterns = [
          /ERROR/, /FATAL/, /Exception/,
-         /Loading \d+ mods/, / - /, / \\-- /,
+         /Loading \d+ mods/, / - /, / \-- /,
          /Done \(/,
          /> /,
          /issued (server )?command/i,
@@ -2413,11 +2423,14 @@ export default function App() {
          /Starting minecraft server version/,
          /\[Server thread\/INFO\]: \[(?!Rcon: Stopping)/
       ];
-      return rawLines.filter(line => {
-         if (line.includes('> ')) return true;
-         return allowedPatterns.some(p => p.test(line));
-      });
-   }, [logs, isVerbose]);
+      return logLines
+         .filter(({ text, fromCommand }) => {
+            if (fromCommand) return true;
+            if (text.includes('> ')) return true;
+            return allowedPatterns.some(p => p.test(text));
+         })
+         .map(l => l.text);
+   }, [logLines, logs, isVerbose]);
 
    const matchingLineIndices = useMemo(() => {
       if (!logSearchQuery.trim()) return [];
@@ -3736,6 +3749,13 @@ export default function App() {
                               World
                            </button>
                            <button
+                              onClick={() => setEditTab("backups")}
+                              className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "backups" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                           >
+                              <Archive className="w-4 h-4" />
+                              Backups
+                           </button>
+                           <button
                               onClick={() => setEditTab("mods")}
                               className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "mods" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
                            >
@@ -4572,6 +4592,10 @@ export default function App() {
                                  )}
                               </div>
                            </div>
+                        )}
+
+                        {editTab === "backups" && selectedId && (
+                           <BackupsPanel instanceId={selectedId} showAlert={showAlert} showConfirm={showConfirm} />
                         )}
 
                         {editTab === "world" && (
@@ -6533,6 +6557,21 @@ export default function App() {
                                     >
                                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${globalSettings.showSnapshots ? 'left-7' : 'left-1'}`} />
                                     </button>
+                                 </div>
+                                 <div className="flex flex-col gap-2 p-4 bg-[#242424] rounded-lg border border-[#333]">
+                                    <label htmlFor="backups-path" className="font-bold text-sm">Backup Folder</label>
+                                    <span className="text-xs text-neutral-500">
+                                       Where world backups are stored. Leave empty to keep them in each instance's <span className="font-mono">backups</span> folder.
+                                       Otherwise each instance gets its own subfolder here. When running in Docker, the folder must be mounted into the Isopod container.
+                                    </span>
+                                    <input
+                                       id="backups-path"
+                                       type="text"
+                                       placeholder="/servers/<instance>/backups"
+                                       value={globalSettings.backupsPath || ""}
+                                       onChange={(e) => setGlobalSettings({ ...globalSettings, backupsPath: e.target.value })}
+                                       className="w-full bg-[#141414] border border-[#333] p-3 rounded-lg focus:outline-none focus:border-[#3E8ED0] text-xs font-mono text-neutral-300"
+                                    />
                                  </div>
                               </div>
                            </div>

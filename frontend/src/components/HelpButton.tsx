@@ -22,6 +22,7 @@ const HELP_TOPICS = {
    loader: "versions-loaders/loaders",
    files: "file-manager",
    world: "world-settings",
+   backups: "backups",
    mods: "mod-management",
    "resource-pack": "mod-management/resource-packs",
    config: "server-tuning/raw-environment",
