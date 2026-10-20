@@ -2536,7 +2536,7 @@ export default function App() {
          style={catMode ? { backgroundImage: MEOW_BACKGROUND } : undefined}
       >
          <div className="flex-1 flex flex-col">
-            <header className="h-[52px] min-h-[52px] bg-[#3B3B3B] border-b border-[#1E1E1E] flex items-center px-4 gap-4 flex-shrink-0 shadow-sm z-10">
+            <header className={`h-[52px] min-h-[52px] ${catMode ? "bg-transparent" : "bg-[#3B3B3B]"} border-b border-[#1E1E1E] flex items-center px-4 gap-4 flex-shrink-0 shadow-sm z-10`}>
                <div className="flex items-center gap-2 mr-4 border-r border-[#4A4A4A] pr-4 py-1">
                   <img src="/logo.png" className="w-8 h-8 rounded" alt="Isopod Logo" />
                   <span className="text-xl font-bold tracking-tight text-white">Isopod</span>
@@ -2623,7 +2623,7 @@ export default function App() {
                </div>
             </header>
 
-            <main className="flex-1 overflow-auto p-6 bg-[#2B2B2B]">
+            <main className={`flex-1 overflow-auto p-6 ${catMode ? "bg-transparent" : "bg-[#2B2B2B]"}`}>
                {loading ? (
                   <div className="text-neutral-400 flex items-center gap-2">
                      <RefreshCw className="w-5 h-5 animate-spin" /> Loading Instances...
@@ -2769,7 +2769,7 @@ export default function App() {
             </main>
          </div>
 
-         <aside className="w-[280px] min-w-[280px] flex-shrink-0 bg-[#242424] border-l border-[#1E1E1E] flex flex-col shadow-[rgba(0,0,0,0.1)_-4px_0px_15px_-3px] z-20 relative animate-in slide-in-from-right duration-300">
+         <aside className={`w-[280px] min-w-[280px] flex-shrink-0 ${catMode ? "bg-transparent" : "bg-[#242424]"} border-l border-[#1E1E1E] flex flex-col shadow-[rgba(0,0,0,0.1)_-4px_0px_15px_-3px] z-20 relative animate-in slide-in-from-right duration-300`}>
             {selectedInstance ? (
                <>
                   <div className="p-6 flex flex-col items-center border-b border-[#323232] relative group">
