@@ -22,6 +22,14 @@ test.describe("Top navigation bar", () => {
     await expect.poll(() => requests.length).toBeGreaterThan(0)
   })
 
+  test("shows overall CPU and RAM usage in the top bar", async ({ page }) => {
+    // Totals are hidden below 1366px to keep the top bar from wrapping.
+    await page.setViewportSize({ width: 1440, height: 720 })
+    const totals = page.getByTestId("resource-totals")
+    await expect(totals).toContainText("12.5%")
+    await expect(totals).toContainText("3.0/16 GB")
+  })
+
   test("Settings button opens the Application Settings modal", async ({ page }) => {
     await page.getByRole("button", { name: /^Settings$/ }).click()
     await expect(page.getByText("Application Settings")).toBeVisible()

@@ -28,6 +28,11 @@ function jsonFor(path: string): unknown {
     return { versions: [{ id: "1.21.1", type: "release" }, { id: "24w01a", type: "snapshot" }] }
   if (path === "/api/system/check-updates")
     return { current_version: "0.0.0-test", has_update: false }
+  if (path === "/api/resources")
+    return {
+      instances: {},
+      total: { cpu_percent: 12.5, memory_used: 3 * 1024 ** 3, memory_allocated: 0, host_memory: 16 * 1024 ** 3, host_cpus: 8 },
+    }
   if (path.endsWith("/status")) return { instance_id: "alpha", is_running: false, is_ready: false, containers: [] }
   if (path.endsWith("/logs")) return { logs: "" }
   if (path.endsWith("/users")) return { whitelist: [], ops: [], banned: [] }

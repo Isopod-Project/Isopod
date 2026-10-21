@@ -21,6 +21,7 @@ import json
 import time
 from . import resource_packs as rp
 from . import backups
+from . import resource_usage
 
 load_dotenv()
 
@@ -235,8 +236,31 @@ def list_instances():
                     group=meta.get("group", "No group"),
                     icon_url=f"/api/instances/{entry.name}/icon" if os.path.exists(icon_path) else None
                 ))
-                
+
     return instances
+
+def get_instance_memory_setting(instance_path: str) -> Optional[str]:
+    """The MEMORY value from an instance's docker-compose.yml, e.g. "2G"."""
+    try:
+        with open(os.path.join(instance_path, "docker-compose.yml"), "r") as f:
+            services = (yaml.safe_load(f) or {}).get("services", {})
+        mc_config = services.get("mc") or list(services.values())[0]
+        env = mc_config.get("environment", {})
+        if isinstance(env, list):
+            env = dict(item.split("=", 1) for item in env if "=" in item)
+        return env.get("MEMORY")
+    except Exception:
+        return None
+
+@app.get("/api/resources")
+def get_resource_usage():
+    """Live CPU and RAM usage per running instance, plus totals across all instances."""
+    client = get_docker_client()
+    if not client:
+        raise HTTPException(status_code=500, detail="Docker client not initialized")
+    instances = list_instances()
+    allocated = {inst.id: resource_usage.parse_memory(get_instance_memory_setting(inst.path)) for inst in instances}
+    return resource_usage.collect(client, [inst.id for inst in instances], allocated)
 
 @app.get("/api/groups")
 def list_groups():

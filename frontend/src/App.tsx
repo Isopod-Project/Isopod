@@ -2,6 +2,8 @@ import React, { useEffect, useState, useRef, useMemo } from "react";
 import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Archive, Cat } from "lucide-react";
 import { HelpButton } from "./components/HelpButton";
 import { BackupsPanel } from "./components/BackupsPanel";
+import { ResourceTotals, InstanceResources, type ResourceUsage } from "./components/ResourceUsage";
+import { formatBytes } from "./lib/utils";
 
 interface Instance {
    id: string;
@@ -32,6 +34,7 @@ const MEOW_BACKGROUND = `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2
 export default function App() {
    const [instances, setInstances] = useState<Instance[]>([]);
    const [statuses, setStatuses] = useState<Record<string, InstanceStatus>>({});
+   const [resourceUsage, setResourceUsage] = useState<ResourceUsage | null>(null);
    const [loading, setLoading] = useState(true);
    // States from branch 3
    const [groups, setGroups] = useState<string[]>(["No group"]);
@@ -412,6 +415,7 @@ export default function App() {
                fetchStatus(inst.id);
             }
          }
+         fetchResourceUsage();
       } catch (e) {
          console.error(e);
          await showAlert("Failed to connect to Isopod backend. Is it running on port 8000?", "System Error");
@@ -425,6 +429,16 @@ export default function App() {
          const res = await fetch(`/api/instances/${id}/status`);
          const data = await res.json();
          setStatuses((prev: Record<string, InstanceStatus>) => ({ ...prev, [id]: data }));
+      } catch (e) {
+         console.error(e);
+      }
+   };
+
+   const fetchResourceUsage = async () => {
+      try {
+         const res = await fetch("/api/resources");
+         if (!res.ok) return;
+         setResourceUsage(await res.json());
       } catch (e) {
          console.error(e);
       }
@@ -2261,6 +2275,7 @@ export default function App() {
       if (!globalSettings.autoRefresh) return;
       const interval = setInterval(() => {
          instances.forEach((inst: Instance) => fetchStatus(inst.id));
+         fetchResourceUsage();
       }, 5000);
       return () => clearInterval(interval);
    }, [instances, globalSettings.autoRefresh]);
@@ -2614,6 +2629,7 @@ export default function App() {
                   iconClassName="text-neutral-300"
                />
                <div className="ml-auto flex items-center gap-4">
+                  <ResourceTotals usage={resourceUsage} />
                   <div className="flex flex-col items-end">
                      <span className="text-[9px] font-black text-neutral-500 uppercase tracking-tighter leading-none mb-0.5">Version</span>
                      <span className="text-[11px] font-mono font-bold text-neutral-400 leading-none">{updateInfo?.current_version || "..."}</span>
@@ -2693,6 +2709,11 @@ export default function App() {
                                           <span className="text-xs text-center font-medium line-clamp-2 leading-tight break-all">
                                              {inst.name}
                                           </span>
+                                          {isRunning && resourceUsage?.instances[inst.id] && (
+                                             <span className="text-[10px] text-neutral-500 font-mono mt-0.5" title="RAM in use">
+                                                {formatBytes(resourceUsage.instances[inst.id].memory_used)}
+                                             </span>
+                                          )}
                                        </div>
                                     );
                                  })}
@@ -2770,6 +2791,11 @@ export default function App() {
                                           <span className="text-xs text-center font-medium line-clamp-2 leading-tight break-all">
                                              {inst.name}
                                           </span>
+                                          {isRunning && resourceUsage?.instances[inst.id] && (
+                                             <span className="text-[10px] text-neutral-500 font-mono mt-0.5" title="RAM in use">
+                                                {formatBytes(resourceUsage.instances[inst.id].memory_used)}
+                                             </span>
+                                          )}
                                        </div>
                                     );
                                  })}
@@ -2856,6 +2882,10 @@ export default function App() {
                               </div>
                            );
                         })()
+                     )}
+
+                     {selectedStatus?.is_running && (
+                        <InstanceResources usage={resourceUsage?.instances[selectedInstance.id]} />
                      )}
                   </div>
 

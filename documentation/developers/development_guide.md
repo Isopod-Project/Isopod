@@ -108,6 +108,26 @@ This is a common issue when cloning the repository on **Windows**. Windows uses 
 3. In the bottom-right corner of the window, you will see `CRLF`. Click it and change it to `LF`.
 4. Save the file and restart the container.
 
+### RAM usage always shows 0
+Isopod runs servers on its own Docker daemon inside the container (DinD). On cgroup v2 hosts, `docker/entrypoint.sh` and `docker/dev-entrypoint.sh` move the container's processes into a child cgroup and enable every controller before starting `dockerd`, the same as the official `docker:dind` image. Without that step `dockerd` falls back to a threaded cgroup that only supports CPU stats, so memory reads as 0 (`docker exec isopod docker stats` shows `0B / 0B`).
+
+**The Fix**: Rebuild the image and recreate the container. The setting can't be changed on a container that's already running.
+
+---
+
+## 🔌 Resource Usage API
+`GET /api/resources` returns live usage for every running instance plus totals, read from Docker container stats (`backend/resource_usage.py`):
+```json
+{
+  "instances": { "my-server": { "cpu_percent": 3.1, "memory_used": 2368000000, "memory_allocated": 2147483648 } },
+  "total": { "cpu_percent": 3.1, "memory_used": 2368000000, "memory_allocated": 2147483648, "host_memory": 16295006208, "host_cpus": 32 }
+}
+```
+- `cpu_percent` is a share of the whole host (100 = every core busy), not per-core like `docker stats`.
+- `memory_used` excludes reclaimable page cache, matching `docker stats`.
+- `memory_allocated` is the instance's `MEMORY` setting (the Java heap) in bytes, or `null` if unset.
+- Only running instances appear in `instances`. Each call takes about a second because Docker samples CPU twice.
+
 ---
 
 ## 🛠️ Tech Stack
