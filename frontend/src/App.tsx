@@ -3,6 +3,7 @@ import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, Aler
 import { HelpButton } from "./components/HelpButton";
 import { BackupsPanel } from "./components/BackupsPanel";
 import { ResourceTotals, InstanceResources, type ResourceUsage } from "./components/ResourceUsage";
+import { OnlinePlayers, PlayerCount, type PlayerList } from "./components/OnlinePlayers";
 import { formatBytes } from "./lib/utils";
 
 interface Instance {
@@ -35,6 +36,8 @@ export default function App() {
    const [instances, setInstances] = useState<Instance[]>([]);
    const [statuses, setStatuses] = useState<Record<string, InstanceStatus>>({});
    const [resourceUsage, setResourceUsage] = useState<ResourceUsage | null>(null);
+   // Online players per instance, only kept while that server is Online
+   const [playerLists, setPlayerLists] = useState<Record<string, PlayerList>>({});
    const [loading, setLoading] = useState(true);
    // States from branch 3
    const [groups, setGroups] = useState<string[]>(["No group"]);
@@ -429,6 +432,28 @@ export default function App() {
          const res = await fetch(`/api/instances/${id}/status`);
          const data = await res.json();
          setStatuses((prev: Record<string, InstanceStatus>) => ({ ...prev, [id]: data }));
+         // Piggyback on status polling so players are only asked for while the server is Online
+         if (data.is_ready) {
+            fetchPlayers(id);
+         } else {
+            setPlayerLists((prev) => {
+               if (!(id in prev)) return prev;
+               const { [id]: _, ...rest } = prev;
+               return rest;
+            });
+         }
+      } catch (e) {
+         console.error(e);
+      }
+   };
+
+   const fetchPlayers = async (id: string) => {
+      try {
+         const res = await fetch(`/api/instances/${id}/players`);
+         if (!res.ok) return;
+         const data = await res.json();
+         if (!Array.isArray(data?.players)) return;
+         setPlayerLists((prev) => ({ ...prev, [id]: data }));
       } catch (e) {
          console.error(e);
       }
@@ -2714,6 +2739,7 @@ export default function App() {
                                                 {formatBytes(resourceUsage.instances[inst.id].memory_used)}
                                              </span>
                                           )}
+                                          {isRunning && <PlayerCount list={playerLists[inst.id]} />}
                                        </div>
                                     );
                                  })}
@@ -2796,6 +2822,7 @@ export default function App() {
                                                 {formatBytes(resourceUsage.instances[inst.id].memory_used)}
                                              </span>
                                           )}
+                                          {isRunning && <PlayerCount list={playerLists[inst.id]} />}
                                        </div>
                                     );
                                  })}
@@ -2886,6 +2913,18 @@ export default function App() {
 
                      {selectedStatus?.is_running && (
                         <InstanceResources usage={resourceUsage?.instances[selectedInstance.id]} />
+                     )}
+
+                     {selectedStatus?.is_ready && (
+                        <OnlinePlayers
+                           instanceId={selectedInstance.id}
+                           list={playerLists[selectedInstance.id]}
+                           onChanged={() => fetchPlayers(selectedInstance.id)}
+                           showAlert={showAlert}
+                           showConfirm={showConfirm}
+                           showPrompt={showPrompt}
+                           showSelect={showSelect}
+                        />
                      )}
                   </div>
 
@@ -3721,6 +3760,11 @@ export default function App() {
                                           ? (statuses[selectedInstance.id]?.startup_status === "Stopping..." ? 'Stopping' : 'Offline')
                                           : (statuses[selectedInstance.id]?.is_ready ? 'Online' : (statuses[selectedInstance.id]?.startup_status || 'Starting...'))}
                                     </span>
+                                    {statuses[selectedInstance.id]?.is_ready && playerLists[selectedInstance.id]?.available && (
+                                       <span className="text-[11px] font-mono text-neutral-500 border-l border-[#3A3A3A] pl-2 flex items-center gap-1" title={playerLists[selectedInstance.id].players.join(", ") || "No players online"} data-testid="edit-player-count">
+                                          <Users className="w-3 h-3" /> {playerLists[selectedInstance.id].online}/{playerLists[selectedInstance.id].max}
+                                       </span>
+                                    )}
                                  </div>
                               )}
                            </div>
