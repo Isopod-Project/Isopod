@@ -35,59 +35,46 @@ if [ "$USE_EXTERNAL_DOCKER" = "false" ]; then
 
     enable_cgroup_nesting
 
-    # Determine storage driver: prefer fuse-overlayfs if available to avoid DinD vfs disk bloat
-    DRIVER_FLAG=""
-    if which fuse-overlayfs >/dev/null 2>&1; then
-        DRIVER_FLAG="--storage-driver=fuse-overlayfs"
+    # Storage driver order: $DOCKER_STORAGE_DRIVER if set, then fuse-overlayfs (avoids DinD vfs
+    # disk bloat), then vfs. Docker Desktop for Mac sets overlay2, since containers fail to exec
+    # under fuse-overlayfs there ("exec ...: invalid argument").
+    DRIVERS="${DOCKER_STORAGE_DRIVER:-}"
+    if which fuse-overlayfs >/dev/null 2>&1 && [ "$DOCKER_STORAGE_DRIVER" != "fuse-overlayfs" ]; then
+        DRIVERS="$DRIVERS fuse-overlayfs"
     fi
+    DRIVERS="$DRIVERS vfs"
 
-    # Start dockerd in background with isolated non-overlapping subnet to avoid collision with host bridge
+    # Isolated non-overlapping subnet to avoid collision with host bridge
     DOCKERD_FLAGS="--bip=172.28.0.1/16"
-    dockerd $DOCKERD_FLAGS $DRIVER_FLAG > /var/log/dockerd.log 2>&1 &
-
-    DOCKERD_PID=$!
-
-    echo "⏳ Waiting for internal Docker daemon to become ready..."
-    MAX_WAIT=30
-    WAIT_COUNT=0
     DOCKER_READY=false
 
-    while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
-        if docker info >/dev/null 2>&1; then
-            DOCKER_READY=true
-            break
-        fi
-        sleep 1
-        WAIT_COUNT=$((WAIT_COUNT + 1))
-    done
-
-    if [ "$DOCKER_READY" = "false" ]; then
-        echo "⚠️  dockerd did not start cleanly with initial driver. Checking log:"
-        cat /var/log/dockerd.log || true
-        echo "🔄 Retrying dockerd with fallback storage driver..."
-        kill -9 $DOCKERD_PID 2>/dev/null || true
-        pkill -9 containerd 2>/dev/null || true
-        sleep 2
-        rm -f /var/run/docker.pid /var/run/docker.sock /var/run/docker/containerd/containerd.pid 2>/dev/null || true
-        if [ "$DRIVER_FLAG" = "" ] && which fuse-overlayfs >/dev/null 2>&1; then
-            FALLBACK_DRIVER="--storage-driver=fuse-overlayfs"
-        else
-            FALLBACK_DRIVER="--storage-driver=vfs"
-        fi
-        dockerd $DOCKERD_FLAGS $FALLBACK_DRIVER > /var/log/dockerd.log 2>&1 &
+    for DRIVER in $DRIVERS; do
+        echo "🔧 Trying storage driver: $DRIVER"
+        dockerd $DOCKERD_FLAGS --storage-driver=$DRIVER > /var/log/dockerd.log 2>&1 &
         DOCKERD_PID=$!
 
-
+        echo "⏳ Waiting for internal Docker daemon to become ready..."
         WAIT_COUNT=0
-        while [ $WAIT_COUNT -lt 20 ]; do
+        while [ $WAIT_COUNT -lt 30 ]; do
             if docker info >/dev/null 2>&1; then
                 DOCKER_READY=true
                 break
             fi
+            # dockerd exits right away when the driver is unsupported; don't wait out the timeout
+            kill -0 $DOCKERD_PID 2>/dev/null || break
             sleep 1
             WAIT_COUNT=$((WAIT_COUNT + 1))
         done
-    fi
+
+        [ "$DOCKER_READY" = "true" ] && break
+
+        echo "⚠️  dockerd did not start with $DRIVER. Log:"
+        cat /var/log/dockerd.log || true
+        kill -9 $DOCKERD_PID 2>/dev/null || true
+        pkill -9 containerd 2>/dev/null || true
+        sleep 2
+        rm -f /var/run/docker.pid /var/run/docker.sock /var/run/docker/containerd/containerd.pid 2>/dev/null || true
+    done
 
     if [ "$DOCKER_READY" = "true" ]; then
         echo "✅ Internal Docker daemon is ready!"
