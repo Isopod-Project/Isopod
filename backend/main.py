@@ -2361,9 +2361,14 @@ def get_online_players(instance_id: str):
     """Who is online right now, from RCON `list`. Only meaningful while the server is Online."""
     return players.online_players(instance_id, get_instance_path(instance_id))
 
+@app.get("/api/instances/{instance_id}/bans")
+def get_banned_players(instance_id: str):
+    """Banned players, read from banned-players.json. Works whether or not the server is running."""
+    return players.read_bans(os.path.join(get_instance_path(instance_id), "data"))
+
 @app.post("/api/instances/{instance_id}/players/{name}/action")
 def player_action(instance_id: str, name: str, req: PlayerActionRequest):
-    """Kick, ban, op/deop, whitelist, message or teleport one player.
+    """Kick, ban, unban, op/deop, whitelist, message or teleport one player.
 
     Op and whitelist changes go through User Management so they survive a restart (the
     access files are rebuilt from users.json); the rest are plain RCON commands.
@@ -2389,6 +2394,14 @@ def player_action(instance_id: str, name: str, req: PlayerActionRequest):
         # makes the server image turn whitelist enforcement on at the next restart.
         update_instance_users(instance_id, [WhitelistUser(**u) for u in users], whitelist_enabled=wl_enabled)
         return {"message": f"{name}: {req.action.replace('_', ' ')} saved"}
+
+    if not is_instance_running(path):
+        if req.action != "pardon":
+            raise HTTPException(status_code=409, detail="Start the server first; this action runs on the live server.")
+        # Stopped: edit the ban list directly so a player can be unbanned without a restart
+        if not players.remove_ban(os.path.join(path, "data"), name):
+            raise HTTPException(status_code=400, detail=f"{name} isn't banned")
+        return {"message": f"Unbanned {name}"}
 
     try:
         command = players.build_command(req.action, name, req.reason or "", req.message or "", req.target or "")

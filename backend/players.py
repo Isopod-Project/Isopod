@@ -4,6 +4,8 @@ The player list comes from the vanilla `list` command, which every server type s
 Its output is cached briefly so the dashboard, side panel and edit view can all poll
 without each one opening a new RCON session.
 """
+import json
+import os
 import re
 import subprocess
 import threading
@@ -31,7 +33,7 @@ LIST_HEADER = re.compile(r"There are (\d+)\s*(?:of a max(?: of)?|/)\s*(\d+) play
 # RCON reports a command that did nothing with a normal exit code; these mark that case.
 FAILURE_PREFIXES = ("No player was found", "Unknown or incomplete command", "Incorrect argument", "Nothing changed", "That player does not exist")
 
-ACTIONS = ("kick", "ban", "op", "deop", "whitelist_add", "whitelist_remove", "message", "teleport")
+ACTIONS = ("kick", "ban", "pardon", "op", "deop", "whitelist_add", "whitelist_remove", "message", "teleport")
 
 _cache: Dict[str, Tuple[float, dict]] = {}
 _cache_lock = threading.Lock()
@@ -101,7 +103,7 @@ def forget(instance_id: str) -> None:
 
 
 def build_command(action: str, name: str, reason: str = "", message: str = "", target: str = "") -> str:
-    """The RCON command for a kick, ban, message or teleport. Raises ValueError on bad input."""
+    """The RCON command for a kick, ban, pardon, message or teleport. Raises ValueError on bad input."""
     if not is_valid_name(name):
         raise ValueError("Invalid player name")
     reason, message = clean_text(reason), clean_text(message)
@@ -109,6 +111,8 @@ def build_command(action: str, name: str, reason: str = "", message: str = "", t
         return f"kick {name} {reason}".strip()
     if action == "ban":
         return f"ban {name} {reason}".strip()
+    if action == "pardon":
+        return f"pardon {name}"
     if action == "message":
         if not message:
             raise ValueError("Message is empty")
@@ -120,3 +124,36 @@ def build_command(action: str, name: str, reason: str = "", message: str = "", t
             raise ValueError("Pick another player to teleport to")
         return f"tp {name} {target}"
     raise ValueError(f"Unknown action: {action}")
+
+
+def read_bans(data_dir: str) -> List[dict]:
+    """Banned players from the server's banned-players.json; empty if the file is missing or unreadable."""
+    try:
+        with open(os.path.join(data_dir, "banned-players.json")) as f:
+            entries = json.load(f)
+    except (OSError, ValueError):
+        return []
+    if not isinstance(entries, list):
+        return []
+    keys = ("name", "uuid", "reason", "source", "created", "expires")
+    return [{k: e.get(k) for k in keys} for e in entries if isinstance(e, dict) and e.get("name")]
+
+
+def remove_ban(data_dir: str, name: str) -> bool:
+    """Drop a player from banned-players.json while the server is stopped. False if they weren't banned.
+
+    The server reads this file at startup and rewrites it on every ban/pardon, so editing it
+    is only safe while the server isn't running; pardon goes through RCON otherwise.
+    """
+    path = os.path.join(data_dir, "banned-players.json")
+    try:
+        with open(path) as f:
+            entries = json.load(f)
+    except (OSError, ValueError):
+        return False
+    kept = [e for e in entries if not (isinstance(e, dict) and str(e.get("name", "")).lower() == name.lower())]
+    if len(kept) == len(entries):
+        return False
+    with open(path, "w") as f:
+        json.dump(kept, f, indent=2)
+    return True
