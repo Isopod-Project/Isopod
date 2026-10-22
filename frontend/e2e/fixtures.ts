@@ -35,6 +35,7 @@ function jsonFor(path: string): unknown {
     }
   if (path.endsWith("/status")) return { instance_id: "alpha", is_running: false, is_ready: false, containers: [] }
   if (path.endsWith("/logs")) return { logs: "" }
+  if (path.endsWith("/players")) return { available: false, online: 0, max: 0, players: [] }
   if (path.endsWith("/users")) return { whitelist: [], ops: [], banned: [] }
   if (path.endsWith("/mods")) return []
   if (path.endsWith("/config")) return {}

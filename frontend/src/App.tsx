@@ -3,6 +3,8 @@ import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, Aler
 import { HelpButton } from "./components/HelpButton";
 import { BackupsPanel } from "./components/BackupsPanel";
 import { ResourceTotals, InstanceResources, type ResourceUsage } from "./components/ResourceUsage";
+import { BannedBadge, BannedPlayers, OnlineBadge, OnlinePlayers, PlayerCount, PlayerRowActions, type PlayerList } from "./components/OnlinePlayers";
+import { useBans } from "./components/usePlayerActions";
 import { formatBytes } from "./lib/utils";
 
 interface Instance {
@@ -35,6 +37,8 @@ export default function App() {
    const [instances, setInstances] = useState<Instance[]>([]);
    const [statuses, setStatuses] = useState<Record<string, InstanceStatus>>({});
    const [resourceUsage, setResourceUsage] = useState<ResourceUsage | null>(null);
+   // Online players per instance, only kept while that server is Online
+   const [playerLists, setPlayerLists] = useState<Record<string, PlayerList>>({});
    const [loading, setLoading] = useState(true);
    // States from branch 3
    const [groups, setGroups] = useState<string[]>(["No group"]);
@@ -429,6 +433,28 @@ export default function App() {
          const res = await fetch(`/api/instances/${id}/status`);
          const data = await res.json();
          setStatuses((prev: Record<string, InstanceStatus>) => ({ ...prev, [id]: data }));
+         // Piggyback on status polling so players are only asked for while the server is Online
+         if (data.is_ready) {
+            fetchPlayers(id);
+         } else {
+            setPlayerLists((prev) => {
+               if (!(id in prev)) return prev;
+               const { [id]: _, ...rest } = prev;
+               return rest;
+            });
+         }
+      } catch (e) {
+         console.error(e);
+      }
+   };
+
+   const fetchPlayers = async (id: string) => {
+      try {
+         const res = await fetch(`/api/instances/${id}/players`);
+         if (!res.ok) return;
+         const data = await res.json();
+         if (!Array.isArray(data?.players)) return;
+         setPlayerLists((prev) => ({ ...prev, [id]: data }));
       } catch (e) {
          console.error(e);
       }
@@ -2394,6 +2420,8 @@ export default function App() {
 
    const selectedInstance = instances.find(i => i.id === selectedId);
    const selectedStatus = selectedId ? statuses[selectedId] : null;
+   // Read when User Management opens; drives the Banned Players list and each row's Ban/Unban button
+   const banList = useBans(selectedId ?? undefined);
 
    // Merge server logs with output from console commands. Each line is tagged
    // so Simplified mode can always keep what the user ran and its response.
@@ -2714,6 +2742,7 @@ export default function App() {
                                                 {formatBytes(resourceUsage.instances[inst.id].memory_used)}
                                              </span>
                                           )}
+                                          {isRunning && <PlayerCount list={playerLists[inst.id]} />}
                                        </div>
                                     );
                                  })}
@@ -2796,6 +2825,7 @@ export default function App() {
                                                 {formatBytes(resourceUsage.instances[inst.id].memory_used)}
                                              </span>
                                           )}
+                                          {isRunning && <PlayerCount list={playerLists[inst.id]} />}
                                        </div>
                                     );
                                  })}
@@ -2886,6 +2916,19 @@ export default function App() {
 
                      {selectedStatus?.is_running && (
                         <InstanceResources usage={resourceUsage?.instances[selectedInstance.id]} />
+                     )}
+
+                     {selectedStatus?.is_ready && (
+                        <OnlinePlayers
+                           key={selectedInstance.id}
+                           instanceId={selectedInstance.id}
+                           list={playerLists[selectedInstance.id]}
+                           onChanged={() => fetchPlayers(selectedInstance.id)}
+                           showAlert={showAlert}
+                           showConfirm={showConfirm}
+                           showPrompt={showPrompt}
+                           showSelect={showSelect}
+                        />
                      )}
                   </div>
 
@@ -3721,6 +3764,11 @@ export default function App() {
                                           ? (statuses[selectedInstance.id]?.startup_status === "Stopping..." ? 'Stopping' : 'Offline')
                                           : (statuses[selectedInstance.id]?.is_ready ? 'Online' : (statuses[selectedInstance.id]?.startup_status || 'Starting...'))}
                                     </span>
+                                    {statuses[selectedInstance.id]?.is_ready && playerLists[selectedInstance.id]?.available && (
+                                       <span className="text-[11px] font-mono text-neutral-500 border-l border-[#3A3A3A] pl-2 flex items-center gap-1" title={playerLists[selectedInstance.id].players.join(", ") || "No players online"} data-testid="edit-player-count">
+                                          <Users className="w-3 h-3" /> {playerLists[selectedInstance.id].online}/{playerLists[selectedInstance.id].max}
+                                       </span>
+                                    )}
                                  </div>
                               )}
                            </div>
@@ -3810,6 +3858,7 @@ export default function App() {
                               onClick={() => {
                                  setEditTab("users");
                                  fetchInstanceUsers(selectedInstance?.id || "");
+                                 banList.refresh();
                               }}
                               className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "users" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
                            >
@@ -4377,7 +4426,11 @@ export default function App() {
                                                             }}
                                                          />
                                                          <div className="flex flex-col">
-                                                            <span className={`text-sm font-bold ${user.active === false ? 'text-neutral-500 line-through' : 'text-neutral-200'}`}>{user.name}</span>
+                                                            <span className="flex items-center gap-2">
+                                                               <span className={`text-sm font-bold ${user.active === false ? 'text-neutral-500 line-through' : 'text-neutral-200'}`}>{user.name}</span>
+                                                               {selectedInstance && <OnlineBadge list={playerLists[selectedInstance.id]} name={user.name} />}
+                                                               <BannedBadge banned={banList.isBanned(user.name)} />
+                                                            </span>
                                                             {user.uuid && <span className="text-[9px] font-mono text-neutral-600">{user.uuid}</span>}
                                                          </div>
                                                       </td>
@@ -4422,7 +4475,7 @@ export default function App() {
                                                                   level: val
                                                                } : u));
                                                             }}
-                                                            className="bg-[#141414] border border-[#333] p-1.5 rounded text-xs text-neutral-300 focus:outline-none focus:border-[#3E8ED0]/40"
+                                                            className="w-44 bg-[#141414] border border-[#333] p-1.5 rounded text-xs text-neutral-300 focus:outline-none focus:border-[#3E8ED0]/40"
                                                          >
                                                             <option value={0}>Standard Player (No OP)</option>
                                                             <option value={1}>Level 1: Bypass Spawn Protection</option>
@@ -4431,7 +4484,25 @@ export default function App() {
                                                             <option value={4}>Level 4: Full Operator</option>
                                                          </select>
                                                       </td>
-                                                      <td className="px-5 py-3 text-right">
+                                                      <td className="px-5 py-3">
+                                                         <div className="flex flex-wrap justify-end gap-1.5 min-w-[96px]">
+                                                         {selectedInstance && (
+                                                            <PlayerRowActions
+                                                               instanceId={selectedInstance.id}
+                                                               name={user.name}
+                                                               list={playerLists[selectedInstance.id]}
+                                                               ready={!!selectedStatus?.is_ready}
+                                                               banned={banList.isBanned(user.name)}
+                                                               onChanged={(action) => {
+                                                                  fetchPlayers(selectedInstance.id);
+                                                                  if (action === "ban" || action === "pardon") banList.refresh();
+                                                               }}
+                                                               showAlert={showAlert}
+                                                               showConfirm={showConfirm}
+                                                               showPrompt={showPrompt}
+                                                               showSelect={showSelect}
+                                                            />
+                                                         )}
                                                          <button
                                                             type="button"
                                                             onClick={() => {
@@ -4442,6 +4513,7 @@ export default function App() {
                                                          >
                                                             <Trash2 className="w-3.5 h-3.5" />
                                                          </button>
+                                                         </div>
                                                       </td>
                                                    </tr>
                                                 ))}
@@ -4450,6 +4522,19 @@ export default function App() {
                                        </div>
                                     )}
                                  </div>
+
+                                 {selectedInstance && (
+                                    <BannedPlayers
+                                       instanceId={selectedInstance.id}
+                                       bans={banList.bans}
+                                       loading={banList.loading}
+                                       refresh={banList.refresh}
+                                       showAlert={showAlert}
+                                       showConfirm={showConfirm}
+                                       showPrompt={showPrompt}
+                                       showSelect={showSelect}
+                                    />
+                                 )}
 
                                  {/* Save Panel */}
                                  <div className="flex justify-end gap-3 pt-4 border-t border-[#3A3A3A]">

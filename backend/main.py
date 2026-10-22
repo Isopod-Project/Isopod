@@ -22,6 +22,7 @@ import time
 from . import resource_packs as rp
 from . import backups
 from . import resource_usage
+from . import players
 
 load_dotenv()
 
@@ -1046,7 +1047,10 @@ def update_instance_users(
                 service = services[first_service_name]
                 env = service.get("environment", {})
                 
-                wl_str = ",".join(whitelist_names)
+                # The server image turns the whitelist on whenever WHITELIST is non-empty, even
+                # with ENABLE_WHITELIST=false, so leave it empty while the whitelist is off.
+                # whitelist.json and users.json still hold the names.
+                wl_str = "" if wl_enabled is False else ",".join(whitelist_names)
                 ops_str = ",".join(ops_names)
                 wl_val = "true" if wl_enabled else "false"
                 
@@ -1105,12 +1109,14 @@ def update_instance_users(
             except Exception as e:
                 print(f"RCON whitelist toggle failed: {e}")
                 
-        # 1. Reload Whitelist
-        cmd_wl = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", "whitelist reload"]
-        try:
-            subprocess.run(cmd_wl, cwd=path, capture_output=True, text=True, timeout=5)
-        except Exception as e:
-            print(f"RCON whitelist reload failed: {e}")
+        # 1. Reload Whitelist. Skipped while the whitelist is off: with enforce-whitelist set,
+        # vanilla's reload kicks everyone missing from whitelist.json even when it isn't in use.
+        if wl_enabled is not False:
+            cmd_wl = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", "whitelist reload"]
+            try:
+                subprocess.run(cmd_wl, cwd=path, capture_output=True, text=True, timeout=5)
+            except Exception as e:
+                print(f"RCON whitelist reload failed: {e}")
             
         # 2. Deop players who are no longer ops
         new_ops_lower = {n.lower() for n in ops_names}
@@ -2343,6 +2349,69 @@ def execute_command(instance_id: str, req: CommandRequest):
         }
     except Exception as e:
         return {"output": f"Execution error: {str(e)}", "success": False}
+
+class PlayerActionRequest(BaseModel):
+    action: str
+    reason: Optional[str] = None
+    message: Optional[str] = None
+    target: Optional[str] = None
+
+@app.get("/api/instances/{instance_id}/players")
+def get_online_players(instance_id: str):
+    """Who is online right now, from RCON `list`. Only meaningful while the server is Online."""
+    return players.online_players(instance_id, get_instance_path(instance_id))
+
+@app.get("/api/instances/{instance_id}/bans")
+def get_banned_players(instance_id: str):
+    """Banned players, read from banned-players.json. Works whether or not the server is running."""
+    return players.read_bans(os.path.join(get_instance_path(instance_id), "data"))
+
+@app.post("/api/instances/{instance_id}/players/{name}/action")
+def player_action(instance_id: str, name: str, req: PlayerActionRequest):
+    """Kick, ban, unban, op/deop, whitelist, message or teleport one player.
+
+    Op and whitelist changes go through User Management so they survive a restart (the
+    access files are rebuilt from users.json); the rest are plain RCON commands.
+    """
+    path = get_instance_path(instance_id)
+    if req.action not in players.ACTIONS:
+        raise HTTPException(status_code=400, detail=f"Unknown action: {req.action}")
+    if not players.is_valid_name(name):
+        raise HTTPException(status_code=400, detail="Invalid player name")
+
+    if req.action in ("op", "deop", "whitelist_add", "whitelist_remove"):
+        users, wl_enabled = get_instance_users_internal(instance_id)
+        user = next((u for u in users if u.get("name", "").lower() == name.lower()), None)
+        if user is None:
+            user = {"name": name, "uuid": None, "level": 0, "is_op": False, "whitelisted": False, "active": True}
+            users.append(user)
+        if req.action in ("op", "deop"):
+            user["is_op"] = req.action == "op"
+            user["level"] = 4 if req.action == "op" else 0
+        else:
+            user["whitelisted"] = req.action == "whitelist_add"
+        # Pass the whitelist setting through: with it unset, the WHITELIST env var written here
+        # makes the server image turn whitelist enforcement on at the next restart.
+        update_instance_users(instance_id, [WhitelistUser(**u) for u in users], whitelist_enabled=wl_enabled)
+        return {"message": f"{name}: {req.action.replace('_', ' ')} saved"}
+
+    if not is_instance_running(path):
+        if req.action != "pardon":
+            raise HTTPException(status_code=409, detail="Start the server first; this action runs on the live server.")
+        # Stopped: edit the ban list directly so a player can be unbanned without a restart
+        if not players.remove_ban(os.path.join(path, "data"), name):
+            raise HTTPException(status_code=400, detail=f"{name} isn't banned")
+        return {"message": f"Unbanned {name}"}
+
+    try:
+        command = players.build_command(req.action, name, req.reason or "", req.message or "", req.target or "")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    ok, output = players.rcon(path, command)
+    players.forget(instance_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail=output or "RCON command failed")
+    return {"message": output or "Done", "command": command}
 
 def is_instance_running(path: str) -> bool:
     result = subprocess.run(
