@@ -23,6 +23,7 @@ from . import resource_packs as rp
 from . import backups
 from . import resource_usage
 from . import players
+from . import modpacks
 
 load_dotenv()
 
@@ -1764,6 +1765,12 @@ async def create_instance(req: CreateInstanceRequest):
                                         exclude_str = ",".join(excludes)
                                         env.append(f"MODRINTH_EXCLUDE_FILES={exclude_str}")
                                         env.append("MODRINTH_FORCE_SYNCHRONIZE=true")
+
+                                    # Save the pack's mod list now so the Mods tab can show it before first start
+                                    try:
+                                        await modpacks.save_from_index(client, path, req.modrinth_id, vdata["id"], index_data)
+                                    except Exception as e:
+                                        print(f"Error saving modpack mod list: {e}")
         except Exception as e:
             print(f"Error fetching Modrinth version details: {e}")
 
@@ -2873,11 +2880,79 @@ async def list_instance_mods(instance_id: str):
                         "source": "env"
                     })
 
+        # 3. Mods bundled in a Modrinth modpack that itzg hasn't downloaded yet (before first start)
+        modpack = env_dict.get("MODRINTH_MODPACK", "").strip()
+        if modpack and "/" not in modpack:
+            excluded = {x.strip().lower() for x in env_dict.get("MODRINTH_EXCLUDE_FILES", "").split(",") if x.strip()}
+            pack_version = env_dict.get("MODRINTH_VERSION") or None
+            pack_mods = await modpacks.get_mods(base_path, modpack, pack_version)
+            # Once installed, a pack mod missing from disk was skipped by itzg (e.g. its built-in
+            # client-only exclusions) and won't appear; only list the ones the user excluded.
+            installed = modpacks.is_installed(os.path.join(base_path, "data"), pack_version)
+            for pm in pack_mods:
+                if pm.get("removed"):
+                    continue
+                fname = pm["filename"]
+                mod_id = pm.get("slug") or pm.get("project_id") or fname
+                if {fname.lower(), f"{fname}.disabled".lower(), mod_id.lower()} & seen_ids:
+                    continue
+                is_en = fname.lower() not in excluded
+                if installed and is_en:
+                    continue
+                seen_ids.add(fname.lower())
+                mods.append({
+                    "filename": fname if is_en else f"{fname}.disabled",
+                    "id": mod_id,
+                    "name": pm.get("name") or fname,
+                    "version": pm.get("version_number") or "-",
+                    "enabled": is_en,
+                    "size": 0,
+                    "modified": 0,
+                    "modified_str": "Installs on start",
+                    "icon_url": pm.get("icon_url"),
+                    "summary": pm.get("summary"),
+                    "url": f"https://modrinth.com/mod/{mod_id}" if pm.get("project_id") else None,
+                    "provider": "modrinth" if pm.get("project_id") else "local",
+                    "source": "modpack"
+                })
+
     except Exception as e:
         print(f"Error checking compose env mods: {e}")
 
     mods.sort(key=lambda x: x["name"].lower())
     return mods
+
+
+def set_modpack_mod_excluded(instance_id: str, filename: Optional[str], excluded: bool) -> bool:
+    """Exclude (or re-include) a not-yet-downloaded modpack mod via MODRINTH_EXCLUDE_FILES.
+
+    Returns False if the file isn't one of the instance's modpack mods.
+    """
+    if not filename:
+        return False
+    base_path = get_instance_path(instance_id)
+    fname = filename[:-len(".disabled")] if filename.endswith(".disabled") else filename
+    if fname not in modpacks.saved_filenames(base_path):
+        return False
+
+    compose_path = os.path.join(base_path, "docker-compose.yml")
+    with open(compose_path, 'r') as f:
+        cdata = yaml.safe_load(f) or {}
+    service = cdata.get("services", {}).get("mc", {})
+    env = service.get("environment") or []
+    env_map = dict(item.split("=", 1) for item in env if "=" in item) if isinstance(env, list) else dict(env)
+
+    items = [x.strip() for x in env_map.get("MODRINTH_EXCLUDE_FILES", "").split(",") if x.strip()]
+    items = [x for x in items if x.lower() != fname.lower()]
+    if excluded:
+        items.append(fname)
+    env_map["MODRINTH_EXCLUDE_FILES"] = ",".join(items)
+    env_map["MODRINTH_FORCE_SYNCHRONIZE"] = "true"
+
+    service["environment"] = [f"{k}={v}" for k, v in env_map.items()] if isinstance(env, list) else env_map
+    with open(compose_path, 'w') as f:
+        yaml.dump(cdata, f, default_flow_style=False, sort_keys=False)
+    return True
 
 
 class ToggleModRequest(BaseModel):
@@ -2930,6 +3005,14 @@ def toggle_instance_mod(instance_id: str, req: ToggleModRequest):
                 new_filename = new_name
             else:
                 new_filename = cur_name
+
+    # A modpack mod that itzg hasn't downloaded yet is toggled through the pack's exclude list
+    if not target_file:
+        try:
+            if set_modpack_mod_excluded(instance_id, req.filename, not req.enabled):
+                new_filename = req.filename.replace(".disabled", "") + ("" if req.enabled else ".disabled")
+        except Exception as e:
+            print(f"Error updating modpack excludes for mod toggle: {e}")
 
     # Also update compose environment variables if tracked there
     try:
@@ -3024,6 +3107,15 @@ def delete_instance_mod(instance_id: str, req: DeleteModRequest):
                 os.remove(entry.path)
                 deleted = True
                 break
+
+    # A modpack mod that itzg hasn't downloaded yet is removed by excluding it from the pack
+    if not deleted:
+        try:
+            if set_modpack_mod_excluded(instance_id, req.filename, True):
+                modpacks.mark_removed(get_instance_path(instance_id), req.filename.replace(".disabled", ""))
+                deleted = True
+        except Exception as e:
+            print(f"Error updating modpack excludes for mod delete: {e}")
 
     # Remove from docker-compose.yml
     try:
