@@ -11,8 +11,10 @@ RUN npm run build
 FROM python:3.11-slim
 WORKDIR /app
 
-# Install Docker CLI, Docker Daemon (docker.io), iptables, and Docker Compose v2 for DinD invocation
-RUN apt-get update && \
+# Install Docker CLI, Docker Daemon (docker.io), iptables, and Docker Compose v2 for DinD invocation.
+# Downloads match the build arch (x86_64 or aarch64) so arm64 hosts like Apple Silicon don't need emulation.
+RUN ARCH="$(uname -m)" && \
+    apt-get update && \
     apt-get install -y --no-install-recommends \
         docker.io \
         fuse-overlayfs \
@@ -21,11 +23,11 @@ RUN apt-get update && \
         ca-certificates \
         curl && \
     rm -rf /var/lib/apt/lists/* && \
-    curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-27.3.1.tgz" | tar -xz -C /tmp && \
+    curl -fsSL "https://download.docker.com/linux/static/stable/${ARCH}/docker-27.3.1.tgz" | tar -xz -C /tmp && \
     mv /tmp/docker/docker /usr/local/bin/docker && \
     rm -rf /tmp/docker && \
     mkdir -p /usr/lib/docker/cli-plugins/ && \
-    curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" -o /usr/lib/docker/cli-plugins/docker-compose && \
+    curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${ARCH}" -o /usr/lib/docker/cli-plugins/docker-compose && \
     chmod +x /usr/lib/docker/cli-plugins/docker-compose
 
 
