@@ -46,6 +46,16 @@ def saved_filenames(instance_path: str) -> List[str]:
     return [m["filename"] for m in saved.get("mods", [])] if saved else []
 
 
+def is_installed(data_dir: str, version_id: Optional[str]) -> bool:
+    """Whether itzg has already installed this modpack version into the server's data folder."""
+    try:
+        with open(os.path.join(data_dir, ".modrinth-modpack-manifest.json"), "r") as f:
+            manifest = json.load(f)
+    except (OSError, ValueError):
+        return False
+    return not version_id or manifest.get("versionId") == version_id
+
+
 def mark_removed(instance_path: str, filename: str) -> None:
     """Hide a modpack mod the user removed, so it isn't listed as merely disabled."""
     saved = load_saved(instance_path, None)

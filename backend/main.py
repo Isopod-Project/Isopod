@@ -2884,7 +2884,11 @@ async def list_instance_mods(instance_id: str):
         modpack = env_dict.get("MODRINTH_MODPACK", "").strip()
         if modpack and "/" not in modpack:
             excluded = {x.strip().lower() for x in env_dict.get("MODRINTH_EXCLUDE_FILES", "").split(",") if x.strip()}
-            pack_mods = await modpacks.get_mods(base_path, modpack, env_dict.get("MODRINTH_VERSION") or None)
+            pack_version = env_dict.get("MODRINTH_VERSION") or None
+            pack_mods = await modpacks.get_mods(base_path, modpack, pack_version)
+            # Once installed, a pack mod missing from disk was skipped by itzg (e.g. its built-in
+            # client-only exclusions) and won't appear; only list the ones the user excluded.
+            installed = modpacks.is_installed(os.path.join(base_path, "data"), pack_version)
             for pm in pack_mods:
                 if pm.get("removed"):
                     continue
@@ -2892,8 +2896,10 @@ async def list_instance_mods(instance_id: str):
                 mod_id = pm.get("slug") or pm.get("project_id") or fname
                 if {fname.lower(), f"{fname}.disabled".lower(), mod_id.lower()} & seen_ids:
                     continue
-                seen_ids.add(fname.lower())
                 is_en = fname.lower() not in excluded
+                if installed and is_en:
+                    continue
+                seen_ids.add(fname.lower())
                 mods.append({
                     "filename": fname if is_en else f"{fname}.disabled",
                     "id": mod_id,
