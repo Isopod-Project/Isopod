@@ -84,6 +84,14 @@ export default function App() {
       });
    };
 
+   // Error for a failed response, carrying the backend's `detail` when it sent one
+   const responseError = async (res: Response, fallback: string) => {
+      const data = await res.json().catch(() => null);
+      return new Error(typeof data?.detail === "string" && data.detail ? data.detail : fallback);
+   };
+
+   const errorMessage = (e: unknown) => e instanceof Error ? e.message : String(e);
+
    const showConfirm = (message: string, title = "Confirm") => {
       return new Promise<boolean>((resolve) => {
          setDialog({ title, message, type: "confirm", onResult: (res) => { setDialog(null); setTimeout(() => resolve(!!res), 50); } });
@@ -684,7 +692,7 @@ export default function App() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body)
          });
-         if (!res.ok) throw new Error("Failed to create instance");
+         if (!res.ok) throw await responseError(res, "Failed to create instance");
          const data = await res.json();
          await uploadNewInstanceIcon(data.id);
 
@@ -715,7 +723,7 @@ export default function App() {
          setSelectedId(data.id);
       } catch (e) {
          console.error(e);
-         await showAlert("Failed to create instance", "Creation Failed");
+         await showAlert(`Failed to create instance: ${errorMessage(e)}`, "Creation Failed");
       } finally {
          setIsCreating(false);
          setImportProgress(null);
@@ -744,8 +752,13 @@ export default function App() {
             finalGroup = await showPrompt("Enter a name for the new folder:", "", "Create New Folder") || "";
             if (!finalGroup) return;
          }
-         await fetch(`/api/instances/${id}/group`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ group: finalGroup }) });
-         fetchInstances(); fetchGroups();
+         try {
+            const res = await fetch(`/api/instances/${id}/group`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ group: finalGroup }) });
+            if (!res.ok) throw await responseError(res, "Failed to move server");
+            fetchInstances(); fetchGroups();
+         } catch (e) {
+            await showAlert(`Could not move server to "${finalGroup}": ${errorMessage(e)}`, "Move Failed");
+         }
       }
    };
 
@@ -755,8 +768,13 @@ export default function App() {
       const defaultName = `Copy of ${originalName}`;
       const name = await showPrompt("Name for duplicate:", defaultName, "Duplicate Server");
       if (name) {
-         await fetch(`/api/instances/${id}/duplicate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
-         fetchInstances();
+         try {
+            const res = await fetch(`/api/instances/${id}/duplicate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+            if (!res.ok) throw await responseError(res, "Failed to duplicate server");
+            fetchInstances();
+         } catch (e) {
+            await showAlert(`Could not duplicate "${originalName}": ${errorMessage(e)}`, "Duplicate Failed");
+         }
       }
    };
 
@@ -824,8 +842,11 @@ export default function App() {
             const res = await fetch(`/api/groups/${encodeURIComponent(groupName)}/rename`, {
                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ new_name: newName })
             });
-            if (res.ok) { await fetchInstances(); await fetchGroups(); }
-         } catch (e) { }
+            if (!res.ok) throw await responseError(res, "Failed to rename group");
+            await fetchInstances(); await fetchGroups();
+         } catch (e) {
+            await showAlert(`Could not rename group "${groupName}": ${errorMessage(e)}`, "Rename Failed");
+         }
       }
    };
 
@@ -835,20 +856,24 @@ export default function App() {
       if (!confirmed) return;
       try {
          const res = await fetch(`/api/groups/${encodeURIComponent(groupName)}`, { method: "DELETE" });
-         if (res.ok) { await fetchInstances(); await fetchGroups(); }
-      } catch (e) { }
+         if (!res.ok) throw await responseError(res, "Failed to remove group");
+         await fetchInstances(); await fetchGroups();
+      } catch (e) {
+         await showAlert(`Could not remove group "${groupName}": ${errorMessage(e)}`, "Remove Failed");
+      }
    };
 
    const handleDelete = async (id: string) => {
       const confirmed = await showConfirm("Are you sure you want to permanently delete this instance and all its files?", "Delete Instance");
       if (!confirmed) return;
       try {
-         await fetch(`/api/instances/${id}`, { method: "DELETE" });
+         const res = await fetch(`/api/instances/${id}`, { method: "DELETE" });
+         if (!res.ok) throw await responseError(res, "Failed to delete instance");
          setSelectedId(null);
          fetchInstances();
       } catch (err) {
          console.error(err);
-         await showAlert("Error deleting instance", "Delete Error");
+         await showAlert(`The instance was not deleted: ${errorMessage(err)}`, "Delete Error");
       }
    };
 
@@ -1118,12 +1143,17 @@ export default function App() {
             [id]: { ...prev[id], is_running: true, is_ready: false, startup_status: "Restarting...", startup_percent: 20 }
          }));
          // We use stop then start for a clean reload of compose
-         await fetch(`/api/instances/${id}/stop`, { method: "POST" });
+         const stopRes = await fetch(`/api/instances/${id}/stop`, { method: "POST" });
+         if (!stopRes.ok) throw await responseError(stopRes, "Failed to stop container");
          setStatuses((prev: Record<string, InstanceStatus>) => ({
             ...prev,
             [id]: { ...prev[id], is_running: true, is_ready: false, startup_status: "Starting...", startup_percent: 40 }
          }));
-         await fetch(`/api/instances/${id}/start`, { method: "POST" });
+         const startRes = await fetch(`/api/instances/${id}/start`, { method: "POST" });
+         if (!startRes.ok) {
+            const err = await responseError(startRes, "Failed to start container");
+            throw new Error(`The server stopped but did not start again. ${err.message}`);
+         }
 
          // Modal closure already handled by handleSaveConfig if coming from there
 
@@ -1133,6 +1163,7 @@ export default function App() {
       } catch (e) {
          console.error("Restart failed", e);
          fetchStatus(id);
+         await showAlert(`Restart Error: ${errorMessage(e)}`, "Restart Failed");
       }
    };
 
@@ -1604,10 +1635,19 @@ export default function App() {
       if (!selectedId) return;
       setIsInstanceModsLoading(true);
       try {
-         await fetch(`/api/instances/${selectedId}/mods/sync`, { method: "POST" });
+         const res = await fetch(`/api/instances/${selectedId}/mods/sync`, { method: "POST" });
+         if (!res.ok) throw await responseError(res, "Failed to sync mods");
+         const data = await res.json();
          await fetchInstanceMods(selectedId);
+         const downloaded: string[] = data.downloaded || [];
+         const failed: string[] = data.failed || [];
+         const lines = [];
+         if (downloaded.length) lines.push(`Downloaded ${downloaded.length} missing mod${downloaded.length === 1 ? "" : "s"}: ${downloaded.join(", ")}.`);
+         if (failed.length) lines.push(`Could not download: ${failed.join(", ")}.`);
+         await showAlert(lines.length ? lines.join("\n") : "All configured mods are already installed.", failed.length ? "Mod Sync Incomplete" : "Mod Sync");
       } catch (e) {
          console.error("Error syncing mods", e);
+         await showAlert(`Could not check mods: ${errorMessage(e)}`, "Mod Sync Failed");
       } finally {
          setIsInstanceModsLoading(false);
       }
@@ -1937,26 +1977,35 @@ export default function App() {
       setHistoryIndex(-1);
       setCommandDraft("");
 
+      const appendToConsole = (content: string) => {
+         const lines = (serverLogs[id] || "").split('\n').filter(Boolean);
+         const lastLine = lines[lines.length - 1] || "";
+         setManualLogs(prev => ({
+            ...prev,
+            [id]: [...(prev[id] || []), { anchor: lastLine, content }]
+         }));
+      };
+
       try {
          const res = await fetch(`/api/instances/${id}/command`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ command: cmd })
          });
+         if (!res.ok) throw await responseError(res, "Failed to send command");
          const data = await res.json();
+         const output = (data.output || "").trim();
 
-         const entry = `\n> ${cmd}\n${data.output}`;
-         const currentLogs = serverLogs[id] || "";
-         const lines = currentLogs.split('\n').filter(Boolean);
-         const lastLine = lines[lines.length - 1] || "";
-
-         setManualLogs(prev => ({
-            ...prev,
-            [id]: [...(prev[id] || []), { anchor: lastLine, content: entry }]
-         }));
+         if (data.success === false) {
+            // Keep the command in the box so it can be retried
+            appendToConsole(`\n> ${cmd}\n${output ? output + "\n" : ""}[Isopod] Command failed.`);
+            return;
+         }
+         appendToConsole(`\n> ${cmd}\n${output}`);
          setConsoleCommand("");
       } catch (e) {
          console.error("Failed to send command", e);
+         appendToConsole(`\n> ${cmd}\n[Isopod] Command failed: ${errorMessage(e)}`);
       } finally {
          setIsExecuting(false);
       }

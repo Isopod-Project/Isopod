@@ -51,11 +51,18 @@ async function handleApi(route: Route) {
 /** Collects uncaught exceptions and console errors so every test can assert they never happen. */
 export class ErrorCollector {
   readonly problems: string[] = []
+  private readonly expected: RegExp[] = []
+
+  /** Tests of failure paths call this for the console errors they cause on purpose. */
+  expect(...patterns: RegExp[]) {
+    this.expected.push(...patterns)
+  }
 
   attach(page: Page) {
     page.on("pageerror", (err) => this.problems.push(`pageerror: ${err.message}`))
     page.on("console", (msg) => {
-      if (msg.type() === "error") this.problems.push(`console.error: ${msg.text()}`)
+      const text = msg.text()
+      if (msg.type() === "error" && !this.expected.some((p) => p.test(text))) this.problems.push(`console.error: ${text}`)
     })
   }
 }

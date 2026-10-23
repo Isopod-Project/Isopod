@@ -3185,6 +3185,7 @@ async def sync_instance_mods_to_disk(instance_id: str, env: Optional[dict] = Non
     """
     Download missing configured mod jar files for an instance directly into data/mods/ 
     so they exist immediately when configured/saved rather than waiting for server boot.
+    Returns the mod ids it downloaded and the ones it could not.
     """
     path = get_instance_path(instance_id)
     mods_dir = get_instance_mods_dir(instance_id)
@@ -3193,7 +3194,7 @@ async def sync_instance_mods_to_disk(instance_id: str, env: Optional[dict] = Non
     if env is None:
         compose_path = os.path.join(path, "docker-compose.yml")
         if not os.path.exists(compose_path):
-            return
+            return {"downloaded": [], "failed": []}
         with open(compose_path, "r") as f:
             cdata = yaml.safe_load(f) or {}
         env_raw = cdata.get("services", {}).get("mc", {}).get("environment", {})
@@ -3247,6 +3248,7 @@ async def sync_instance_mods_to_disk(instance_id: str, env: Optional[dict] = Non
 
     m_enabled = [x.strip() for x in env.get("MODRINTH_PROJECTS", "").split(",") if x.strip()]
     m_disabled = [x.strip() for x in env.get("MODRINTH_DISABLED", "").split(",") if x.strip()]
+    downloaded, failed = [], []
 
     async with httpx.AsyncClient(timeout=45.0, follow_redirects=True) as client:
         # 1. Modrinth
@@ -3292,9 +3294,15 @@ async def sync_instance_mods_to_disk(instance_id: str, env: Optional[dict] = Non
                                         f_out.write(chunk)
                                 existing_stems.add(target_fname.lower().replace(".disabled", "").replace(".jar", ""))
                                 existing_ids.add(mid.lower())
+                                downloaded.append(mid)
                                 print(f"Synced Modrinth mod {mid} -> {target_fname} ({os.path.getsize(dest_path)} bytes)")
+                                continue
+                failed.append(mid)
             except Exception as e:
+                failed.append(mid)
                 print(f"Error syncing Modrinth mod {mid}: {e}")
+
+    return {"downloaded": downloaded, "failed": failed}
 
 
 
@@ -3302,8 +3310,8 @@ async def sync_instance_mods_to_disk(instance_id: str, env: Optional[dict] = Non
 async def sync_instance_mods(instance_id: str):
     """Explicitly synchronize missing mods to data/mods on disk."""
     try:
-        await sync_instance_mods_to_disk(instance_id)
-        return {"message": "Mods synchronized successfully"}
+        result = await sync_instance_mods_to_disk(instance_id)
+        return {"message": "Mods synchronized successfully", **result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
