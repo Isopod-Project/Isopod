@@ -1276,6 +1276,11 @@ def get_backup_root() -> Optional[str]:
 
 backups.set_backup_root_provider(get_backup_root)
 
+@app.get("/api/health")
+def health():
+    """Cheap liveness check the dashboard polls to notice a lost connection."""
+    return {"ok": True}
+
 @app.get("/api/settings")
 def get_settings():
     settings_path = os.path.join(SERVERS_DIR, "isopod_settings.json")

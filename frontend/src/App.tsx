@@ -129,6 +129,7 @@ export default function App() {
    const [isAddModalOpen, setIsAddModalOpen] = useState(false);
    const [newName, setNewName] = useState("");
    const [newGroup, setNewGroup] = useState("No group");
+   const [connectionLost, setConnectionLost] = useState(false);
    const [newPort, setNewPort] = useState("25565");
    const [isCreating, setIsCreating] = useState(false);
    const [importProgress, setImportProgress] = useState<number | null>(null);
@@ -425,12 +426,21 @@ export default function App() {
             }
          }
          fetchResourceUsage();
+         setConnectionLost(false);
       } catch (e) {
          console.error(e);
-         await showAlert("Failed to connect to Isopod backend. Is it running on port 8000?", "System Error");
+         markConnectionLost();
       } finally {
          setLoading(false);
       }
+   };
+
+   // Last known statuses can't be trusted while the backend is unreachable
+   const markConnectionLost = () => {
+      setConnectionLost(true);
+      setStatuses(prev => Object.fromEntries(Object.entries(prev).map(([id, s]) => (
+         [id, { ...s, is_running: false, is_ready: false, startup_status: "Unknown", startup_percent: 0 }]
+      ))));
    };
 
    const fetchStatus = async (id: string) => {
@@ -2375,6 +2385,32 @@ export default function App() {
       }
    }, []);
 
+   // Refs so the heartbeat below always sees the current state and handlers
+   const connectionLostRef = useRef(false);
+   connectionLostRef.current = connectionLost;
+   const reconnectRef = useRef(() => { });
+   reconnectRef.current = () => { fetchInstances(); fetchGroups(); };
+
+   // Heartbeat, independent of auto-refresh: two misses in a row (~10 s) mean the backend is gone
+   useEffect(() => {
+      let misses = 0;
+      const interval = setInterval(async () => {
+         let ok = false;
+         try {
+            ok = (await fetch("/api/health")).ok;
+         } catch {
+            ok = false;
+         }
+         if (ok) {
+            misses = 0;
+            if (connectionLostRef.current) reconnectRef.current();
+         } else if (++misses === 2) {
+            markConnectionLost();
+         }
+      }, 5000);
+      return () => clearInterval(interval);
+   }, []);
+
    useEffect(() => {
       if (!globalSettings.autoRefresh) return;
       const interval = setInterval(() => {
@@ -2760,9 +2796,23 @@ export default function App() {
             </header>
 
             <main className={`flex-1 overflow-auto p-6 ${catMode ? "bg-transparent" : "bg-[#2B2B2B]"}`}>
+               {connectionLost && instances.length > 0 && (
+                  <div role="alert" className="mb-6 flex items-center gap-3 px-4 py-3 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-200 text-sm">
+                     <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                     <span className="flex-1">Lost connection to Isopod. Server statuses are unknown until it's back. Retrying automatically…</span>
+                     <button onClick={() => reconnectRef.current()} className="px-3 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 font-bold text-xs">Retry</button>
+                  </div>
+               )}
                {loading ? (
                   <div className="text-neutral-400 flex items-center gap-2">
                      <RefreshCw className="w-5 h-5 animate-spin" /> Loading Instances...
+                  </div>
+               ) : instances.length === 0 && connectionLost ? (
+                  <div role="alert" className="flex flex-col items-center justify-center h-full text-neutral-400 gap-3">
+                     <AlertCircle className="w-12 h-12 opacity-50" />
+                     <p className="font-bold text-neutral-200">Can't reach Isopod</p>
+                     <p className="text-sm">The dashboard can't connect to the Isopod backend. Check that it's running. This page retries automatically.</p>
+                     <button onClick={() => reconnectRef.current()} className="px-4 py-1.5 rounded bg-[#3E8ED0] hover:bg-[#4B9BE0] text-white font-bold text-sm">Retry</button>
                   </div>
                ) : instances.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full text-neutral-500">
@@ -2959,7 +3009,7 @@ export default function App() {
                      </div>
                      <h2 className="text-lg font-bold text-center leading-tight mb-1 break-all">{selectedInstance.name}</h2>
                      <p className="text-xs text-neutral-400 text-center">
-                        {!selectedStatus?.is_running
+                        {connectionLost ? 'Unknown' : !selectedStatus?.is_running
                            ? (selectedStatus?.startup_status === "Stopping..." ? 'Stopping...' : 'Offline')
                            : (selectedStatus?.is_ready ? 'Online' : (selectedStatus?.startup_status || 'Starting...'))}
                      </p>
@@ -3850,7 +3900,7 @@ export default function App() {
                                        <span className={`relative inline-flex rounded-full h-2 w-2 ${statuses[selectedInstance.id]?.is_running ? (statuses[selectedInstance.id]?.is_ready ? 'bg-emerald-500' : 'bg-amber-500') : 'bg-neutral-500'}`}></span>
                                     </span>
                                     <span className="text-[11px] font-medium text-neutral-300">
-                                       {!statuses[selectedInstance.id]?.is_running
+                                       {connectionLost ? 'Unknown' : !statuses[selectedInstance.id]?.is_running
                                           ? (statuses[selectedInstance.id]?.startup_status === "Stopping..." ? 'Stopping' : 'Offline')
                                           : (statuses[selectedInstance.id]?.is_ready ? 'Online' : (statuses[selectedInstance.id]?.startup_status || 'Starting...'))}
                                     </span>
