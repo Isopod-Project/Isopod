@@ -946,10 +946,11 @@ def format_uuid(raw_uuid: str) -> str:
 
 def get_minecraft_uuid(username: str) -> str:
     import urllib.request
+    import urllib.parse
     import hashlib
     import json
     
-    url = f"https://api.mojang.com/users/profiles/minecraft/{username}"
+    url = f"https://api.mojang.com/users/profiles/minecraft/{urllib.parse.quote(username, safe='')}"
     try:
         req = urllib.request.Request(
             url, 
@@ -965,7 +966,8 @@ def get_minecraft_uuid(username: str) -> str:
         print(f"Error fetching UUID from Mojang API: {e}")
         
     # Fallback to offline UUID generation (MD5-based offline UUID)
-    hash_bytes = hashlib.md5(f"OfflinePlayer:{username}".encode('utf-8')).digest()
+    # Minecraft's offline-mode UUID scheme, not a security use of MD5
+    hash_bytes = hashlib.md5(f"OfflinePlayer:{username}".encode('utf-8'), usedforsecurity=False).digest()
     hash_list = list(hash_bytes)
     hash_list[6] = (hash_list[6] & 0x0f) | 0x30  # Version 3 UUID
     hash_list[8] = (hash_list[8] & 0x3f) | 0x80  # Variant 1

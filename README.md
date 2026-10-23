@@ -31,6 +31,9 @@
    - On macOS, first run `echo "COMPOSE_FILE=isopod-compose.yml:docker/isopod-compose.macos.yml" > .env` once, then start with plain `docker compose up -d --build`. See [Running on macOS](Documentation/everyone/getting-started.md#-running-on-macos).
    - On Windows, `scripts\start-isopod.ps1` runs the same command, waits for the dashboard to come up, and opens it in your default browser.
 
+## 🔒 Security
+Isopod has no login and runs privileged, so keep port 8000 on your local network or behind a VPN and never forward it to the internet. To report a vulnerability, see [SECURITY.md](SECURITY.md). Every pull request and release goes through an automated [security audit](docs/security-audit.md).
+
 ## 🛠 Tech Stack
 - **Frontend**: React, TypeScript, Vite, TailwindCSS, Lucide Icons.
 - **Backend**: Python, FastAPI, Docker SDK.

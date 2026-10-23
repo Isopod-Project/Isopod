@@ -84,7 +84,20 @@ Whenever tickets are closed with new features or fixed bugs, ensure repository d
 
 ---
 
-### Step 5: Publish Release via GitHub CLI
+### Step 5: Pass the Security Audit (required)
+Do not run `gh release create` until both checks below pass. Details and triage steps are in [`docs/security-audit.md`](../../../docs/security-audit.md).
+1. **Run the Security Audit workflow on `main` and wait for it to go green:**
+   ```bash
+   gh workflow run security-audit.yml --ref main
+   gh run watch "$(gh run list --workflow security-audit.yml --branch main --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status
+   ```
+   If any job fails, fix the finding (or record a justified, expiring exception in `.trivyignore.yaml`) and run it again. Never publish over a red run.
+2. **Review the release diff:** run a security-focused review of `git diff <LAST_TAG>..main` (in Claude Code: `/security-review`), and work through the checklist in `docs/security-audit.md`. Report anything that isn't fixed to the user before continuing.
+3. **Record the result** in the release notes, e.g. `Security audit: passed (0 high/critical; release diff reviewed).`
+
+---
+
+### Step 6: Publish Release via GitHub CLI
 Execute the release creation using `gh release create`:
 
 ```bash
@@ -103,7 +116,7 @@ gh release create <TAG> --draft --title "<TAG> - <TITLE>" --notes "<MARKDOWN_NOT
 
 ---
 
-### Step 6: Verify Release & Dashboard Update Notification
+### Step 7: Verify Release & Dashboard Update Notification
 1. Verify the release exists on GitHub:
    ```bash
    gh release view <TAG>

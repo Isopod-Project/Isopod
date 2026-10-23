@@ -1,0 +1,11 @@
+# Findings the Security Audit workflow's Trivy scan skips. Each entry needs a reason
+# and an expiry date, after which it fails the scan again and must be re-checked.
+vulnerabilities:
+  - id: CVE-2026-78669
+    paths:
+      - "usr/lib/docker/cli-plugins/docker-compose"
+    statement: >-
+      HTTP/2 denial of service in golang.org/x/net, vendored by docker-compose. The latest
+      compose release (v5.6.1) still ships the affected version; the Dockerfile picks up the
+      next release automatically. Isopod only uses compose as a local CLI.
+    expired_at: 2026-12-31
