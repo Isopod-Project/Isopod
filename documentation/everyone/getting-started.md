@@ -58,6 +58,14 @@ Server folders and worlds are stored in `data/servers` inside your clone. Docker
   - `Ctrl + A`: Select all items.
   - `Esc`: Cancel inline editing or dismiss context menu.
 
+## 🧱 Server Types
+Pick a server type when you add an instance, or change it later in the Edit window's **Loaders** tab. Each type lets you pin a loader version or build, or use **Latest Recommended**.
+- **Mod servers**: Fabric, Forge, NeoForge, and Quilt load mods from the `mods` folder.
+- **Plugin servers**: Paper, Purpur, and Folia load plugins from the `plugins` folder. On these servers the **Mods** tab manages plugins instead: its header reads **Plugins**, and **Download Plugins** searches Modrinth for plugins that run on that server type.
+  - **Paper** runs Paper, Spigot, and Bukkit plugins.
+  - **Purpur** is a Paper fork with extra gameplay and config options. It runs the same plugins as Paper, plus Purpur-only ones.
+  - **Folia** runs each region of the world on its own thread, for large servers on machines with many CPU cores. Most Paper plugins don't work on Folia, so the plugin search only shows plugins marked Folia-compatible. Folia only exists for some Minecraft versions (1.19.4 and newer), and all its builds are experimental; Isopod warns you if the version you picked has no Folia build.
+
 ## 💾 Saving in the Edit Window
 - **Mods tab**: Every change applies right away. **Add** downloads the mod (it shows **Installing...** until it's done), and enabling, disabling, or removing a mod changes its file immediately. There is nothing to save.
 - **User Management**: Player changes and the **Whitelist** switch are saved with **Save User Configuration**, and **Discard Changes** undoes them.

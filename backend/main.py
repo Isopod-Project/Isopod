@@ -1462,31 +1462,42 @@ async def get_loader_versions(loader: str, mc_version: Optional[str] = None, gam
                         return [{"id": v.get("version", v.get("rawVersion")), "stable": True} for v in reversed(data)]
                 return []
 
-            elif loader == "paper":
+            elif loader in ("paper", "folia"):
                 target_ver = mc_version
                 if not target_ver or target_ver == "latest":
-                    # Fetch available versions from PaperMC v3 to find latest
+                    # The project lists its versions newest first
                     try:
-                        p_res = await client.get("https://fill.papermc.io/v3/projects/paper")
+                        p_res = await client.get(f"https://fill.papermc.io/v3/projects/{loader}")
                         if p_res.is_success:
-                            p_data = p_res.json()
-                            vers_dict = p_data.get("versions", {})
-                            all_vers = []
-                            for maj, v_list in vers_dict.items():
-                                all_vers.extend(v_list)
+                            all_vers = [v for v_list in p_res.json().get("versions", {}).values() for v in v_list]
                             if all_vers:
                                 target_ver = all_vers[0]
                     except Exception:
                         target_ver = "1.20.1"
 
-                url = f"https://fill.papermc.io/v3/projects/paper/versions/{target_ver}/builds"
-                print(f"DEBUG: Fetching Paper from {url}")
+                url = f"https://fill.papermc.io/v3/projects/{loader}/versions/{target_ver}/builds"
+                print(f"DEBUG: Fetching {loader} from {url}")
                 res = await client.get(url)
                 if res.is_success:
                     builds_data = res.json()
                     if isinstance(builds_data, list):
                         return [{"id": str(b["id"]), "stable": b.get("channel", "STABLE") == "STABLE"} for b in builds_data]
-                return [{"id": "latest", "stable": True}]
+                # Folia only has builds for some versions; offering "latest" would fail at start
+                return [] if loader == "folia" else [{"id": "latest", "stable": True}]
+
+            elif loader == "purpur":
+                target_ver = mc_version
+                if not target_ver or target_ver == "latest":
+                    p_res = await client.get("https://api.purpurmc.org/v2/purpur")
+                    if not p_res.is_success:
+                        return []
+                    target_ver = p_res.json().get("metadata", {}).get("current")
+                res = await client.get(f"https://api.purpurmc.org/v2/purpur/{target_ver}")
+                if res.is_success:
+                    builds = res.json().get("builds", {}).get("all", [])
+                    # Oldest first in the API; newest first here like the other loaders
+                    return [{"id": str(b), "stable": True} for b in reversed(builds)]
+                return []
 
     except Exception as e:
         print(f"DEBUG: Error fetching {loader} versions: {e}")
@@ -1593,6 +1604,28 @@ async def get_modrinth_project_versions(project_id: str):
 
 MODPACK_SERVER_TYPES = {"modrinth", "auto_curseforge", "curseforge", "ftba"}
 
+# Plugin server TYPEs -> the Modrinth loader categories whose plugins they can run.
+# Purpur is a Paper fork and runs Paper/Spigot/Bukkit plugins; Folia only runs plugins built for it.
+PLUGIN_SERVER_LOADERS = {
+    "PAPER": ["paper", "spigot", "bukkit"],
+    "PURPUR": ["purpur", "paper", "spigot", "bukkit"],
+    "FOLIA": ["folia"],
+}
+
+# Server TYPE -> the itzg variable that pins its loader version or build (Folia's has no underscore).
+LOADER_VERSION_ENV = {
+    "FABRIC": "FABRIC_LOADER_VERSION",
+    "FORGE": "FORGE_VERSION",
+    "NEOFORGE": "NEOFORGE_VERSION",
+    "QUILT": "QUILT_LOADER_VERSION",
+    "PAPER": "PAPER_BUILD",
+    "PURPUR": "PURPUR_BUILD",
+    "FOLIA": "FOLIABUILD",
+}
+
+def is_plugin_server(server_type: Optional[str]) -> bool:
+    return (server_type or "").upper() in PLUGIN_SERVER_LOADERS
+
 # modrinth.index.json dependency keys -> itzg TYPE loader names
 MRPACK_LOADER_DEPENDENCIES = {
     "neoforge": "NEOFORGE",
@@ -1614,6 +1647,11 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
     # If query is empty, we browse via facets
     query_str = q if q else ""
         
+    # Plugin servers run plugins, not mods
+    plugin_loaders = PLUGIN_SERVER_LOADERS.get(loader.upper()) if loader and class_type == "mod" else None
+    if plugin_loaders:
+        class_type = "plugin"
+
     facets = [
         [f"project_type:{class_type}"],
     ]
@@ -1621,7 +1659,9 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
         facets.append(["server_side:required", "server_side:optional"])
     if mc_version:
         facets.append([f"versions:{mc_version}"])
-    if loader:
+    if plugin_loaders:
+        facets.append([f"categories:{c}" for c in plugin_loaders])
+    elif loader:
         facets.append([f"categories:{loader.lower()}"])
         
     url = "https://api.modrinth.com/v2/search"
@@ -1644,7 +1684,7 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
             "icon_url": item.get("icon_url"),
             "author": item.get("author", "Unknown"),
             "downloads": item.get("downloads", 0),
-            "url": f"https://modrinth.com/mod/{item['slug']}",
+            "url": f"https://modrinth.com/{'plugin' if plugin_loaders else 'mod'}/{item['slug']}",
             "categories": item.get("categories", []),
             "provider": "modrinth"
         }
@@ -1716,18 +1756,7 @@ async def create_instance(req: CreateInstanceRequest):
 
     template = req.template.upper()
     if req.loader_version and req.loader_version != "latest":
-        if template == "FABRIC":
-            env.append(f"FABRIC_LOADER_VERSION={req.loader_version}")
-        elif template == "FORGE":
-            env.append(f"FORGE_VERSION={req.loader_version}")
-        elif template == "NEOFORGE":
-            env.append(f"NEOFORGE_VERSION={req.loader_version}")
-        elif template == "QUILT":
-            env.append(f"QUILT_LOADER_VERSION={req.loader_version}")
-        elif template == "PAPER":
-            env.append(f"PAPER_BUILD={req.loader_version}")
-        else:
-            env.append(f"LOADER_VERSION={req.loader_version}")
+        env.append(f"{LOADER_VERSION_ENV.get(template, 'LOADER_VERSION')}={req.loader_version}")
 
     mc_version = None
 
@@ -2534,6 +2563,8 @@ UPDATE_ENV_KEYS = {
     "NEOFORGE_VERSION": "NeoForge version",
     "QUILT_LOADER_VERSION": "Quilt loader version",
     "PAPER_BUILD": "Paper build",
+    "PURPUR_BUILD": "Purpur build",
+    "FOLIABUILD": "Folia build",
     "LOADER_VERSION": "loader version",
     "MODRINTH_MODPACK": "modpack",
     "MODRINTH_VERSION": "modpack version",
@@ -2711,7 +2742,7 @@ async def check_mod_compatibility(req: Dict[str, Any]):
         # Modrinth Compatibility Check
         for mid in m_ids:
             try:
-                loaders_param = json.dumps([target_loader.lower()])
+                loaders_param = json.dumps(PLUGIN_SERVER_LOADERS.get(target_loader, [target_loader.lower()]))
                 versions_param = json.dumps([target_mc])
                 url = f"https://api.modrinth.com/v2/project/{mid}/version"
                 res = await client.get(url, params={"loaders": loaders_param, "game_versions": versions_param})
@@ -2759,8 +2790,23 @@ async def get_mod_conflicts(provider: str, project_id: str, current_mods: str = 
 # Instance Mods Management (Prism Launcher Style)
 # ==========================================
 
+def read_compose_env(instance_path: str) -> dict:
+    """The mc service's environment from docker-compose.yml, as a dict ({} if unreadable)."""
+    try:
+        with open(os.path.join(instance_path, "docker-compose.yml"), "r") as f:
+            cdata = yaml.safe_load(f) or {}
+        services = cdata.get("services") or {}
+        service = services.get("mc") or (list(services.values())[0] if services else {})
+        return env_as_dict(service.get("environment"))
+    except Exception:
+        return {}
+
 def get_instance_mods_dir(instance_id: str) -> str:
     base = get_instance_path(instance_id)
+    if is_plugin_server(read_compose_env(base).get("TYPE")):
+        plugins_dir = os.path.join(base, "data", "plugins")
+        os.makedirs(plugins_dir, exist_ok=True)
+        return plugins_dir
     # Check data/mods first (standard Docker mount)
     data_mods = os.path.join(base, "data", "mods")
     if os.path.exists(data_mods):
@@ -3342,7 +3388,9 @@ async def sync_instance_mods_to_disk(instance_id: str, env: Optional[dict] = Non
 
     mc_version = env.get("VERSION", "").strip()
     raw_loader = env.get("TYPE", "VANILLA").strip().lower()
-    if raw_loader == "fabric":
+    if is_plugin_server(raw_loader):
+        mod_loaders = PLUGIN_SERVER_LOADERS[raw_loader.upper()]
+    elif raw_loader == "fabric":
         mod_loaders = ["fabric", "quilt"]
     elif raw_loader == "quilt":
         mod_loaders = ["quilt", "fabric"]

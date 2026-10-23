@@ -32,6 +32,22 @@ interface InstanceStatus {
    pending_snapshot?: PendingSnapshot | null;
 }
 
+// Server TYPE -> the variable that pins its loader version or build (matches LOADER_VERSION_ENV in the backend)
+const LOADER_VERSION_ENV: Record<string, string> = {
+   FABRIC: "FABRIC_LOADER_VERSION",
+   FORGE: "FORGE_VERSION",
+   NEOFORGE: "NEOFORGE_VERSION",
+   QUILT: "QUILT_LOADER_VERSION",
+   PAPER: "PAPER_BUILD",
+   PURPUR: "PURPUR_BUILD",
+   FOLIA: "FOLIABUILD",
+};
+
+// Server types that run plugins (in plugins/) instead of mods
+const PLUGIN_SERVER_TYPES = ["PAPER", "PURPUR", "FOLIA"];
+
+const FOLIA_WARNING = "Folia runs each region of the world on its own thread and is meant for large servers on machines with many CPU cores. Most Paper plugins don't work on it: only install plugins marked as Folia-compatible. All Folia builds are experimental.";
+
 // The fields of a mod search result that adding a mod uses
 interface ModSearchHit {
    id: string;
@@ -1757,6 +1773,9 @@ export default function App() {
          setIsInstanceModsLoading(false);
       }
    };
+
+   const loaderVersionKey = (type?: string) => LOADER_VERSION_ENV[(type || "").toUpperCase()] || "LOADER_VERSION";
+   const isPluginServer = PLUGIN_SERVER_TYPES.includes((config.environment?.["TYPE"] || "").toUpperCase());
 
    const splitEnvList = (value?: string) => (value || "").split(',').map(s => s.trim()).filter(Boolean);
 
@@ -3509,7 +3528,7 @@ export default function App() {
                                              Mod Loader
                                           </h4>
                                           <div className="flex bg-[#1E1E1E] rounded p-1 border border-[#323232] overflow-x-auto max-w-full">
-                                             {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT', 'PAPER'].map(l => (
+                                             {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT', 'PAPER', 'PURPUR', 'FOLIA'].map(l => (
                                                 <button
                                                    key={l}
                                                    onClick={() => setSelectedAddLoader(l)}
@@ -3521,6 +3540,15 @@ export default function App() {
                                           </div>
                                        </div>
 
+                                       {selectedAddLoader === 'FOLIA' && (
+                                          <div role="note" className="mb-3 bg-amber-500/10 border border-amber-500/30 p-2.5 rounded flex items-start gap-2 text-[11px] text-amber-400">
+                                             <AlertCircle className="w-3.5 h-3.5 mt-px flex-shrink-0" />
+                                             <span>
+                                                {FOLIA_WARNING}
+                                                {!isLoaderLoading && loaderVersions.length === 0 && ` Folia has no builds for Minecraft ${selectedAddVersion}; pick a version it supports (1.19.4 or newer).`}
+                                             </span>
+                                          </div>
+                                       )}
                                        <div className="flex-1 border border-[#333] bg-[#0F0F0F] rounded overflow-hidden flex flex-col shadow-inner">
                                           {selectedAddLoader === 'VANILLA' ? (
                                              <div className="flex flex-col items-center justify-center h-full text-neutral-500 italic text-xs gap-3 p-8 text-center bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] opacity-20">
@@ -4882,7 +4910,10 @@ export default function App() {
                                        { id: "FABRIC", name: "Fabric", icon: Cpu, desc: "Lightweight and modular" },
                                        { id: "FORGE", name: "Forge", icon: Settings, desc: "Traditional and powerful" },
                                        { id: "QUILT", name: "Quilt", icon: RefreshCw, desc: "The open community loader" },
-                                       { id: "NEOFORGE", name: "NeoForge", icon: Layers, desc: "Modern community fork" }
+                                       { id: "NEOFORGE", name: "NeoForge", icon: Layers, desc: "Modern community fork" },
+                                       { id: "PAPER", name: "Paper", icon: FileText, desc: "Fast server for Spigot/Bukkit plugins" },
+                                       { id: "PURPUR", name: "Purpur", icon: Box, desc: "Paper fork with extra gameplay options" },
+                                       { id: "FOLIA", name: "Folia", icon: Cpu, desc: "Multithreaded Paper fork for big servers" }
                                     ].map((l) => (
                                        <div
                                           key={l.id}
@@ -4908,6 +4939,16 @@ export default function App() {
                                           <p>Warning: Changing the mod loader type or version may cause existing mods to stop loading or fail to start. Ensure your mods are compatible with the selected loader and version.</p>
                                        </div>
 
+                                       {config.environment["TYPE"] === "FOLIA" && (
+                                          <div role="note" className="bg-amber-500/10 border border-amber-500/30 p-4 rounded-lg flex items-start gap-2.5 text-xs text-amber-400">
+                                             <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                                             <p>
+                                                {FOLIA_WARNING}
+                                                {!isLoaderLoading && loaderVersions.length === 0 && ` Folia has no builds for Minecraft ${config.environment["VERSION"] || "latest"}; pick a version it supports (1.19.4 or newer).`}
+                                             </p>
+                                          </div>
+                                       )}
+
                                        <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg overflow-hidden h-60 flex flex-col">
                                           <div className="grid grid-cols-2 px-4 py-2.5 border-b border-[#3A3A3A] bg-[#2D2D2D] text-[10px] font-bold text-neutral-400 uppercase tracking-widest">
                                              <div>Loader Version</div>
@@ -4924,11 +4965,12 @@ export default function App() {
                                              ) : (
                                                 <div className="divide-y divide-[#1A1A1A]">
                                                    <div
-                                                      onClick={() => setConfig(prev => ({
-                                                         ...prev,
-                                                         environment: { ...prev.environment, LOADER_VERSION: "latest" }
-                                                      }))}
-                                                      className={`grid grid-cols-2 px-4 py-2 text-sm cursor-pointer transition-all ${(!config.environment["LOADER_VERSION"] || config.environment["LOADER_VERSION"] === 'latest') ? 'bg-[#3E8ED0]/20 text-[#3E8ED0] border-l-2 border-l-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
+                                                      onClick={() => setConfig(prev => {
+                                                         const environment = { ...prev.environment };
+                                                         delete environment[loaderVersionKey(environment["TYPE"])];
+                                                         return { ...prev, environment };
+                                                      })}
+                                                      className={`grid grid-cols-2 px-4 py-2 text-sm cursor-pointer transition-all ${(!config.environment[loaderVersionKey(config.environment["TYPE"])] || config.environment[loaderVersionKey(config.environment["TYPE"])] === 'latest') ? 'bg-[#3E8ED0]/20 text-[#3E8ED0] border-l-2 border-l-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
                                                    >
                                                       <div className="font-bold italic">Latest Recommended</div>
                                                       <div className="text-right text-[10px] opacity-60">AUTO</div>
@@ -4938,9 +4980,9 @@ export default function App() {
                                                          key={lv.id}
                                                          onClick={() => setConfig(prev => ({
                                                             ...prev,
-                                                            environment: { ...prev.environment, LOADER_VERSION: lv.id }
+                                                            environment: { ...prev.environment, [loaderVersionKey(prev.environment["TYPE"])]: lv.id }
                                                          }))}
-                                                         className={`grid grid-cols-2 px-4 py-2 text-sm font-mono cursor-pointer transition-all ${config.environment["LOADER_VERSION"] === lv.id ? 'bg-[#3E8ED0]/20 text-[#3E8ED0] border-l-2 border-l-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
+                                                         className={`grid grid-cols-2 px-4 py-2 text-sm font-mono cursor-pointer transition-all ${config.environment[loaderVersionKey(config.environment["TYPE"])] === lv.id ? 'bg-[#3E8ED0]/20 text-[#3E8ED0] border-l-2 border-l-[#3E8ED0]' : 'text-neutral-400 hover:bg-[#222]'}`}
                                                       >
                                                          <div>{lv.id}</div>
                                                          <div className="text-right">
@@ -5096,7 +5138,7 @@ export default function App() {
                                     {/* Top Header */}
                                     <div className="px-5 py-3 border-b border-[#2C2C2C] bg-[#222222] flex items-center justify-between">
                                        <h3 className="text-base font-bold text-white flex items-center gap-2">
-                                          Mods ({instanceMods.length} installed)
+                                          {isPluginServer ? "Plugins" : "Mods"} ({instanceMods.length} installed)
                                           {isInstanceModsLoading && <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#3E8ED0]" />}
                                           <span className="text-[11px] font-normal text-neutral-500">Changes here apply right away; no need to Save.</span>
                                        </h3>
@@ -5269,7 +5311,7 @@ export default function App() {
                                              onClick={() => setModListView("search")}
                                              className="w-full text-left px-3 py-1.5 rounded text-xs font-medium bg-[#2A2A2A] hover:bg-[#343434] text-neutral-200 border border-[#383838] transition-colors"
                                           >
-                                             Download Mods
+                                             {isPluginServer ? "Download Plugins" : "Download Mods"}
                                           </button>
 
                                           <button
