@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 import docker
 import yaml
 from typing import List, Optional, Dict, Any, Union, Tuple
+from datetime import datetime, timezone
 import httpx
 import json
 import time
@@ -176,6 +177,7 @@ class BackupSettingsRequest(BaseModel):
     enabled: bool
     interval_hours: float
     keep: int
+    snapshot_keep: int = backups.DEFAULT_SETTINGS["snapshot_keep"]
 
 class CommandRequest(BaseModel):
     command: str
@@ -456,10 +458,17 @@ async def get_instance_status(instance_id: str):
             "image": c.image.tags[0] if c.image.tags else c.image.id,    
         })
 
+    pending_snapshot = None
+    try:
+        pending_snapshot = current_pending_snapshot(get_instance_path(instance_id), containers, is_ready)
+    except HTTPException:
+        pass
+
     return {
         "instance_id": instance_id,
         "is_running": is_running,
         "is_ready": is_ready,
+        "pending_snapshot": pending_snapshot,
         "version": version,
         "port": port,
         "public_ip": public_ip,
@@ -657,7 +666,12 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
         config = yaml.safe_load(f)
         
     services = config.get("services", {})
+    snapshot = None
     if services:
+        old_env = env_as_dict(list(services.values())[0].get("environment"))
+        reason = describe_update(old_env, new_config.environment)
+        if reason:
+            snapshot = await asyncio.to_thread(take_pre_update_snapshot, path, reason)
         first_service_name = list(services.keys())[0]
         config['services'][first_service_name]['image'] = new_config.image
         # Ensure EULA is preserved/added
@@ -676,7 +690,7 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
     except Exception as e:
         print(f"Error syncing mods to disk during config save: {e}")
         
-    return {"message": "Config updated"}
+    return {"message": "Config updated", "snapshot": snapshot}
 
 class WhitelistUser(BaseModel):
     name: str
@@ -2443,6 +2457,8 @@ def get_backups(instance_id: str):
     return {
         "settings": backups.get_settings(get_instance_meta(path)),
         "backups": backups.list_backups(path),
+        "snapshots": backups.list_snapshots(path),
+        "pending_snapshot": get_instance_meta(path).get("pending_snapshot"),
         "worlds": backups.find_world_dirs(path),
         "location": backups.backups_dir(path),
     }
@@ -2451,10 +2467,12 @@ def get_backups(instance_id: str):
 def update_backup_settings(instance_id: str, req: BackupSettingsRequest):
     path = get_instance_path(instance_id)
     try:
-        settings = backups.validate_settings(req.enabled, req.interval_hours, req.keep)
+        settings = backups.validate_settings(req.enabled, req.interval_hours, req.keep, req.snapshot_keep)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     save_instance_meta(path, {"backups": settings})
+    if settings["snapshot_keep"]:
+        backups.prune_snapshots(path, settings["snapshot_keep"])
     return settings
 
 @app.post("/api/instances/{instance_id}/backups")
@@ -2483,7 +2501,14 @@ def delete_backup(instance_id: str, name: str):
         os.remove(backups.backup_file_path(path, name))
     except (ValueError, FileNotFoundError):
         raise HTTPException(status_code=404, detail="Backup not found")
+    clear_pending_snapshot(path, name)
     return {"deleted": name}
+
+@app.delete("/api/instances/{instance_id}/snapshots/pending")
+def dismiss_pending_snapshot(instance_id: str):
+    path = get_instance_path(instance_id)
+    clear_pending_snapshot(path)
+    return {"dismissed": True}
 
 @app.post("/api/instances/{instance_id}/backups/{name}/restore")
 async def restore_backup(instance_id: str, name: str):
@@ -2496,7 +2521,101 @@ async def restore_backup(instance_id: str, name: str):
         raise HTTPException(status_code=404, detail="Backup not found")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    clear_pending_snapshot(path, name)
     return {"restored": worlds}
+
+# Compose settings that change what the server runs. Changing any of them takes a snapshot first.
+UPDATE_ENV_KEYS = {
+    "VERSION": "Minecraft version",
+    "TYPE": "server type",
+    "FABRIC_LOADER_VERSION": "Fabric loader version",
+    "FORGE_VERSION": "Forge version",
+    "NEOFORGE_VERSION": "NeoForge version",
+    "QUILT_LOADER_VERSION": "Quilt loader version",
+    "PAPER_BUILD": "Paper build",
+    "LOADER_VERSION": "loader version",
+    "MODRINTH_MODPACK": "modpack",
+    "MODRINTH_VERSION": "modpack version",
+    "MODRINTH_PROJECTS": "mods",
+    "MODRINTH_DISABLED": "mods",
+}
+UPDATE_ENV_PREFIXES = ("CF_",)
+
+def env_as_dict(env) -> dict:
+    if isinstance(env, dict):
+        return {k: "" if v is None else str(v) for k, v in env.items()}
+    result = {}
+    for item in env or []:
+        if "=" in str(item):
+            k, v = str(item).split("=", 1)
+            result[k] = v
+    return result
+
+def describe_update(old_env: dict, new_env: dict) -> Optional[str]:
+    """Describe the update-relevant changes between two compose environments, or None if there are none."""
+    new_env = env_as_dict(new_env)
+    keys = set(UPDATE_ENV_KEYS) | {k for k in set(old_env) | set(new_env) if k.startswith(UPDATE_ENV_PREFIXES)}
+    changed = sorted(k for k in keys if (old_env.get(k) or "") != (new_env.get(k) or ""))
+    if not changed:
+        return None
+    for key in ("VERSION", "TYPE"):
+        if key in changed and old_env.get(key) and new_env.get(key):
+            return f"Before changing {UPDATE_ENV_KEYS[key]} {old_env[key]} \u2192 {new_env[key]}"
+    labels = []
+    for key in changed:
+        label = UPDATE_ENV_KEYS.get(key, "CurseForge settings")
+        if label not in labels:
+            labels.append(label)
+    return "Before changing " + ", ".join(labels)
+
+def take_pre_update_snapshot(path: str, reason: str) -> Optional[dict]:
+    """Snapshot the instance before an update, unless snapshots are off or one was just taken."""
+    keep = backups.get_settings(get_instance_meta(path))["snapshot_keep"]
+    if keep <= 0:
+        return None
+    snapshot = backups.recent_snapshot(path)
+    if not snapshot:
+        try:
+            snapshot = backups.create_snapshot(path, reason)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Couldn't take a snapshot before the change, so nothing was changed: {e}. "
+                       "To skip snapshots, set Snapshots to keep to 0 in the Backups tab.",
+            )
+        backups.prune_snapshots(path, keep)
+    # 'changed' is when this change happened; the offer stays until the server starts fine after it.
+    save_instance_meta(path, {"pending_snapshot": {
+        "name": snapshot["name"], "reason": snapshot.get("reason") or reason, "changed": time.time(),
+    }})
+    return snapshot
+
+def clear_pending_snapshot(path: str, name: Optional[str] = None) -> None:
+    pending = get_instance_meta(path).get("pending_snapshot")
+    if pending and (name is None or pending.get("name") == name):
+        save_instance_meta(path, {"pending_snapshot": None})
+
+def _container_started_at(container) -> float:
+    started = (container.attrs.get("State") or {}).get("StartedAt") or ""
+    try:
+        return datetime.strptime(started[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return 0
+
+def current_pending_snapshot(path: str, containers, is_ready: bool) -> Optional[dict]:
+    """The snapshot to offer for rollback. Cleared once the server has started fine after the change."""
+    pending = get_instance_meta(path).get("pending_snapshot")
+    if not pending:
+        return None
+    try:
+        backups.backup_file_path(path, pending.get("name", ""))
+    except (ValueError, FileNotFoundError):
+        clear_pending_snapshot(path)
+        return None
+    if is_ready and any(_container_started_at(c) > pending.get("changed", 0) for c in containers):
+        clear_pending_snapshot(path)
+        return None
+    return pending
 
 async def backup_schedule_loop():
     """Background task that runs due scheduled backups once a minute."""
@@ -2975,6 +3094,7 @@ class ToggleModRequest(BaseModel):
 def toggle_instance_mod(instance_id: str, req: ToggleModRequest):
     """Toggle a mod between enabled (.jar) and disabled (.jar.disabled) state."""
     mods_dir = get_instance_mods_dir(instance_id)
+    take_pre_update_snapshot(get_instance_path(instance_id), "Before changing mods")
     target_file = None
     new_filename = None
 
@@ -3099,6 +3219,7 @@ class DeleteModRequest(BaseModel):
 def delete_instance_mod(instance_id: str, req: DeleteModRequest):
     """Delete a mod file from an instance and remove it from compose configuration."""
     mods_dir = get_instance_mods_dir(instance_id)
+    take_pre_update_snapshot(get_instance_path(instance_id), "Before changing mods")
     deleted = False
 
     # Check file
@@ -3177,6 +3298,7 @@ async def upload_instance_mod(instance_id: str, file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Only .jar or .zip mod files are allowed")
 
     mods_dir = get_instance_mods_dir(instance_id)
+    await asyncio.to_thread(take_pre_update_snapshot, get_instance_path(instance_id), "Before changing mods")
     dest_path = os.path.join(mods_dir, file.filename)
 
     with open(dest_path, "wb") as f:

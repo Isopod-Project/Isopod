@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Archive, Cat } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Archive, Cat, History } from "lucide-react";
 import { HelpButton } from "./components/HelpButton";
 import { BackupsPanel } from "./components/BackupsPanel";
 import { ResourceTotals, InstanceResources, type ResourceUsage } from "./components/ResourceUsage";
@@ -28,6 +28,13 @@ interface InstanceStatus {
    containers: unknown[];
    startup_status?: string;
    startup_percent?: number;
+   // Snapshot taken before the last update, offered for rollback until the server starts fine
+   pending_snapshot?: PendingSnapshot | null;
+}
+
+interface PendingSnapshot {
+   name: string;
+   reason: string;
 }
 
 
@@ -1130,7 +1137,8 @@ export default function App() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(updatedConfig)
          });
-         if (!res.ok) throw new Error("Failed to save config");
+         if (!res.ok) throw await responseError(res, "Failed to save config");
+         const saved = await res.json().catch(() => ({}));
          setOriginalConfig(JSON.stringify(updatedConfig));
          setConfig(updatedConfig); // Also update live state
          await fetchInstanceMods(selectedId, true);
@@ -1140,7 +1148,13 @@ export default function App() {
             setIsEditModalOpen(false); // Exit to main screen
             handleRestart(selectedId);
          } else {
-            await showAlert("Changes saved explicitly.", "Configuration");
+            await showAlert(
+               saved.snapshot
+                  ? "Changes saved. A snapshot was taken first, so you can roll back from the sidebar or the Backups tab."
+                  : "Changes saved explicitly.",
+               "Configuration",
+            );
+            fetchStatus(selectedId);
          }
 
       } catch (e: any) {
@@ -1148,6 +1162,42 @@ export default function App() {
       } finally {
          setIsSaving(true); // Small delay to prevent double save
          setTimeout(() => setIsSaving(false), 500);
+      }
+   };
+
+   const handleRestoreSnapshot = async (id: string, snapshot: PendingSnapshot) => {
+      const isRunning = statuses[id]?.is_running;
+      const confirmed = await showConfirm(
+         `Roll back to ${snapshot.reason.replace(/^Before/, "before")}? This puts the world, mods, config, and server settings back to how they were then. Everything since is lost.` +
+            (isRunning ? " The server will be stopped first." : ""),
+         "Restore Previous State",
+      );
+      if (!confirmed) return;
+      try {
+         if (isRunning) {
+            const stopRes = await fetch(`/api/instances/${id}/stop`, { method: "POST" });
+            if (!stopRes.ok) throw await responseError(stopRes, "Failed to stop the server");
+         }
+         const res = await fetch(`/api/instances/${id}/backups/${encodeURIComponent(snapshot.name)}/restore`, { method: "POST" });
+         if (!res.ok) throw await responseError(res, "Restore failed");
+         await showAlert("Restored the previous state. Start the server when you're ready.", "Restore Previous State");
+      } catch (e) {
+         console.error("Snapshot restore failed", e);
+         await showAlert(errorMessage(e), "Restore Failed");
+      } finally {
+         fetchStatus(id);
+      }
+   };
+
+   const handleDismissSnapshot = async (id: string) => {
+      try {
+         const res = await fetch(`/api/instances/${id}/snapshots/pending`, { method: "DELETE" });
+         if (!res.ok) throw await responseError(res, "Failed to dismiss");
+      } catch (e) {
+         console.error("Dismiss snapshot failed", e);
+         await showAlert(errorMessage(e), "Error");
+      } finally {
+         fetchStatus(id);
       }
    };
 
@@ -3041,6 +3091,38 @@ export default function App() {
                               </div>
                            );
                         })()
+                     )}
+
+                     {!connectionLost && selectedStatus?.pending_snapshot && (
+                        <div role="region" aria-label="Previous state" className="w-full mt-3 px-4">
+                           <div className="w-full bg-sky-500/5 border border-sky-500/30 p-3 rounded flex flex-col gap-2">
+                              <div className="flex items-start gap-2 text-xs text-sky-300">
+                                 <History className="w-4 h-4 shrink-0 mt-px" />
+                                 <span>
+                                    A snapshot was taken {selectedStatus.pending_snapshot.reason.replace(/^Before/, "before")}.
+                                    {" "}If the update causes problems, you can roll back.
+                                 </span>
+                              </div>
+                              <div className="flex gap-1.5">
+                                 <button
+                                    type="button"
+                                    onClick={() => handleRestoreSnapshot(selectedInstance.id, selectedStatus.pending_snapshot!)}
+                                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-400 transition-all font-bold text-xs"
+                                 >
+                                    <RotateCcw className="w-3.5 h-3.5" />
+                                    Restore previous state
+                                 </button>
+                                 <button
+                                    type="button"
+                                    onClick={() => handleDismissSnapshot(selectedInstance.id)}
+                                    className="px-2 py-1.5 rounded border border-[#3A3A3A] text-neutral-400 hover:text-white hover:bg-[#323232] transition-all text-xs"
+                                    title="Hide this. The snapshot stays in the Backups tab."
+                                 >
+                                    Dismiss
+                                 </button>
+                              </div>
+                           </div>
+                        </div>
                      )}
 
                      {selectedStatus?.is_running && (

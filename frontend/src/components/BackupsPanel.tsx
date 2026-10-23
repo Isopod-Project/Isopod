@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
-import { Archive, Check, Download, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
+import { Archive, Check, Download, History, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 
 interface BackupSettings {
    enabled: boolean;
    interval_hours: number;
    keep: number;
+   snapshot_keep: number;
 }
 
 interface BackupItem {
    name: string;
    size: number;
    created: number;
+   // Snapshots only: what change they were taken before
+   reason?: string;
 }
+
+const DEFAULT_SETTINGS: BackupSettings = { enabled: false, interval_hours: 24, keep: 7, snapshot_keep: 3 };
 
 interface BackupsPanelProps {
    instanceId: string;
@@ -44,13 +49,14 @@ const errorDetail = async (res: Response, fallback: string) => {
 };
 
 export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPanelProps) {
-   const [settings, setSettings] = useState<BackupSettings>({ enabled: false, interval_hours: 24, keep: 7 });
+   const [settings, setSettings] = useState<BackupSettings>(DEFAULT_SETTINGS);
    const [backups, setBackups] = useState<BackupItem[]>([]);
+   const [snapshots, setSnapshots] = useState<BackupItem[]>([]);
    const [worlds, setWorlds] = useState<string[]>([]);
    const [location, setLocation] = useState("");
    const [isLoading, setIsLoading] = useState(true);
    // Last schedule the server accepted, restored if a save fails
-   const [savedSettings, setSavedSettings] = useState<BackupSettings>({ enabled: false, interval_hours: 24, keep: 7 });
+   const [savedSettings, setSavedSettings] = useState<BackupSettings>(DEFAULT_SETTINGS);
    const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
    const [isBackingUp, setIsBackingUp] = useState(false);
    const [busyName, setBusyName] = useState<string | null>(null);
@@ -61,10 +67,12 @@ export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPane
          if (!res.ok) throw new Error(await errorDetail(res, "Failed to load backups"));
          const data = await res.json();
          if (data.settings) {
-            setSettings(data.settings);
-            setSavedSettings(data.settings);
+            const loaded = { ...DEFAULT_SETTINGS, ...data.settings };
+            setSettings(loaded);
+            setSavedSettings(loaded);
          }
          setBackups(Array.isArray(data.backups) ? data.backups : []);
+         setSnapshots(Array.isArray(data.snapshots) ? data.snapshots : []);
          setWorlds(Array.isArray(data.worlds) ? data.worlds : []);
          setLocation(data.location || "");
       } catch (e) {
@@ -94,6 +102,8 @@ export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPane
          setSettings(saved);
          setSavedSettings(saved);
          setSaveState("saved");
+         // Lowering the snapshot limit prunes old snapshots
+         if (saved.snapshot_keep !== savedSettings.snapshot_keep) await fetchBackups();
       } catch (e) {
          setSettings(savedSettings);
          setSaveState("idle");
@@ -102,7 +112,7 @@ export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPane
    };
 
    const saveKeep = () => {
-      if (settings.keep !== savedSettings.keep) saveSettings(settings);
+      if (settings.keep !== savedSettings.keep || settings.snapshot_keep !== savedSettings.snapshot_keep) saveSettings(settings);
    };
 
    const backupNow = async () => {
@@ -118,10 +128,12 @@ export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPane
       }
    };
 
-   const restoreBackup = async (name: string) => {
+   const restoreBackup = async (name: string, isSnapshot: boolean) => {
       const confirmed = await showConfirm(
-         `Restore ${name}? This reverts the world to this backup. Everything since then is lost, so consider backing up first. The server must be stopped.`,
-         "Restore Backup",
+         isSnapshot
+            ? `Restore ${name}? This puts the world, mods, config, and server settings back to how they were before the update. Everything since then is lost. The server must be stopped.`
+            : `Restore ${name}? This reverts the world to this backup. Everything since then is lost, so consider backing up first. The server must be stopped.`,
+         isSnapshot ? "Restore Snapshot" : "Restore Backup",
       );
       if (!confirmed) return;
       setBusyName(name);
@@ -152,6 +164,45 @@ export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPane
    };
 
    const isPreset = INTERVAL_PRESETS.some(p => p.hours === settings.interval_hours);
+
+   const renderItem = (b: BackupItem, isSnapshot: boolean) => (
+      <div key={b.name} className="px-4 py-3 flex items-center justify-between border-b border-[#2D2D2D] last:border-b-0">
+         <div>
+            {isSnapshot && <div className="text-sm text-[#E0E0E0]">{b.reason}</div>}
+            <div className={isSnapshot ? "text-[11px] text-neutral-400" : "font-mono text-sm text-[#E0E0E0]"}>{new Date(b.created * 1000).toLocaleString()}</div>
+            <div className="text-[11px] text-neutral-500">{b.name} · {formatSize(b.size)}</div>
+         </div>
+         <div className="flex items-center gap-1.5">
+            <a
+               href={`/api/instances/${instanceId}/backups/${encodeURIComponent(b.name)}`}
+               download
+               className="p-1.5 rounded border border-[#3A3A3A] text-neutral-400 hover:text-white hover:bg-[#323232] transition-all"
+               title={isSnapshot ? "Download snapshot" : "Download backup"}
+            >
+               <Download className="w-3.5 h-3.5" />
+            </a>
+            <button
+               type="button"
+               onClick={() => restoreBackup(b.name, isSnapshot)}
+               disabled={busyName === b.name}
+               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-[#3A3A3A] text-sky-400 hover:bg-sky-500/10 transition-all disabled:opacity-50 text-xs font-bold"
+               title={isSnapshot ? "Roll back to before this update (server must be stopped)" : "Revert the world to this backup (server must be stopped)"}
+            >
+               <RotateCcw className="w-3.5 h-3.5" />
+               Restore
+            </button>
+            <button
+               type="button"
+               onClick={() => deleteBackup(b.name)}
+               disabled={busyName === b.name}
+               className="p-1.5 rounded border border-red-500/20 bg-[#3D2525]/30 text-red-400 hover:bg-red-500/20 transition-all disabled:opacity-50"
+               title={isSnapshot ? "Delete snapshot" : "Delete backup"}
+            >
+               <Trash2 className="w-3.5 h-3.5" />
+            </button>
+         </div>
+      </div>
+   );
 
    return (
       <div className="flex flex-col h-full p-10 overflow-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
@@ -254,43 +305,45 @@ export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPane
                   ) : backups.length === 0 ? (
                      <div className="p-8 text-center text-neutral-500 italic text-sm">No backups yet.</div>
                   ) : (
-                     backups.map(b => (
-                        <div key={b.name} className="px-4 py-3 flex items-center justify-between border-b border-[#2D2D2D] last:border-b-0">
-                           <div>
-                              <div className="font-mono text-sm text-[#E0E0E0]">{new Date(b.created * 1000).toLocaleString()}</div>
-                              <div className="text-[11px] text-neutral-500">{b.name} · {formatSize(b.size)}</div>
-                           </div>
-                           <div className="flex items-center gap-1.5">
-                              <a
-                                 href={`/api/instances/${instanceId}/backups/${encodeURIComponent(b.name)}`}
-                                 download
-                                 className="p-1.5 rounded border border-[#3A3A3A] text-neutral-400 hover:text-white hover:bg-[#323232] transition-all"
-                                 title="Download backup"
-                              >
-                                 <Download className="w-3.5 h-3.5" />
-                              </a>
-                              <button
-                                 type="button"
-                                 onClick={() => restoreBackup(b.name)}
-                                 disabled={busyName === b.name}
-                                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-[#3A3A3A] text-sky-400 hover:bg-sky-500/10 transition-all disabled:opacity-50 text-xs font-bold"
-                                 title="Revert the world to this backup (server must be stopped)"
-                              >
-                                 <RotateCcw className="w-3.5 h-3.5" />
-                                 Restore
-                              </button>
-                              <button
-                                 type="button"
-                                 onClick={() => deleteBackup(b.name)}
-                                 disabled={busyName === b.name}
-                                 className="p-1.5 rounded border border-red-500/20 bg-[#3D2525]/30 text-red-400 hover:bg-red-500/20 transition-all disabled:opacity-50"
-                                 title="Delete backup"
-                              >
-                                 <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                           </div>
-                        </div>
-                     ))
+                     backups.map(b => renderItem(b, false))
+                  )}
+               </div>
+            </div>
+
+            {/* Pre-update snapshots */}
+            <div className="space-y-3">
+               <div className="flex items-end justify-between gap-4">
+                  <div>
+                     <h4 className="text-sm font-bold text-white flex items-center gap-2"><History className="w-4 h-4 text-[#3E8ED0]" /> Pre-update snapshots</h4>
+                     <p className="text-xs text-neutral-500">
+                        Taken automatically before you change the Minecraft version, loader, or mods. A snapshot holds the world, mods, config, and server settings, so restoring it undoes the whole update.
+                     </p>
+                  </div>
+                  <div className="shrink-0">
+                     <label htmlFor="snapshot-keep" className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-2 whitespace-nowrap">Snapshots to keep</label>
+                     <input
+                        id="snapshot-keep"
+                        type="number"
+                        min={0}
+                        className="w-28 bg-[#141414] border border-[#3A3A3A] p-2.5 rounded focus:outline-none focus:border-[#3E8ED0] text-[#E0E0E0] text-sm"
+                        value={settings.snapshot_keep}
+                        onChange={(e) => setSettings(prev => ({ ...prev, snapshot_keep: Math.max(0, Number(e.target.value) || 0) }))}
+                        onBlur={saveKeep}
+                        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                     />
+                  </div>
+               </div>
+               {savedSettings.snapshot_keep === 0 && (
+                  <p className="text-xs text-amber-400">Snapshots are off. Set a number above 0 to take them again.</p>
+               )}
+
+               <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg overflow-hidden">
+                  {isLoading ? (
+                     <div className="p-8 text-center text-neutral-500 italic text-sm">Loading snapshots...</div>
+                  ) : snapshots.length === 0 ? (
+                     <div className="p-8 text-center text-neutral-500 italic text-sm">No snapshots yet.</div>
+                  ) : (
+                     snapshots.map(b => renderItem(b, true))
                   )}
                </div>
             </div>
