@@ -32,6 +32,16 @@ interface InstanceStatus {
    pending_snapshot?: PendingSnapshot | null;
 }
 
+// The fields of a mod search result that adding a mod uses
+interface ModSearchHit {
+   id: string;
+   name?: string;
+   icon_url?: string | null;
+   latest_version?: string;
+   summary?: string | null;
+   url?: string | null;
+}
+
 interface PendingSnapshot {
    name: string;
    reason: string;
@@ -84,6 +94,8 @@ export default function App() {
       type: "alert" | "confirm" | "prompt" | "select";
       options?: string[];
       defaultValue?: string;
+      confirmLabel?: string;
+      cancelLabel?: string;
       onResult: (result: any) => void;
    } | null>(null);
 
@@ -101,9 +113,9 @@ export default function App() {
 
    const errorMessage = (e: unknown) => e instanceof Error ? e.message : String(e);
 
-   const showConfirm = (message: string, title = "Confirm") => {
+   const showConfirm = (message: string, title = "Confirm", labels: { confirmLabel?: string; cancelLabel?: string } = {}) => {
       return new Promise<boolean>((resolve) => {
-         setDialog({ title, message, type: "confirm", onResult: (res) => { setDialog(null); setTimeout(() => resolve(!!res), 50); } });
+         setDialog({ title, message, type: "confirm", ...labels, onResult: (res) => { setDialog(null); setTimeout(() => resolve(!!res), 50); } });
       });
    };
 
@@ -187,6 +199,16 @@ export default function App() {
    // Instance Config States
    const [config, setConfig] = useState<{ image: string, environment: Record<string, string> }>({ image: "", environment: {} });
    const [originalConfig, setOriginalConfig] = useState<any>(null);
+   // Applies an environment change the backend already saved, to both the live and the saved config,
+   // so it doesn't show up as an unsaved change
+   const applySavedEnv = (transform: (env: Record<string, string>) => Record<string, string>) => {
+      setConfig(prev => prev.environment ? { ...prev, environment: transform(prev.environment) } : prev);
+      setOriginalConfig((prev: string | null) => {
+         if (!prev) return prev;
+         const saved = JSON.parse(prev);
+         return saved.environment ? JSON.stringify({ ...saved, environment: transform(saved.environment) }) : prev;
+      });
+   };
    const [isSaving, setIsSaving] = useState(false);
 
    // Export Modal states
@@ -930,6 +952,21 @@ export default function App() {
       }
    };
 
+   // Whitelist on/off is saved with Save User Configuration, so it lives here rather than in config
+   const [usersWhitelistOn, setUsersWhitelistOn] = useState(false);
+   const [savedUsers, setSavedUsers] = useState<{ users: InstanceUser[]; whitelistOn: boolean } | null>(null);
+
+   const countUserChanges = () => {
+      if (!savedUsers) return 0;
+      const before = new Map(savedUsers.users.map(u => [u.name.toLowerCase(), JSON.stringify(u)]));
+      const after = new Map(instanceUsers.map(u => [u.name.toLowerCase(), JSON.stringify(u)]));
+      let count = savedUsers.whitelistOn !== usersWhitelistOn ? 1 : 0;
+      for (const name of new Set([...before.keys(), ...after.keys()])) {
+         if (before.get(name) !== after.get(name)) count++;
+      }
+      return count;
+   };
+
    const fetchInstanceUsers = async (id: string) => {
       setIsUsersLoading(true);
       try {
@@ -946,14 +983,13 @@ export default function App() {
                return [...prev, ...toAdd];
             });
             const wlHeader = res.headers.get("X-Whitelist-Enabled");
+            const whitelistOn = wlHeader !== null
+               ? wlHeader === "true"
+               : config.environment?.["ENABLE_WHITELIST"]?.toLowerCase() === "true";
+            setUsersWhitelistOn(whitelistOn);
+            setSavedUsers({ users: usersList, whitelistOn });
             if (wlHeader !== null) {
-               setConfig(prev => ({
-                  ...prev,
-                  environment: {
-                     ...prev.environment,
-                     ENABLE_WHITELIST: wlHeader === "true" ? "true" : "false"
-                  }
-               }));
+               applySavedEnv(env => ({ ...env, ENABLE_WHITELIST: whitelistOn ? "true" : "false" }));
             }
          }
       } catch (e) {
@@ -965,7 +1001,7 @@ export default function App() {
 
    const saveInstanceUsers = async (id: string) => {
       setIsUsersSaving(true);
-      const isWlOn = config.environment["ENABLE_WHITELIST"]?.toLowerCase() === "true";
+      const isWlOn = usersWhitelistOn;
       try {
          const res = await fetch(`/api/instances/${id}/users`, {
             method: "PUT",
@@ -976,6 +1012,8 @@ export default function App() {
             })
          });
          if (res.ok) {
+            setSavedUsers({ users: instanceUsers, whitelistOn: isWlOn });
+            applySavedEnv(env => ({ ...env, ENABLE_WHITELIST: isWlOn ? "true" : "false" }));
             await showAlert("User management and whitelist saved successfully.", "Success");
          } else {
             throw new Error("Failed to save user configuration");
@@ -1772,14 +1810,8 @@ export default function App() {
          return m;
       }));
 
-      const pending = mods.filter(m => m.source === "pending");
+      // Mods still installing have nothing on disk to toggle yet
       const installed = mods.filter(m => m.source !== "pending");
-
-      if (pending.length > 0) {
-         setConfig(prev => prev.environment
-            ? { ...prev, environment: moveModsInEnv(prev.environment, pending, targetEnabled, () => true) }
-            : prev);
-      }
       if (installed.length === 0) return;
 
       // Sequential: each request rewrites the instance's compose file
@@ -1805,9 +1837,7 @@ export default function App() {
       }
 
       if (toggled.length > 0) {
-         setConfig(prev => prev.environment
-            ? { ...prev, environment: moveModsInEnv(prev.environment, toggled, targetEnabled, m => m.provider === 'modrinth') }
-            : prev);
+         applySavedEnv(env => moveModsInEnv(env, toggled, targetEnabled, m => m.provider === 'modrinth'));
       }
 
       fetchInstanceMods(selectedId);
@@ -1823,7 +1853,7 @@ export default function App() {
          : await showConfirm(`Are you sure you want to remove ${mods.length} mods? This will delete their mod files.`, "Remove Mods");
       if (!confirmed) return;
 
-      const removed: InstanceModItem[] = mods.filter(m => m.source === "pending");
+      const removed: InstanceModItem[] = [];
       const failed: string[] = [];
       // Sequential: each request rewrites the instance's compose file
       for (const mod of mods.filter(m => m.source !== "pending")) {
@@ -1850,10 +1880,7 @@ export default function App() {
          setInstanceMods(prev => prev.filter(m => !filenames.has(m.filename) && !ids.has(m.id)));
          const removedKeys = new Set(removed.map(modKey));
          setSelectedModKeys(prev => prev.filter(k => !removedKeys.has(k)));
-         setConfig(prev => prev.environment ? { ...prev, environment: removeModsFromEnv(prev.environment, removed) } : prev);
-      }
-
-      if (removed.some(m => m.source !== "pending")) {
+         applySavedEnv(env => removeModsFromEnv(env, removed));
          fetchInstanceMods(selectedId);
       }
       if (failed.length > 0) {
@@ -2191,122 +2218,130 @@ export default function App() {
       }
    };
 
-   const handleAddMod = (res: any, provider: string = "modrinth") => {
-      const envKey = "MODRINTH_PROJECTS";
-      const currentList: string = config.environment[envKey] || "";
-      const currentItems = currentList.split(',').map(s => s.trim()).filter(Boolean);
-      if (!currentItems.includes(res.id)) {
-         const newList = [...currentItems, res.id].join(',');
-         setConfig(prev => ({
-            ...prev,
-            environment: { ...prev.environment, [envKey]: newList }
-         }));
-      }
-
+   const cacheModMeta = (res: ModSearchHit) => {
+      const meta = {
+         name: res.name || res.id,
+         icon_url: res.icon_url || undefined,
+         latest_version: res.latest_version || "-"
+      };
       setModMetaCache(prev => ({
          ...prev,
-         [res.id.toLowerCase()]: {
-            name: res.name || res.id,
-            icon_url: res.icon_url || null,
-            latest_version: res.latest_version || "-"
-         },
-         [(res.name || res.id).toLowerCase()]: {
-            name: res.name || res.id,
-            icon_url: res.icon_url || null,
-            latest_version: res.latest_version || "-"
-         }
+         [res.id.toLowerCase()]: meta,
+         [(res.name || res.id).toLowerCase()]: meta
       }));
+   };
 
-      const newModItem: InstanceModItem = {
-         filename: `${res.id}.jar`,
-         id: res.id,
-         name: res.name || res.id,
-         version: res.latest_version || "-",
+   // A row shown while a mod from search downloads
+   const installingModItem = (id: string, res: ModSearchHit, provider: string): InstanceModItem => {
+      const isMain = id === res.id;
+      return {
+         filename: `${id}.jar`,
+         id,
+         name: isMain ? (res.name || id) : id,
+         version: isMain ? (res.latest_version || "-") : "-",
          enabled: true,
          size: 0,
          modified: Date.now() / 1000,
-         modified_str: "Pending Save",
-         icon_url: res.icon_url || null,
-         summary: res.summary || null,
-         url: res.url || (provider === 'modrinth' ? `https://modrinth.com/mod/${res.id}` : null),
-         provider: provider,
+         modified_str: "Installing...",
+         icon_url: isMain ? (res.icon_url || null) : null,
+         summary: isMain ? (res.summary || null) : null,
+         url: isMain ? (res.url || (provider === 'modrinth' ? `https://modrinth.com/mod/${id}` : null)) : null,
+         provider,
          source: "pending"
+      };
+   };
+
+   // Adds mods to the instance's saved config and downloads them now. Other unsaved edits stay unsaved.
+   const installModsNow = async (ids: string[], res: ModSearchHit, provider: string) => {
+      if (!selectedId || !originalConfig) return;
+      const id = selectedId;
+      const wanted = new Set(ids.map(x => x.toLowerCase()));
+      const addIds = (env: Record<string, string>) => {
+         const enabled = splitEnvList(env["MODRINTH_PROJECTS"]);
+         const listed = new Set(enabled.map(x => x.toLowerCase()));
+         const next: Record<string, string> = { ...env, MODRINTH_PROJECTS: [...enabled, ...ids.filter(x => !listed.has(x.toLowerCase()))].join(',') };
+         if (next["MODRINTH_DISABLED"]) {
+            next["MODRINTH_DISABLED"] = splitEnvList(next["MODRINTH_DISABLED"]).filter(x => !wanted.has(x.toLowerCase())).join(',');
+         }
+         return next;
       };
 
       setInstanceMods(prev => {
-         const exists = prev.find(m => m.id.toLowerCase() === res.id.toLowerCase());
-         if (exists) {
-            return prev.map(m => m.id.toLowerCase() === res.id.toLowerCase() ? { ...m, enabled: true, icon_url: m.icon_url || res.icon_url, name: m.name || res.name } : m);
-         }
-         return [newModItem, ...prev];
+         const existing = new Set(prev.map(m => m.id.toLowerCase()));
+         const rows = ids.filter(x => !existing.has(x.toLowerCase())).map(x => installingModItem(x, res, provider));
+         return [...rows, ...prev];
       });
+      try {
+         const saved = JSON.parse(originalConfig);
+         const putRes = await fetch(`/api/instances/${id}/config`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...saved, environment: addIds(saved.environment || {}) })
+         });
+         if (!putRes.ok) throw await responseError(putRes, "Failed to install mod");
+         const data = await putRes.json().catch(() => ({}));
+         applySavedEnv(addIds);
+         fetchStatus(id);
+         const failed: string[] = Array.isArray(data.failed) ? data.failed : [];
+         if (failed.length > 0) {
+            await showAlert(`Added to the server, but could not download yet: ${failed.join(", ")}. The server downloads it when it starts.`, "Mod Download Incomplete");
+         }
+      } catch (e) {
+         console.error("Error installing mod", e);
+         await showAlert(`Could not install ${res.name || res.id}: ${errorMessage(e)}`, "Install Failed");
+      } finally {
+         await fetchInstanceMods(id, true);
+      }
+   };
+
+   const handleAddMod = (res: any, provider: string = "modrinth") => {
+      cacheModMeta(res);
+      return installModsNow([res.id], res, provider);
    };
 
    const addWithDependencies = async (res: any, provider: string = "modrinth") => {
-      const envKey = "MODRINTH_PROJECTS";
-      const currentList: string = config.environment[envKey] || "";
-      const ids = currentList.split(',').map(s => s.trim()).filter(Boolean);
-
+      cacheModMeta(res);
       let toAdd = [res.id];
       try {
-         // Fetch dependencies
          const depRes = await fetch(`/api/mods/dependencies?provider=${provider}&project_id=${res.id}`);
          if (depRes.ok) {
             const depIds: string[] = await depRes.json();
-            toAdd = [res.id, ...depIds];
+            toAdd = [...new Set([res.id, ...depIds])];
          }
       } catch (e) {
          console.error("Failed to fetch dependencies", e);
       }
-
-      const newIds = [...new Set([...ids, ...toAdd])].join(',');
-      setConfig(prev => ({
-         ...prev,
-         environment: { ...prev.environment, [envKey]: newIds }
-      }));
-
-      setModMetaCache(prev => ({
-         ...prev,
-         [res.id.toLowerCase()]: {
-            name: res.name || res.id,
-            icon_url: res.icon_url || null,
-            latest_version: res.latest_version || "-"
-         },
-         [(res.name || res.id).toLowerCase()]: {
-            name: res.name || res.id,
-            icon_url: res.icon_url || null,
-            latest_version: res.latest_version || "-"
-         }
-      }));
-
-      setInstanceMods(prev => {
-         const existingIds = new Set(prev.map(m => m.id.toLowerCase()));
-         const additions: InstanceModItem[] = [];
-         for (const id of toAdd) {
-            if (!existingIds.has(id.toLowerCase())) {
-               additions.push({
-                  filename: `${id}.jar`,
-                  id: id,
-                  name: id === res.id ? (res.name || id) : id,
-                  version: id === res.id ? (res.latest_version || "-") : "-",
-                  enabled: true,
-                  size: 0,
-                  modified: Date.now() / 1000,
-                  modified_str: "Pending Save",
-                  icon_url: id === res.id ? (res.icon_url || null) : null,
-                  summary: id === res.id ? (res.summary || null) : null,
-                  url: id === res.id ? (res.url || null) : null,
-                  provider: provider,
-                  source: "pending"
-               });
-               existingIds.add(id.toLowerCase());
-            }
-         }
-         return [...additions, ...prev];
-      });
+      return installModsNow(toAdd, res, provider);
    };
 
-   const closeEditModal = () => {
+   const countUnsavedChanges = () => {
+      let count = countUserChanges();
+      if (!originalConfig) return count;
+      try {
+         const saved = JSON.parse(originalConfig);
+         if ((saved.image || "") !== (config.image || "")) count++;
+         const before: Record<string, string> = saved.environment || {};
+         const after: Record<string, string> = config.environment || {};
+         for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+            if ((before[key] ?? "") !== (after[key] ?? "")) count++;
+         }
+      } catch (e) {
+         console.error("Failed to compare config", e);
+      }
+      return count;
+   };
+
+   const closeEditModal = async () => {
+      const unsaved = countUnsavedChanges();
+      if (unsaved > 0) {
+         const discard = await showConfirm(
+            `Discard ${unsaved} unsaved change${unsaved === 1 ? "" : "s"}?`,
+            "Unsaved Changes",
+            { confirmLabel: "Discard", cancelLabel: "Keep editing" },
+         );
+         if (!discard) return;
+      }
+      setSavedUsers(null);
       if (originalConfig) {
          try {
             setConfig(JSON.parse(originalConfig));
@@ -4000,7 +4035,7 @@ export default function App() {
                      </div>
                      <div className="flex items-center gap-2">
                         <HelpButton topic={editTab} className="p-1.5 hover:bg-[#3A3A3A] rounded-full text-neutral-400" iconClassName="w-5 h-5" />
-                        <button onClick={closeEditModal} className="p-1 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition" title="Close without saving">
+                        <button onClick={closeEditModal} className="p-1 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition" title="Close">
                            <X className="w-6 h-6" />
                         </button>
                      </div>
@@ -4401,7 +4436,7 @@ export default function App() {
                                     {/* Whitelist (On/Off) Toggle Switch */}
                                     <div className="flex items-center gap-3 bg-[#242424] border border-[#3A3A3A] px-4 py-2.5 rounded-xl shadow-lg">
                                        <div className="flex items-center gap-2">
-                                          <Shield className={`w-4 h-4 transition-colors ${config.environment["ENABLE_WHITELIST"]?.toLowerCase() === "true" ? 'text-amber-400' : 'text-neutral-500'}`} />
+                                          <Shield className={`w-4 h-4 transition-colors ${usersWhitelistOn ? 'text-amber-400' : 'text-neutral-500'}`} />
                                           <div className="flex flex-col">
                                              <span className="text-xs font-bold text-neutral-200 uppercase tracking-wider">Whitelist</span>
                                              <span className="text-[10px] text-neutral-500 font-medium">Access Restriction</span>
@@ -4409,31 +4444,25 @@ export default function App() {
                                        </div>
                                        <button
                                           type="button"
-                                          onClick={() => setConfig(prev => ({
-                                             ...prev,
-                                             environment: {
-                                                ...prev.environment,
-                                                ENABLE_WHITELIST: prev.environment["ENABLE_WHITELIST"] === "true" ? "false" : "true"
-                                             }
-                                          }))}
+                                          onClick={() => setUsersWhitelistOn(on => !on)}
                                           aria-label="Toggle Whitelist"
-                                          className={`w-12 h-6 rounded-full transition-all relative outline-none focus:ring-2 focus:ring-[#3E8ED0]/40 ${config.environment["ENABLE_WHITELIST"]?.toLowerCase() === "true" ? 'bg-amber-500 shadow-md shadow-amber-500/25' : 'bg-neutral-800 border border-neutral-700'
+                                          className={`w-12 h-6 rounded-full transition-all relative outline-none focus:ring-2 focus:ring-[#3E8ED0]/40 ${usersWhitelistOn ? 'bg-amber-500 shadow-md shadow-amber-500/25' : 'bg-neutral-800 border border-neutral-700'
                                              }`}
                                        >
-                                          <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow ${config.environment["ENABLE_WHITELIST"]?.toLowerCase() === "true" ? 'left-7' : 'left-1'
+                                          <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow ${usersWhitelistOn ? 'left-7' : 'left-1'
                                              }`} />
                                        </button>
-                                       <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold border transition-all ${config.environment["ENABLE_WHITELIST"]?.toLowerCase() === "true"
+                                       <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold border transition-all ${usersWhitelistOn
                                              ? 'bg-amber-500/20 border-amber-500/50 text-amber-400'
                                              : 'bg-neutral-800 border-neutral-700 text-neutral-500'
                                           }`}>
-                                          {config.environment["ENABLE_WHITELIST"]?.toLowerCase() === "true" ? 'ON' : 'OFF'}
+                                          {usersWhitelistOn ? 'ON' : 'OFF'}
                                        </span>
                                     </div>
                                  </div>
 
                                  {/* State Notification Banner */}
-                                 {config.environment["ENABLE_WHITELIST"]?.toLowerCase() === "true" ? (
+                                 {usersWhitelistOn ? (
                                     <div className="flex items-center gap-3 p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300">
                                        <Shield className="w-4 h-4 text-amber-400 shrink-0" />
                                        <div>
@@ -5069,6 +5098,7 @@ export default function App() {
                                        <h3 className="text-base font-bold text-white flex items-center gap-2">
                                           Mods ({instanceMods.length} installed)
                                           {isInstanceModsLoading && <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#3E8ED0]" />}
+                                          <span className="text-[11px] font-normal text-neutral-500">Changes here apply right away; no need to Save.</span>
                                        </h3>
                                        {selectedMods.length > 1 && (
                                           <div className="flex items-center gap-2 text-xs" data-testid="mod-selection-count">
@@ -5196,7 +5226,7 @@ export default function App() {
                                                                <td className="px-3 py-2 font-mono text-[11px] text-neutral-400 whitespace-nowrap">
                                                                   {mod.source === "pending" ? (
                                                                      <span className="text-amber-400 font-semibold bg-amber-400/10 px-1.5 py-0.5 rounded border border-amber-400/20 text-[10px]">
-                                                                        Pending Save
+                                                                        Installing...
                                                                      </span>
                                                                   ) : (
                                                                      mod.modified_str || "-"
@@ -6522,6 +6552,7 @@ export default function App() {
                                                 />
                                                 <input
                                                    type="text"
+                                                   aria-label={`Value of ${k}`}
                                                    value={v}
                                                    onChange={(e) => setConfig(prev => ({
                                                       ...prev,
@@ -7485,7 +7516,7 @@ export default function App() {
                            onClick={() => dialog.onResult(null)}
                            className="px-4 py-2 text-[10px] font-bold text-neutral-400 hover:text-white transition-colors uppercase tracking-widest"
                         >
-                           Cancel
+                           {dialog.cancelLabel || "Cancel"}
                         </button>
                      )}
                      <button
@@ -7503,7 +7534,7 @@ export default function App() {
                         }}
                         className="px-6 py-2 bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white font-bold rounded text-[10px] transition-all shadow-lg shadow-[#3E8ED0]/15 uppercase tracking-widest"
                      >
-                        OK
+                        {dialog.confirmLabel || "OK"}
                      </button>
                   </div>
                </div>

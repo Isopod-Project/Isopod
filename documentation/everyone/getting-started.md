@@ -42,7 +42,7 @@ Server folders and worlds are stored in `data/servers` inside your clone. Docker
 
 ## 🦀 Features at a Glance
 - **Instance Creation**: Quickly spin up new Minecraft servers. Pick a **Group** in the Add Instance window (or **+ New Group...**) to file the new server under it; right-click a server and choose **Move to Folder** to change it later.
-- **Mod Management**: Search and install mods directly from Modrinth.
+- **Mod Management**: Search and install mods directly from Modrinth. Mods install as soon as you click **Add**.
 - **Desktop-Grade File Explorer**: Right-click context menus, drag-and-drop file moves & direct OS uploads, breadcrumb navigation, inline renaming/creation, multi-select, and conflict resolution.
 - **Live Console**: Watch your server logs in real-time.
 - **RCON Support**: Send commands to your server without leaving the dashboard. If a command fails, it stays in the input box so you can retry it, and the console shows why.
@@ -57,6 +57,12 @@ Server folders and worlds are stored in `data/servers` inside your clone. Docker
   - `Ctrl + C` / `Ctrl + X` / `Ctrl + V`: Copy, cut, and paste files.
   - `Ctrl + A`: Select all items.
   - `Esc`: Cancel inline editing or dismiss context menu.
+
+## 💾 Saving in the Edit Window
+- **Mods tab**: Every change applies right away. **Add** downloads the mod (it shows **Installing...** until it's done), and enabling, disabling, or removing a mod changes its file immediately. There is nothing to save.
+- **User Management**: Player changes and the **Whitelist** switch are saved with **Save User Configuration**, and **Discard Changes** undoes them.
+- **Everything else** (version, loader, configuration) waits for **Save Changes**. The sidebar shows **Unsaved Changes** while something is waiting.
+- Closing the Edit window with anything unsaved asks **Discard N unsaved changes?** Choose **Keep editing** to go back and save.
 
 ## 🧩 Selecting Multiple Mods
 In a server's **Mods** tab you can select several mods and enable, disable, or remove them together.

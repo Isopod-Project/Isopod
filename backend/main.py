@@ -685,12 +685,13 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
         yaml.dump(config, f, default_flow_style=False)
         
     # Synchronize configured mods directly to data/mods/ immediately upon saving
+    sync_result = {}
     try:
-        await sync_instance_mods_to_disk(instance_id, env)
+        sync_result = await sync_instance_mods_to_disk(instance_id, env) or {}
     except Exception as e:
         print(f"Error syncing mods to disk during config save: {e}")
         
-    return {"message": "Config updated", "snapshot": snapshot}
+    return {"message": "Config updated", "snapshot": snapshot, **sync_result}
 
 class WhitelistUser(BaseModel):
     name: str
