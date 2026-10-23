@@ -96,6 +96,17 @@ Before you change a server's Minecraft version, server type, loader version, mod
 - **Manage snapshots**: The **Backups** tab lists every snapshot with the change it was taken before, and you can download, restore, or delete them like backups. **Snapshots to keep** sets how many are kept (3 by default); the oldest are removed first. Set it to **0** to turn snapshots off.
 - If a snapshot can't be taken (for example, the disk is full), the change is not made and Isopod tells you why.
 
+## 💥 Crashes and Auto-Restart
+Isopod watches for servers that stop on their own. Stopping or killing a server from the dashboard never counts as a crash, and neither does a clean `/stop` from inside the game.
+- **Crashed servers** show a red **Crashed (Code: X)** badge on their tile (or **Out of memory** when the server ran out of RAM), and the side panel explains what happened.
+- **Restart automatically** (Edit window → **Configuration**) controls what happens next. It's saved with **Save Changes** and takes effect the next time the server starts:
+  - **Always** (default): restarts after a crash, after a clean stop from inside the game, and when your computer or Docker restarts.
+  - **Only after a crash**: restarts only when the server crashes.
+  - **Never**: the server stays stopped until you start it.
+- **Crash loops**: Docker waits a little longer before each quick restart. If a server still crashes 3 times within 2 minutes, Isopod stops it so a broken mod or world can't restart it forever, and the side panel says **Crash loop stopped**. Fix the problem, then press **Launch** to start it again.
+- A server that crashed and came back on its own shows a note in the side panel until you **Dismiss** it or start it yourself.
+- **View Crash Report** (or **Crash Report** in the Edit window's **Logs** tab) opens the newest file from `crash-reports/`. It shows what crashed, the root cause (the last `Caused by:` line), and any mods the report names as suspects, with the full report below it. Crashes that write no report, such as running out of memory or a port already in use, show the last log lines instead.
+
 ## 🔌 Lost Connection
 The dashboard checks every few seconds that it can still reach the Isopod backend, even with **Automatic Refresh** off. If two checks in a row fail, a **Lost connection to Isopod** banner appears and every server shows **Unknown**, because its last known status can't be trusted. Once the backend is reachable again, the banner clears and statuses reload on their own; **Retry** checks right away. If the dashboard can't reach the backend when it first loads, it shows **Can't reach Isopod** instead of an empty server list.
 

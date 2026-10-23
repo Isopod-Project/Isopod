@@ -25,6 +25,8 @@ from . import backups
 from . import resource_usage
 from . import players
 from . import modpacks
+from . import crashes
+import threading
 
 load_dotenv()
 
@@ -130,6 +132,8 @@ def get_docker_client():
 class InstanceConfig(BaseModel):
     image: str
     environment: Dict[str, str]
+    # always | on-failure | never; left unchanged when omitted
+    restart_policy: Optional[str] = None
 
 class ModResponse(BaseModel):
     id: str
@@ -459,16 +463,26 @@ async def get_instance_status(instance_id: str):
         })
 
     pending_snapshot = None
+    crash = None
     try:
-        pending_snapshot = current_pending_snapshot(get_instance_path(instance_id), containers, is_ready)
+        instance_path = get_instance_path(instance_id)
+        pending_snapshot = current_pending_snapshot(instance_path, containers, is_ready)
+        crash = current_crash_state(instance_path, containers, is_running)
     except HTTPException:
         pass
+    if crash and crash["state"] == "crashed":
+        startup_status = "Out of memory" if crash.get("oom_killed") else f"Crashed (Code: {crash.get('exit_code')})"
+    elif crash and crash["state"] == "halted":
+        startup_status = "Crash loop stopped"
+    elif crash and crash["state"] == "restarting":
+        startup_status = "Restarting after crash..."
 
     return {
         "instance_id": instance_id,
         "is_running": is_running,
         "is_ready": is_ready,
         "pending_snapshot": pending_snapshot,
+        "crash": crash,
         "version": version,
         "port": port,
         "public_ip": public_ip,
@@ -595,6 +609,9 @@ async def start_instance(instance_id: str):
     except Exception as e:
         print(f"Error syncing user management on start: {e}")
 
+    # Starting by hand acknowledges any crash and re-arms the watchdog
+    save_instance_meta(path, {"last_crash": None, "crash_loop_halted": None})
+
     # Start all services
     result = subprocess.run(["docker", "compose", "up", "-d"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
@@ -617,6 +634,8 @@ def stop_instance(instance_id: str):
 @app.post("/api/instances/{instance_id}/kill")
 def kill_instance(instance_id: str):
     path = get_instance_path(instance_id)
+    # A killed container exits non-zero; this keeps it from showing as crashed
+    save_instance_meta(path, {"manual_stop_at": time.time()})
     result = subprocess.run(["docker", "compose", "kill"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
         clean_err = result.stderr.strip() or "Unknown error"
@@ -653,6 +672,7 @@ def get_config(instance_id: str):
     return {
         "image": service.get("image", ""),
         "environment": env,
+        "restart_policy": crashes.policy_from_compose(service.get("restart")),
     }
 
 @app.put("/api/instances/{instance_id}/config")
@@ -674,6 +694,10 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
             snapshot = await asyncio.to_thread(take_pre_update_snapshot, path, reason)
         first_service_name = list(services.keys())[0]
         config['services'][first_service_name]['image'] = new_config.image
+        if new_config.restart_policy is not None:
+            if new_config.restart_policy not in crashes.RESTART_POLICIES:
+                raise HTTPException(status_code=400, detail="Restart policy must be always, on-failure, or never.")
+            config['services'][first_service_name]['restart'] = crashes.RESTART_POLICIES[new_config.restart_policy]
         # Ensure EULA is preserved/added
         env = new_config.environment
         env["EULA"] = "TRUE"
@@ -2628,11 +2652,7 @@ def clear_pending_snapshot(path: str, name: Optional[str] = None) -> None:
         save_instance_meta(path, {"pending_snapshot": None})
 
 def _container_started_at(container) -> float:
-    started = (container.attrs.get("State") or {}).get("StartedAt") or ""
-    try:
-        return datetime.strptime(started[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
-    except ValueError:
-        return 0
+    return _docker_time((container.attrs.get("State") or {}).get("StartedAt"))
 
 def current_pending_snapshot(path: str, containers, is_ready: bool) -> Optional[dict]:
     """The snapshot to offer for rollback. Cleared once the server has started fine after the change."""
@@ -2648,6 +2668,91 @@ def current_pending_snapshot(path: str, containers, is_ready: bool) -> Optional[
         clear_pending_snapshot(path)
         return None
     return pending
+
+def _docker_time(value: Optional[str]) -> float:
+    try:
+        return datetime.strptime((value or "")[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return 0
+
+def current_crash_state(path: str, containers, is_running: bool) -> Optional[dict]:
+    """What the dashboard should say about crashes: crashed, restarting, halted, recovered, or nothing."""
+    meta = get_instance_meta(path)
+    last = meta.get("last_crash")
+    halted = meta.get("crash_loop_halted")
+    if is_running:
+        return {"state": "recovered", **last} if last else None
+    if halted:
+        return {"state": "halted", **(last or {}), "count": halted.get("count")}
+    for c in containers:
+        state = c.attrs.get("State") or {}
+        if state.get("Restarting") and last:
+            return {"state": "restarting", **last}
+        # Covers crashes the watchdog missed, e.g. while Isopod was down
+        if state.get("Status") == "exited" and (state.get("ExitCode") or state.get("OOMKilled")):
+            finished = _docker_time(state.get("FinishedAt"))
+            if finished > (meta.get("manual_stop_at") or 0):
+                return {
+                    "state": "crashed",
+                    "time": finished,
+                    "exit_code": state.get("ExitCode"),
+                    "oom_killed": bool(state.get("OOMKilled")),
+                }
+    return None
+
+@app.delete("/api/instances/{instance_id}/crash")
+def dismiss_crash(instance_id: str):
+    path = get_instance_path(instance_id)
+    save_instance_meta(path, {"last_crash": None, "crash_loop_halted": None})
+    return {"dismissed": True}
+
+@app.get("/api/instances/{instance_id}/crash-report")
+def get_crash_report(instance_id: str):
+    path = get_instance_path(instance_id)
+    mods_dir = get_instance_mods_dir(instance_id)
+    mod_files = [e.name for e in os.scandir(mods_dir) if e.is_file()] if os.path.isdir(mods_dir) else []
+    report = crashes.latest_crash_report(path, mod_files)
+    # Out-of-memory kills, port conflicts and the like leave no report; the log tail shows those
+    log_tail = ""
+    try:
+        result = subprocess.run(
+            ["docker", "compose", "logs", "--no-log-prefix", "--tail=80", "mc"],
+            cwd=path, capture_output=True, text=True, timeout=10,
+        )
+        log_tail = result.stdout
+    except Exception as e:
+        print(f"Error reading logs for crash report: {e}")
+    return {"report": report, "log_tail": log_tail}
+
+def _instance_path_for_project(project: str) -> Optional[str]:
+    """Compose project names are the instance folder name, lowercased."""
+    if not os.path.isdir(SERVERS_DIR):
+        return None
+    for entry in os.scandir(SERVERS_DIR):
+        if entry.is_dir() and entry.name.lower() == project.lower() and os.path.exists(os.path.join(entry.path, "docker-compose.yml")):
+            return entry.path
+    return None
+
+def _instance_restart_policy(path: str) -> str:
+    try:
+        with open(os.path.join(path, "docker-compose.yml"), "r") as f:
+            services = (yaml.safe_load(f) or {}).get("services") or {}
+        service = services.get("mc") or (list(services.values())[0] if services else {})
+        return crashes.policy_from_compose(service.get("restart"))
+    except Exception:
+        return crashes.DEFAULT_RESTART_POLICY
+
+def _halt_crash_loop(path: str) -> None:
+    result = subprocess.run(["docker", "compose", "stop"], cwd=path, capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        print(f"[watchdog] Failed to stop {os.path.basename(path)}: {result.stderr.strip()}")
+
+crash_watchdog = crashes.CrashWatchdog(
+    resolve_instance=_instance_path_for_project,
+    save_meta=save_instance_meta,
+    get_policy=_instance_restart_policy,
+    halt=_halt_crash_loop,
+)
 
 async def backup_schedule_loop():
     """Background task that runs due scheduled backups once a minute."""
@@ -3957,6 +4062,7 @@ async def startup_event():
     # Start the periodic update check in the background
     asyncio.create_task(update_check_loop())
     asyncio.create_task(backup_schedule_loop())
+    threading.Thread(target=crash_watchdog.run, args=(get_docker_client,), daemon=True, name="crash-watchdog").start()
 
 @app.get("/api/system/check-updates", response_model=UpdateInfo)
 async def check_updates(force: bool = False):
