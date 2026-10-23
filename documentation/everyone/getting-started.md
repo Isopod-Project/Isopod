@@ -75,6 +75,13 @@ Live usage updates every few seconds while **Automatic Refresh** is on in Settin
 - **CPU** is a share of your whole machine: 100% means every core is busy. Minecraft mostly runs on one core, so a busy server on an 8-core machine shows around 12%.
 - **RAM** is shown as `2.2 GB used · 2.0 GB heap`. The heap is the memory set aside for Minecraft's world data: **Default RAM Allocation** in Settings when the server was created, or `MEMORY` in its raw environment config. Java needs extra memory on top of it, so using 10–30% more than the heap is normal and not a sign the server is over its limit.
 
+## ⏪ Pre-update Snapshots
+Before you change a server's Minecraft version, server type, loader version, modpack, or mods (adding, removing, enabling, or disabling them), Isopod takes a snapshot of its worlds, `mods`, `config`, and `plugins` folders, `server.properties`, and its Docker settings. Several changes within 10 minutes share one snapshot, taken before the first change.
+- **Roll back**: After an update, the server's side panel shows **Restore previous state**. It stops the server if it's running and puts everything back as it was before the update. Anything that changed since, including world progress, is lost. **Dismiss** hides the offer; the snapshot stays in the **Backups** tab.
+- The offer goes away on its own once the server has started successfully after the change.
+- **Manage snapshots**: The **Backups** tab lists every snapshot with the change it was taken before, and you can download, restore, or delete them like backups. **Snapshots to keep** sets how many are kept (3 by default); the oldest are removed first. Set it to **0** to turn snapshots off.
+- If a snapshot can't be taken (for example, the disk is full), the change is not made and Isopod tells you why.
+
 ## 🔌 Lost Connection
 The dashboard checks every few seconds that it can still reach the Isopod backend, even with **Automatic Refresh** off. If two checks in a row fail, a **Lost connection to Isopod** banner appears and every server shows **Unknown**, because its last known status can't be trusted. Once the backend is reachable again, the banner clears and statuses reload on their own; **Retry** checks right away. If the dashboard can't reach the backend when it first loads, it shows **Can't reach Isopod** instead of an empty server list.
 
