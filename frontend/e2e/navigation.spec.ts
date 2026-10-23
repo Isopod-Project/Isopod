@@ -44,6 +44,15 @@ test.describe("Top navigation bar", () => {
     await page.getByRole("button", { name: /Folders/ }).click()
     await expect(page.getByRole("button", { name: /Folders/ })).toBeVisible()
   })
+
+  test("Folders browser survives a response without a path", async ({ page, errors }) => {
+    await page.route("**/api/files?**", (route) =>
+      route.fulfill({ json: { items: [{ name: "alpha", is_dir: true, size: 0, modified: 0, ext: "" }] } }),
+    )
+    await page.getByRole("button", { name: /Folders/ }).click()
+    await expect(page.getByText("alpha", { exact: true })).toBeVisible()
+    expect(errors.problems).toEqual([])
+  })
 })
 
 test.describe("Application Settings", () => {
