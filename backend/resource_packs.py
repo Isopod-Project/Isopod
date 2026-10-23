@@ -180,7 +180,8 @@ async def upload_to_mcpacks(zip_path: str):
 
 def get_file_sha1(path: str):
     """Calculate SHA-1 hash of a file."""
-    sha1 = hashlib.sha1()
+    # Minecraft verifies resource packs by SHA-1; this is a checksum, not a security use
+    sha1 = hashlib.sha1(usedforsecurity=False)
     with open(path, "rb") as f:
         while True:
             data = f.read(65536)

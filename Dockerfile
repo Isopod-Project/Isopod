@@ -13,6 +13,8 @@ WORKDIR /app
 
 # Install Docker CLI, Docker Daemon (docker.io), iptables, and Docker Compose v2 for DinD invocation.
 # Downloads match the build arch (x86_64 or aarch64) so arm64 hosts like Apple Silicon don't need emulation.
+# Keep DOCKER_CLI_VERSION current: older static CLIs are built with Go releases that have known CVEs.
+ARG DOCKER_CLI_VERSION=29.9.2
 RUN ARCH="$(uname -m)" && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -23,7 +25,7 @@ RUN ARCH="$(uname -m)" && \
         ca-certificates \
         curl && \
     rm -rf /var/lib/apt/lists/* && \
-    curl -fsSL "https://download.docker.com/linux/static/stable/${ARCH}/docker-27.3.1.tgz" | tar -xz -C /tmp && \
+    curl -fsSL "https://download.docker.com/linux/static/stable/${ARCH}/docker-${DOCKER_CLI_VERSION}.tgz" | tar -xz -C /tmp && \
     mv /tmp/docker/docker /usr/local/bin/docker && \
     rm -rf /tmp/docker && \
     mkdir -p /usr/lib/docker/cli-plugins/ && \
@@ -32,7 +34,10 @@ RUN ARCH="$(uname -m)" && \
 
 
 COPY backend/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# The app never runs pip; removing it and setuptools/wheel drops the outdated libraries
+# they vendor from the image.
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip uninstall -y pip setuptools wheel
 
 # Copy backend application
 COPY backend/ backend/
