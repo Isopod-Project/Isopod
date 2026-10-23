@@ -45,7 +45,7 @@ Server folders and worlds are stored in `data/servers` inside your clone. Docker
 - **Mod Management**: Search and install mods directly from Modrinth.
 - **Desktop-Grade File Explorer**: Right-click context menus, drag-and-drop file moves & direct OS uploads, breadcrumb navigation, inline renaming/creation, multi-select, and conflict resolution.
 - **Live Console**: Watch your server logs in real-time.
-- **RCON Support**: Send commands to your server without leaving the dashboard.
+- **RCON Support**: Send commands to your server without leaving the dashboard. If a command fails, it stays in the input box so you can retry it, and the console shows why.
 - **Resource Usage**: See live CPU and RAM use for each running server and for all of them combined.
 
 ## 📂 File Explorer Shortcuts & Actions
