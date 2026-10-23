@@ -1179,9 +1179,11 @@ export default function App() {
             ? `/api/instances/${id}/files?path=${encodeURIComponent(path)}`
             : `/api/files?path=${encodeURIComponent(path)}`;
          const res = await fetch(url);
+         if (!res.ok) throw await responseError(res, "Failed to list files");
          const data = await res.json();
          setFileList(data.items || []);
-         setCurrentFilePath(data.path);
+         // The breadcrumb splits this, so never store a missing path
+         setCurrentFilePath(typeof data.path === "string" ? data.path : path);
       } catch (e) {
          console.error("Failed to fetch files", e);
       } finally {
