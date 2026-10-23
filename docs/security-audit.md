@@ -27,6 +27,7 @@ gh run watch "$(gh run list --workflow security-audit.yml --branch main --limit 
 
 - **Dependencies:** update the package. Python versions are pinned in `backend/requirements.txt`, and Dependabot proposes updates weekly. For npm, `npm audit fix` usually works; check that `npm run build` and the e2e suite still pass.
 - **Trivy:** most fixes are a newer base image, a newer `DOCKER_CLI_VERSION` in the `Dockerfile`, or a dependency bump. If nothing upstream has the fix yet, add the finding to [`.trivyignore.yaml`](../.trivyignore.yaml). Each entry needs a reason (`statement`) and an `expired_at` date, so it fails again later and gets re-checked.
+- **CodeQL:** fix the code. If the alert is a false positive, dismiss it on the Security tab with the reason. For example, the offline-mode player UUID has to use MD5 to match Minecraft's `UUID.nameUUIDFromBytes`.
 - **Bandit:** fix the code. If it's a false positive, add `# nosec BXXX` with a comment explaining why.
 - **gitleaks:** treat the secret as leaked. Revoke it first, then remove it from the code.
 - **zizmor:** pin actions to a full commit SHA with the tag in a comment, give jobs only the `permissions:` they need, and don't put `${{ }}` expressions directly in `run:` scripts. Pass them through `env:` instead.
