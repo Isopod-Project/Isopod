@@ -41,7 +41,7 @@ docker compose logs -f         # watch logs
 Server folders and worlds are stored in `data/servers` inside your clone. Docker images that Isopod downloads, like `itzg/minecraft-server`, go in a Docker volume named `isopod_isopod-docker`. Keep the clone under your home folder, or add its location in Docker Desktop under **Settings → Resources → File sharing**.
 
 ## 🦀 Features at a Glance
-- **Instance Creation**: Quickly spin up new Minecraft servers.
+- **Instance Creation**: Quickly spin up new Minecraft servers. Pick a **Group** in the Add Instance window (or **+ New Group...**) to file the new server under it; right-click a server and choose **Move to Folder** to change it later.
 - **Mod Management**: Search and install mods directly from Modrinth.
 - **Desktop-Grade File Explorer**: Right-click context menus, drag-and-drop file moves & direct OS uploads, breadcrumb navigation, inline renaming/creation, multi-select, and conflict resolution.
 - **Live Console**: Watch your server logs in real-time.

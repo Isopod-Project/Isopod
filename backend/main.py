@@ -2110,7 +2110,8 @@ async def import_instance(
     seed: Optional[str] = Form(None),
     level_type: Optional[str] = Form(None),
     generate_structures: Optional[str] = Form(None),
-    memory: Optional[str] = Form(None)
+    memory: Optional[str] = Form(None),
+    group: Optional[str] = Form(None)
 ):
     if not file.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="Only .zip files are supported")
@@ -2315,7 +2316,11 @@ async def import_instance(
                 yaml.dump(compose_content, f, default_flow_style=False)
                 
             save_instance_meta(target_path, {"group": "No group"})
-            
+
+        # Server exports bring their own meta; an explicit group from the import form wins
+        if group and group != "No group":
+            save_instance_meta(target_path, {"group": group})
+
         return {"id": new_slug, "message": "Instance imported successfully"}
     except Exception as e:
         shutil.rmtree(target_path, ignore_errors=True)

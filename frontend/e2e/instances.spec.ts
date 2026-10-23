@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures"
+import { test, expect, MOCK_INSTANCES } from "./fixtures"
 
 test.describe("Instance selection and sidebar", () => {
   test.beforeEach(async ({ page }) => {
@@ -25,5 +25,16 @@ test.describe("Instance selection and sidebar", () => {
     await expect(page.getByText("Application Settings")).toBeVisible()
     await page.keyboard.press("Escape")
     await expect(page.getByText("Application Settings")).toBeHidden()
+  })
+})
+
+test.describe("Dashboard groups", () => {
+  test("instances show under their group right after the page loads", async ({ page }) => {
+    await page.route("**/api/groups", (route) => route.fulfill({ json: ["No group", "Survival"] }))
+    await page.route("**/api/instances", (route) =>
+      route.fulfill({ json: MOCK_INSTANCES.map((inst) => (inst.id === "beta" ? { ...inst, group: "Survival" } : inst)) }),
+    )
+    await page.goto("/")
+    await expect(page.getByRole("main").getByText("Survival", { exact: true })).toBeVisible()
   })
 })
