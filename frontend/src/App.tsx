@@ -348,21 +348,12 @@ export default function App() {
    const [installedResourcePacksMeta, setInstalledResourcePacksMeta] = useState<any[]>([]);
    const [isResourcePackMetaLoading, setIsResourcePackMetaLoading] = useState(false);
 
-   // Bootstrap seenPlayers with defaults and common entries
+   // Bootstrap seenPlayers with the default whitelist
    useEffect(() => {
       const defaults = globalSettings.defaultWhitelistUsers.map(u => ({ name: u, uuid: u }));
-      const common = [
-         { name: "TheTacominecart", uuid: "b14c0873-f8a8-4000-a058-10d686f27fad" },
-         { name: "LumboJimbo", uuid: "19e8bd2f-748a-4087-99c4-6e08d4948cc4" },
-         { name: "Technoblade", uuid: "ad8b121c-a330-4c8d-83c3-6311ce833c94" },
-         { name: "Dream", uuid: "ec70bc6c-7023-4402-847c-c0494426545b" },
-         { name: "TheTacomin", uuid: "8696c21e-7b7e-400a-b50a-f02755e1136c" },
-         { name: "MumboJumbo", uuid: "853c80ef-3c37-49fd-aa49-938b674adae6" },
-         { name: "Grian", uuid: "0475b5b4-d537-4f18-bb45-4e783ab5b6f3" }
-      ];
       setSeenPlayers(prev => {
          const existing = new Set(prev.map(p => p.name.toLowerCase()));
-         const toAdd = [...defaults, ...common].filter(p => !existing.has(p.name.toLowerCase()));
+         const toAdd = defaults.filter(p => !existing.has(p.name.toLowerCase()));
          return [...prev, ...toAdd];
       });
    }, [globalSettings.defaultWhitelistUsers]);
