@@ -2,6 +2,8 @@ import React, { useEffect, useState, useRef, useMemo } from "react";
 import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Archive, Cat, History } from "lucide-react";
 import { HelpButton } from "./components/HelpButton";
 import { BackupsPanel } from "./components/BackupsPanel";
+import { CrashBadge, CrashReportPanel } from "./components/CrashReport";
+import { crashLabel, crashSummary, type CrashInfo } from "./lib/crash";
 import { ResourceTotals, InstanceResources, type ResourceUsage } from "./components/ResourceUsage";
 import { BannedBadge, BannedPlayers, OnlineBadge, OnlinePlayers, PlayerCount, PlayerRowActions, type PlayerList } from "./components/OnlinePlayers";
 import { useBans } from "./components/usePlayerActions";
@@ -30,6 +32,7 @@ interface InstanceStatus {
    startup_percent?: number;
    // Snapshot taken before the last update, offered for rollback until the server starts fine
    pending_snapshot?: PendingSnapshot | null;
+   crash?: CrashInfo | null;
 }
 
 // Server TYPE -> the variable that pins its loader version or build (matches LOADER_VERSION_ENV in the backend)
@@ -213,7 +216,7 @@ export default function App() {
    const [manualLogs, setManualLogs] = useState<Record<string, { anchor: string, content: string }[]>>({});
    const [isLogsLoading, setIsLogsLoading] = useState(false);
    // Instance Config States
-   const [config, setConfig] = useState<{ image: string, environment: Record<string, string> }>({ image: "", environment: {} });
+   const [config, setConfig] = useState<{ image: string, environment: Record<string, string>, restart_policy?: string }>({ image: "", environment: {} });
    const [originalConfig, setOriginalConfig] = useState<any>(null);
    // Applies an environment change the backend already saved, to both the live and the saved config,
    // so it doesn't show up as an unsaved change
@@ -2339,6 +2342,7 @@ export default function App() {
       try {
          const saved = JSON.parse(originalConfig);
          if ((saved.image || "") !== (config.image || "")) count++;
+         if ((saved.restart_policy || "") !== (config.restart_policy || "")) count++;
          const before: Record<string, string> = saved.environment || {};
          const after: Record<string, string> = config.environment || {};
          for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
@@ -2376,16 +2380,37 @@ export default function App() {
       setIsEditModalOpen(false);
    };
 
+   // The Logs tab shows either the live console or the latest crash report
+   const [logView, setLogView] = useState<"console" | "crash">("console");
+
    const openEditModal = () => {
       if (!selectedId) return;
       setIsGlobalBrowser(false);
       setIsEditModalOpen(true);
       setEditTab("logs");
+      setLogView("console");
       setAutoScrollEnabled(true);
       fetchLogs(selectedId);
       fetchConfig(selectedId);
       fetchMcVersions();
       fetchInstanceMods(selectedId, true);
+   };
+
+   const openCrashReport = () => {
+      openEditModal();
+      setLogView("crash");
+   };
+
+   const handleDismissCrash = async (id: string) => {
+      try {
+         const res = await fetch(`/api/instances/${id}/crash`, { method: "DELETE" });
+         if (!res.ok) throw await responseError(res, "Failed to dismiss");
+      } catch (e) {
+         console.error("Dismiss crash failed", e);
+         await showAlert(errorMessage(e), "Error");
+      } finally {
+         fetchStatus(id);
+      }
    };
 
    const openSettings = () => {
@@ -2976,6 +3001,7 @@ export default function App() {
                                              </span>
                                           )}
                                           {isRunning && <PlayerCount list={playerLists[inst.id]} />}
+                                          {!connectionLost && <CrashBadge crash={statuses[inst.id]?.crash} />}
                                        </div>
                                     );
                                  })}
@@ -3059,6 +3085,7 @@ export default function App() {
                                              </span>
                                           )}
                                           {isRunning && <PlayerCount list={playerLists[inst.id]} />}
+                                          {!connectionLost && <CrashBadge crash={statuses[inst.id]?.crash} />}
                                        </div>
                                     );
                                  })}
@@ -3114,7 +3141,8 @@ export default function App() {
                      <h2 className="text-lg font-bold text-center leading-tight mb-1 break-all">{selectedInstance.name}</h2>
                      <p className="text-xs text-neutral-400 text-center">
                         {connectionLost ? 'Unknown' : !selectedStatus?.is_running
-                           ? (selectedStatus?.startup_status === "Stopping..." ? 'Stopping...' : 'Offline')
+                           ? (selectedStatus?.startup_status === "Stopping..." ? 'Stopping...'
+                              : (selectedStatus?.crash && selectedStatus.crash.state !== "recovered" ? crashLabel(selectedStatus.crash) : 'Offline'))
                            : (selectedStatus?.is_ready ? 'Online' : (selectedStatus?.startup_status || 'Starting...'))}
                      </p>
 
@@ -3145,6 +3173,34 @@ export default function App() {
                               </div>
                            );
                         })()
+                     )}
+
+                     {!connectionLost && selectedStatus?.crash && (
+                        <div role="region" aria-label="Crash" className="w-full mt-3 px-4">
+                           <div className={`w-full p-3 rounded flex flex-col gap-2 border ${selectedStatus.crash.state === "recovered" ? "bg-amber-500/5 border-amber-500/30" : "bg-red-500/5 border-red-500/30"}`}>
+                              <div className={`flex items-start gap-2 text-xs ${selectedStatus.crash.state === "recovered" ? "text-amber-300" : "text-red-300"}`}>
+                                 <Skull className="w-4 h-4 shrink-0 mt-px" />
+                                 <span>{crashSummary(selectedStatus.crash)}</span>
+                              </div>
+                              <div className="flex gap-1.5">
+                                 <button
+                                    type="button"
+                                    onClick={openCrashReport}
+                                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 transition-all font-bold text-xs"
+                                 >
+                                    <FileText className="w-3.5 h-3.5" />
+                                    View Crash Report
+                                 </button>
+                                 <button
+                                    type="button"
+                                    onClick={() => handleDismissCrash(selectedInstance.id)}
+                                    className="px-2 py-1.5 rounded border border-[#3A3A3A] text-neutral-400 hover:text-white hover:bg-[#323232] transition-all text-xs"
+                                 >
+                                    Dismiss
+                                 </button>
+                              </div>
+                           </div>
+                        </div>
                      )}
 
                      {!connectionLost && selectedStatus?.pending_snapshot && (
@@ -4176,7 +4232,11 @@ export default function App() {
 
                      {/* Main Area */}
                      <div className="flex-1 bg-[#1A1A1A] flex flex-col min-w-0 overflow-hidden">
-                        {editTab === "logs" && (
+                        {editTab === "logs" && logView === "crash" && selectedInstance && (
+                           <CrashReportPanel instanceId={selectedInstance.id} onBack={() => setLogView("console")} />
+                        )}
+
+                        {editTab === "logs" && logView === "console" && (
                            <div className="flex flex-col h-full bg-[#181818] overflow-hidden">
                               {/* Header with Title, Checkboxes, and Actions */}
                               <div className="flex flex-wrap justify-between items-center gap-3 px-5 py-3 border-b border-[#2C2C2C] bg-[#222222]">
@@ -4184,6 +4244,13 @@ export default function App() {
                                     <div className="flex items-center gap-2">
                                        <Terminal className="w-5 h-5 text-[#3E8ED0]" />
                                        <span className="text-base font-bold text-white">Minecraft Log</span>
+                                       <button
+                                          type="button"
+                                          onClick={() => setLogView("crash")}
+                                          className="ml-2 flex items-center gap-1.5 px-2 py-1 rounded border border-[#3A3A3A] text-xs text-neutral-400 hover:text-white hover:bg-[#323232] transition-colors"
+                                       >
+                                          <Skull className="w-3.5 h-3.5" /> Crash Report
+                                       </button>
                                     </div>
                                     <div className="flex items-center gap-4 text-xs select-none">
                                        <label className="flex items-center gap-1.5 cursor-pointer text-neutral-300 hover:text-white transition-colors">
@@ -6579,6 +6646,25 @@ export default function App() {
                                  </div>
 
                                  <div className="space-y-6">
+                                    <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg p-4 flex items-center justify-between gap-4">
+                                       <div>
+                                          <label htmlFor="restart-policy" className="text-sm font-bold text-white">Restart automatically</label>
+                                          <p className="text-xs text-neutral-500">
+                                             If the server crashes 3 times within 2 minutes, Isopod stops it instead of restarting it again. Takes effect the next time the server starts.
+                                          </p>
+                                       </div>
+                                       <select
+                                          id="restart-policy"
+                                          value={config.restart_policy || "always"}
+                                          onChange={(e) => setConfig(prev => ({ ...prev, restart_policy: e.target.value }))}
+                                          className="bg-[#141414] border border-[#3A3A3A] p-2 rounded text-sm text-[#E0E0E0] focus:outline-none focus:border-[#3E8ED0]"
+                                       >
+                                          <option value="always">Always (also after a reboot)</option>
+                                          <option value="on-failure">Only after a crash</option>
+                                          <option value="never">Never</option>
+                                       </select>
+                                    </div>
+
                                     <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg overflow-hidden">
                                        <div className="px-4 py-2.5 bg-[#2D2D2D] border-b border-[#3A3A3A] flex justify-between items-center">
                                           <span className="text-xs font-bold text-neutral-400 uppercase">Environment Variables</span>
@@ -6692,7 +6778,7 @@ export default function App() {
                                     </span>
                                     <span>
                                        {!isRunning
-                                          ? (isStopping ? 'STOPPING...' : 'OFFLINE')
+                                          ? (isStopping ? 'STOPPING...' : (status?.crash && status.crash.state !== "recovered" ? crashLabel(status.crash).toUpperCase() : 'OFFLINE'))
                                           : (isReady ? 'ONLINE' : (status?.startup_status || 'STARTING...'))}
                                     </span>
                                  </div>
