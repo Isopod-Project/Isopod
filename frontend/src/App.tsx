@@ -211,7 +211,10 @@ export default function App() {
    const [isMetaLoading, setIsMetaLoading] = useState(false);
    const [instanceMods, setInstanceMods] = useState<InstanceModItem[]>([]);
    const [isInstanceModsLoading, setIsInstanceModsLoading] = useState(false);
-   const [selectedModFilename, setSelectedModFilename] = useState<string | null>(null);
+   // Selection is keyed by filename without ".disabled" so it survives enabling/disabling a mod
+   const modKey = (m: InstanceModItem) => (m.filename || m.id).replace(/\.disabled$/, '');
+   const [selectedModKeys, setSelectedModKeys] = useState<string[]>([]);
+   const [modSelectionAnchor, setModSelectionAnchor] = useState<string | null>(null);
    const [modFilterQuery, setModFilterQuery] = useState("");
    const modFileInputRef = useRef<HTMLInputElement>(null);
    const [consoleCommand, setConsoleCommand] = useState("");
@@ -1598,10 +1601,6 @@ export default function App() {
                const remainingPending = pending.filter(p => !dataIds.has(p.id.toLowerCase()));
                return [...remainingPending, ...data];
             });
-            setSelectedModFilename(prev => {
-               if (prev && data.some(m => m.filename === prev)) return prev;
-               return data.length > 0 ? data[0].filename : null;
-            });
          }
       } catch (e) {
          console.error("Failed to fetch instance mods", e);
@@ -1623,12 +1622,47 @@ export default function App() {
       }
    };
 
-   const toggleMod = async (mod: InstanceModItem, targetEnabled: boolean) => {
-      if (!selectedId) return;
+   const splitEnvList = (value?: string) => (value || "").split(',').map(s => s.trim()).filter(Boolean);
+
+   // Moves each mod's id between MODRINTH_PROJECTS and MODRINTH_DISABLED; mods not already listed are added only when includeUnlisted allows it
+   const moveModsInEnv = (env: Record<string, string>, mods: InstanceModItem[], targetEnabled: boolean, includeUnlisted: (mod: InstanceModItem) => boolean) => {
+      let enList = splitEnvList(env["MODRINTH_PROJECTS"]);
+      let disList = splitEnvList(env["MODRINTH_DISABLED"]);
+      let changed = false;
+      for (const mod of mods) {
+         const targetId = mod.id.toLowerCase();
+         const matched = enList.find(x => x.toLowerCase() === targetId)
+            || disList.find(x => x.toLowerCase() === targetId)
+            || (includeUnlisted(mod) ? mod.id : null);
+         if (!matched) continue;
+         enList = enList.filter(x => x.toLowerCase() !== targetId);
+         disList = disList.filter(x => x.toLowerCase() !== targetId);
+         (targetEnabled ? enList : disList).push(matched);
+         changed = true;
+      }
+      if (!changed) return env;
+      return { ...env, MODRINTH_PROJECTS: enList.join(','), MODRINTH_DISABLED: disList.join(',') };
+   };
+
+   const removeModsFromEnv = (env: Record<string, string>, mods: InstanceModItem[]) => {
+      const targets = new Set(mods.flatMap(m => [m.id.toLowerCase(), m.filename.toLowerCase()]));
+      const next = { ...env };
+      for (const key of ["MODRINTH_PROJECTS", "MODRINTH_DISABLED"]) {
+         if (next[key]) {
+            next[key] = splitEnvList(next[key]).filter(x => !targets.has(x.toLowerCase())).join(',');
+         }
+      }
+      return next;
+   };
+
+   const toggleMods = async (mods: InstanceModItem[], targetEnabled: boolean) => {
+      if (!selectedId || mods.length === 0) return;
 
       // Optimistic UI update
+      const filenames = new Set(mods.map(m => m.filename));
+      const ids = new Set(mods.map(m => m.id));
       setInstanceMods(prev => prev.map(m => {
-         if (m.filename === mod.filename || m.id === mod.id) {
+         if (filenames.has(m.filename) || ids.has(m.id)) {
             return {
                ...m,
                enabled: targetEnabled,
@@ -1640,150 +1674,92 @@ export default function App() {
          return m;
       }));
 
-      if (mod.source === "pending") {
-         if (config.environment) {
-            const updateEnvLists = (enKey: string, disKey: string) => {
-               const enList = (config.environment[enKey] || "").split(',').map(s => s.trim()).filter(Boolean);
-               const disList = (config.environment[disKey] || "").split(',').map(s => s.trim()).filter(Boolean);
-               const targetId = mod.id.toLowerCase();
-               const matchInEn = enList.find(x => x.toLowerCase() === targetId);
-               const matchInDis = disList.find(x => x.toLowerCase() === targetId);
-               const matched = matchInEn || matchInDis || mod.id;
-               if (matched) {
-                  let newEn = enList.filter(x => x.toLowerCase() !== targetId);
-                  let newDis = disList.filter(x => x.toLowerCase() !== targetId);
-                  if (targetEnabled) { newEn.push(matched); } else { newDis.push(matched); }
-                  return { [enKey]: newEn.join(','), [disKey]: newDis.join(',') };
-               }
-               return null;
-            };
-            const mUpdates = updateEnvLists("MODRINTH_PROJECTS", "MODRINTH_DISABLED");
-            if (mUpdates) {
-               setConfig(prev => ({
-                  ...prev,
-                  environment: { ...prev.environment, ...(mUpdates || {}) }
-               }));
-            }
+      const pending = mods.filter(m => m.source === "pending");
+      const installed = mods.filter(m => m.source !== "pending");
+
+      if (pending.length > 0) {
+         setConfig(prev => prev.environment
+            ? { ...prev, environment: moveModsInEnv(prev.environment, pending, targetEnabled, () => true) }
+            : prev);
+      }
+      if (installed.length === 0) return;
+
+      // Sequential: each request rewrites the instance's compose file
+      const toggled: InstanceModItem[] = [];
+      const failed: string[] = [];
+      for (const mod of installed) {
+         try {
+            const res = await fetch(`/api/instances/${selectedId}/mods/toggle`, {
+               method: "POST",
+               headers: { "Content-Type": "application/json" },
+               body: JSON.stringify({
+                  filename: mod.filename,
+                  mod_id: mod.id,
+                  enabled: targetEnabled
+               })
+            });
+            if (!res.ok) throw new Error("Failed to toggle mod");
+            toggled.push(mod);
+         } catch (e) {
+            console.error("Error toggling mod", e);
+            failed.push(mod.name);
          }
-         return;
       }
 
-      try {
-         const res = await fetch(`/api/instances/${selectedId}/mods/toggle`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-               filename: mod.filename,
-               mod_id: mod.id,
-               enabled: targetEnabled
-            })
-         });
-         if (!res.ok) throw new Error("Failed to toggle mod");
+      if (toggled.length > 0) {
+         setConfig(prev => prev.environment
+            ? { ...prev, environment: moveModsInEnv(prev.environment, toggled, targetEnabled, m => m.provider === 'modrinth') }
+            : prev);
+      }
 
-         // Update config.environment in memory if available
-         if (config.environment) {
-            const updateEnvLists = (enKey: string, disKey: string) => {
-               const enList = (config.environment[enKey] || "").split(',').map(s => s.trim()).filter(Boolean);
-               const disList = (config.environment[disKey] || "").split(',').map(s => s.trim()).filter(Boolean);
-               const targetId = mod.id.toLowerCase();
-
-               const matchInEn = enList.find(x => x.toLowerCase() === targetId);
-               const matchInDis = disList.find(x => x.toLowerCase() === targetId);
-               const matched = matchInEn || matchInDis || (mod.provider === 'modrinth' ? mod.id : null);
-
-               if (matched) {
-                  let newEn = enList.filter(x => x.toLowerCase() !== targetId);
-                  let newDis = disList.filter(x => x.toLowerCase() !== targetId);
-                  if (targetEnabled) {
-                     newEn.push(matched);
-                  } else {
-                     newDis.push(matched);
-                  }
-                  return { [enKey]: newEn.join(','), [disKey]: newDis.join(',') };
-               }
-               return null;
-            };
-
-            const mUpdates = updateEnvLists("MODRINTH_PROJECTS", "MODRINTH_DISABLED");
-            if (mUpdates) {
-               setConfig(prev => ({
-                  ...prev,
-                  environment: {
-                     ...prev.environment,
-                     ...(mUpdates || {})
-                  }
-               }));
-            }
-         }
-
-         fetchInstanceMods(selectedId);
-      } catch (e: any) {
-         console.error("Error toggling mod", e);
-         await showAlert("Failed to toggle mod: " + e.message, "Error");
-         fetchInstanceMods(selectedId);
+      fetchInstanceMods(selectedId);
+      if (failed.length > 0) {
+         await showAlert(`Failed to ${targetEnabled ? "enable" : "disable"}: ${failed.join(", ")}`, "Error");
       }
    };
 
-   const deleteMod = async (mod: InstanceModItem) => {
-      if (!selectedId) return;
-      const confirmed = await showConfirm(`Are you sure you want to remove "${mod.name}"? This will delete the mod file.`, "Remove Mod");
+   const deleteMods = async (mods: InstanceModItem[]) => {
+      if (!selectedId || mods.length === 0) return;
+      const confirmed = mods.length === 1
+         ? await showConfirm(`Are you sure you want to remove "${mods[0].name}"? This will delete the mod file.`, "Remove Mod")
+         : await showConfirm(`Are you sure you want to remove ${mods.length} mods? This will delete their mod files.`, "Remove Mods");
       if (!confirmed) return;
 
-      if (mod.source === "pending") {
-         setInstanceMods(prev => prev.filter(m => m.filename !== mod.filename && m.id !== mod.id));
-         if (selectedModFilename === mod.filename) {
-            setSelectedModFilename(null);
-         }
-         if (config.environment) {
-            setConfig(prev => {
-               const env = { ...prev.environment };
-               for (const key of ["MODRINTH_PROJECTS", "MODRINTH_DISABLED"]) {
-                  if (env[key]) {
-                     const items = env[key].split(',').map(s => s.trim()).filter(Boolean);
-                     const filtered = items.filter(x => x.toLowerCase() !== mod.id.toLowerCase() && x.toLowerCase() !== mod.filename.toLowerCase());
-                     env[key] = filtered.join(',');
-                  }
-               }
-               return { ...prev, environment: env };
+      const removed: InstanceModItem[] = mods.filter(m => m.source === "pending");
+      const failed: string[] = [];
+      // Sequential: each request rewrites the instance's compose file
+      for (const mod of mods.filter(m => m.source !== "pending")) {
+         try {
+            const res = await fetch(`/api/instances/${selectedId}/mods/delete`, {
+               method: "POST",
+               headers: { "Content-Type": "application/json" },
+               body: JSON.stringify({
+                  filename: mod.filename,
+                  mod_id: mod.id
+               })
             });
+            if (!res.ok) throw new Error("Failed to delete mod");
+            removed.push(mod);
+         } catch (e) {
+            console.error("Error deleting mod", e);
+            failed.push(mod.name);
          }
-         return;
       }
 
-      try {
-         const res = await fetch(`/api/instances/${selectedId}/mods/delete`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-               filename: mod.filename,
-               mod_id: mod.id
-            })
-         });
-         if (!res.ok) throw new Error("Failed to delete mod");
+      if (removed.length > 0) {
+         const filenames = new Set(removed.map(m => m.filename));
+         const ids = new Set(removed.map(m => m.id));
+         setInstanceMods(prev => prev.filter(m => !filenames.has(m.filename) && !ids.has(m.id)));
+         const removedKeys = new Set(removed.map(modKey));
+         setSelectedModKeys(prev => prev.filter(k => !removedKeys.has(k)));
+         setConfig(prev => prev.environment ? { ...prev, environment: removeModsFromEnv(prev.environment, removed) } : prev);
+      }
 
-         setInstanceMods(prev => prev.filter(m => m.filename !== mod.filename && m.id !== mod.id));
-         if (selectedModFilename === mod.filename) {
-            setSelectedModFilename(null);
-         }
-
-         if (config.environment) {
-            setConfig(prev => {
-               const env = { ...prev.environment };
-               for (const key of ["MODRINTH_PROJECTS", "MODRINTH_DISABLED"]) {
-                  if (env[key]) {
-                     const items = env[key].split(',').map(s => s.trim()).filter(Boolean);
-                     const filtered = items.filter(x => x.toLowerCase() !== mod.id.toLowerCase() && x.toLowerCase() !== mod.filename.toLowerCase());
-                     env[key] = filtered.join(',');
-                  }
-               }
-               return { ...prev, environment: env };
-            });
-         }
-
+      if (removed.some(m => m.source !== "pending")) {
          fetchInstanceMods(selectedId);
-      } catch (e: any) {
-         console.error("Error deleting mod", e);
-         await showAlert("Failed to remove mod: " + e.message, "Error");
+      }
+      if (failed.length > 0) {
+         await showAlert(`Failed to remove: ${failed.join(", ")}`, "Error");
       }
    };
 
@@ -1837,9 +1813,63 @@ export default function App() {
       );
    }, [instanceMods, modFilterQuery]);
 
-   const selectedMod = useMemo(() => {
-      return instanceMods.find(m => m.filename === selectedModFilename) || null;
-   }, [instanceMods, selectedModFilename]);
+   // Only visible mods count as selected, so batch actions never touch mods hidden by the search filter
+   const selectedMods = useMemo(() => {
+      const keys = new Set(selectedModKeys);
+      return filteredInstanceMods.filter(m => keys.has(modKey(m)));
+   }, [filteredInstanceMods, selectedModKeys]);
+   const selectedMod = selectedMods.length === 1 ? selectedMods[0] : null;
+   const selectedEnabledMods = selectedMods.filter(m => m.enabled);
+   const selectedDisabledMods = selectedMods.filter(m => !m.enabled);
+
+   const clearModSelection = () => {
+      setSelectedModKeys([]);
+      setModSelectionAnchor(null);
+   };
+
+   const handleModRowClick = (e: React.MouseEvent, mod: InstanceModItem) => {
+      const key = modKey(mod);
+      const additive = e.ctrlKey || e.metaKey;
+      if (e.shiftKey && modSelectionAnchor) {
+         const keys = filteredInstanceMods.map(modKey);
+         const anchorIdx = keys.indexOf(modSelectionAnchor);
+         if (anchorIdx !== -1) {
+            const idx = keys.indexOf(key);
+            const range = keys.slice(Math.min(anchorIdx, idx), Math.max(anchorIdx, idx) + 1);
+            setSelectedModKeys(prev => additive ? Array.from(new Set([...prev, ...range])) : range);
+            return;
+         }
+      }
+      if (additive) {
+         setSelectedModKeys(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+      } else {
+         setSelectedModKeys([key]);
+      }
+      setModSelectionAnchor(key);
+   };
+
+   useEffect(() => {
+      clearModSelection();
+   }, [selectedId]);
+
+   useEffect(() => {
+      if (!isEditModalOpen || editTab !== "mods" || modListView !== "list" || dialog) return;
+      const handleKeyDown = (e: KeyboardEvent) => {
+         const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+         if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+         if (e.key === 'Escape') {
+            clearModSelection();
+         } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+            e.preventDefault();
+            setSelectedModKeys(filteredInstanceMods.map(modKey));
+         } else if (e.key === 'Delete' && selectedMods.length > 0) {
+            e.preventDefault();
+            deleteMods(selectedMods);
+         }
+      };
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+   }, [isEditModalOpen, editTab, modListView, dialog, filteredInstanceMods, selectedMods]);
 
    const handleResourcePackSearch = async (query: string, provider: string) => {
       setIsResourcePackSearching(true);
@@ -4848,6 +4878,17 @@ export default function App() {
                                           Mods ({instanceMods.length} installed)
                                           {isInstanceModsLoading && <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#3E8ED0]" />}
                                        </h3>
+                                       {selectedMods.length > 1 && (
+                                          <div className="flex items-center gap-2 text-xs" data-testid="mod-selection-count">
+                                             <span className="font-semibold text-[#3E8ED0]">{selectedMods.length} mods selected</span>
+                                             <button
+                                                onClick={clearModSelection}
+                                                className="text-neutral-500 hover:text-white transition-colors"
+                                             >
+                                                Clear
+                                             </button>
+                                          </div>
+                                       )}
                                     </div>
 
                                     {/* Main Content: Split Table (Left) + Action Sidebar (Right) */}
@@ -4855,7 +4896,10 @@ export default function App() {
                                        {/* Left Panel: Table & Bottom Search */}
                                        <div className="flex-1 flex flex-col min-w-0 bg-[#1E1E1E] border border-[#2D2D2D] rounded">
                                           {/* Table Container */}
-                                          <div className="flex-1 overflow-auto scrollbar-custom">
+                                          <div
+                                             className="flex-1 overflow-auto scrollbar-custom"
+                                             onClick={(e) => { if (e.target === e.currentTarget) clearModSelection(); }}
+                                          >
                                              <table className="w-full text-left border-collapse table-fixed">
                                                 <thead>
                                                    <tr className="bg-[#262626] border-b border-[#333333] text-[11px] font-bold text-neutral-400 sticky top-0 z-10 select-none">
@@ -4877,7 +4921,7 @@ export default function App() {
                                                       </tr>
                                                    ) : (
                                                       filteredInstanceMods.map((mod) => {
-                                                         const isSelected = selectedModFilename === mod.filename;
+                                                         const isSelected = selectedModKeys.includes(modKey(mod));
                                                          const meta = installedModsMeta.find((m: any) => 
                                                             m.id?.toLowerCase() === mod.id?.toLowerCase() || 
                                                             m.requested_id?.toLowerCase() === mod.id?.toLowerCase()
@@ -4907,20 +4951,21 @@ export default function App() {
                                                          return (
                                                             <tr
                                                                key={mod.filename || mod.id}
-                                                               onClick={() => setSelectedModFilename(mod.filename)}
-                                                               onDoubleClick={() => toggleMod(mod, !mod.enabled)}
+                                                               onClick={(e) => handleModRowClick(e, mod)}
+                                                               onDoubleClick={() => toggleMods([mod], !mod.enabled)}
+                                                               aria-selected={isSelected}
                                                                className={`cursor-pointer transition-colors text-xs ${
                                                                   isSelected
-                                                                     ? 'bg-[#3E8ED0]/25 text-white'
+                                                                     ? 'bg-[#3E8ED0]/25 text-white shadow-[inset_3px_0_0_#3E8ED0]'
                                                                      : 'hover:bg-[#252525] text-neutral-300'
-                                                               } ${!mod.enabled ? 'opacity-50 text-neutral-500' : ''}`}
+                                                               } ${!mod.enabled ? (isSelected ? 'text-neutral-400' : 'opacity-50 text-neutral-500') : ''}`}
                                                             >
                                                                {/* Enable Checkbox */}
                                                                <td className="px-2 py-2 text-center" onClick={(e) => e.stopPropagation()}>
                                                                   <input
                                                                      type="checkbox"
                                                                      checked={mod.enabled}
-                                                                     onChange={(e) => toggleMod(mod, e.target.checked)}
+                                                                     onChange={(e) => toggleMods([mod], e.target.checked)}
                                                                      className="rounded border-[#444] bg-[#181818] accent-[#3E8ED0] w-4 h-4 cursor-pointer"
                                                                   />
                                                                </td>
@@ -5030,36 +5075,36 @@ export default function App() {
                                           <div className="h-px bg-[#303030] my-1" />
 
                                           <button
-                                             disabled={!selectedMod}
-                                             onClick={() => selectedMod && deleteMod(selectedMod)}
-                                             className={`w-full text-left px-3 py-1.5 rounded text-xs font-medium transition-colors ${selectedMod
+                                             disabled={selectedMods.length === 0}
+                                             onClick={() => deleteMods(selectedMods)}
+                                             className={`w-full text-left px-3 py-1.5 rounded text-xs font-medium transition-colors ${selectedMods.length > 0
                                                    ? 'bg-[#2A2A2A] hover:bg-red-950/40 text-neutral-200 hover:text-red-400 border border-[#383838] hover:border-red-900/50'
                                                    : 'text-neutral-600 bg-[#222222] border border-[#2A2A2A] cursor-not-allowed'
                                                 }`}
                                           >
-                                             Remove
+                                             {selectedMods.length > 1 ? `Remove (${selectedMods.length})` : 'Remove'}
                                           </button>
 
                                           <button
-                                             disabled={!selectedMod || selectedMod.enabled}
-                                             onClick={() => selectedMod && toggleMod(selectedMod, true)}
-                                             className={`w-full text-left px-3 py-1.5 rounded text-xs font-medium transition-colors ${selectedMod && !selectedMod.enabled
+                                             disabled={selectedDisabledMods.length === 0}
+                                             onClick={() => toggleMods(selectedDisabledMods, true)}
+                                             className={`w-full text-left px-3 py-1.5 rounded text-xs font-medium transition-colors ${selectedDisabledMods.length > 0
                                                    ? 'bg-[#2A2A2A] hover:bg-[#343434] text-neutral-200 border border-[#383838]'
                                                    : 'text-neutral-600 bg-[#222222] border border-[#2A2A2A] cursor-not-allowed'
                                                 }`}
                                           >
-                                             Enable
+                                             {selectedMods.length > 1 ? `Enable (${selectedDisabledMods.length})` : 'Enable'}
                                           </button>
 
                                           <button
-                                             disabled={!selectedMod || !selectedMod.enabled}
-                                             onClick={() => selectedMod && toggleMod(selectedMod, false)}
-                                             className={`w-full text-left px-3 py-1.5 rounded text-xs font-medium transition-colors ${selectedMod && selectedMod.enabled
+                                             disabled={selectedEnabledMods.length === 0}
+                                             onClick={() => toggleMods(selectedEnabledMods, false)}
+                                             className={`w-full text-left px-3 py-1.5 rounded text-xs font-medium transition-colors ${selectedEnabledMods.length > 0
                                                    ? 'bg-[#2A2A2A] hover:bg-[#343434] text-neutral-200 border border-[#383838]'
                                                    : 'text-neutral-600 bg-[#222222] border border-[#2A2A2A] cursor-not-allowed'
                                                 }`}
                                           >
-                                             Disable
+                                             {selectedMods.length > 1 ? `Disable (${selectedEnabledMods.length})` : 'Disable'}
                                           </button>
 
                                           <div className="h-px bg-[#303030] my-1" />

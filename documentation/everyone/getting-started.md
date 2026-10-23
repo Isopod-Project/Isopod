@@ -58,6 +58,16 @@ Server folders and worlds are stored in `data/servers` inside your clone. Docker
   - `Ctrl + A`: Select all items.
   - `Esc`: Cancel inline editing or dismiss context menu.
 
+## 🧩 Selecting Multiple Mods
+In a server's **Mods** tab you can select several mods and enable, disable, or remove them together.
+- **Click** a mod to select only that mod. **Double-click** it to turn it on or off.
+- **Ctrl + Click** (`Cmd + Click` on Mac) adds or removes one mod from the selection.
+- **Shift + Click** selects every mod between the last one you clicked and this one.
+- **Ctrl + A** (`Cmd + A`) selects every mod that matches the search box.
+- **Esc**, or a click on the empty space below the list, clears the selection. `Delete` removes the selected mods.
+- With more than one mod selected, the header shows how many are selected, and **Enable**, **Disable**, and **Remove** show how many mods they will change. For example, if you select 3 enabled mods and 1 disabled mod, the buttons read **Disable (3)** and **Enable (1)**. **Remove** asks you to confirm once for all of them.
+- Mods hidden by the search box are left out of the selection, so a batch action never changes a mod you can't see.
+
 ## 📊 Resource Usage
 Live usage updates every few seconds while **Automatic Refresh** is on in Settings, and whenever you press **Refresh**.
 - **All servers**: The top bar shows total CPU and RAM for every running server, with RAM shown against your machine's total memory (e.g. `3.1/16 GB`). It is hidden on screens narrower than 1366px to keep the top bar from wrapping.
