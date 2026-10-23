@@ -33,6 +33,8 @@ interface InstanceStatus {
 
 const MEOW_BACKGROUND = `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='260' height='130'><text x='10' y='90' font-family='sans-serif' font-size='44' font-weight='bold' fill='rgba(255,255,255,0.06)' transform='rotate(-20 130 65)'>MEOW</text></svg>")`;
 
+const NEW_GROUP_OPTION = "+ New Group...";
+
 export default function App() {
    const [instances, setInstances] = useState<Instance[]>([]);
    const [statuses, setStatuses] = useState<Record<string, InstanceStatus>>({});
@@ -126,6 +128,7 @@ export default function App() {
    // Modal states
    const [isAddModalOpen, setIsAddModalOpen] = useState(false);
    const [newName, setNewName] = useState("");
+   const [newGroup, setNewGroup] = useState("No group");
    const [newPort, setNewPort] = useState("25565");
    const [isCreating, setIsCreating] = useState(false);
    const [importProgress, setImportProgress] = useState<number | null>(null);
@@ -609,6 +612,7 @@ export default function App() {
             if (newLevelType) formData.append("level_type", newLevelType);
             formData.append("generate_structures", String(newGenerateStructures));
             if (newMemory) formData.append("memory", newMemory);
+            formData.append("group", newGroup);
 
             setImportProgress(0);
             setImportStatus("Uploading ZIP file...");
@@ -683,6 +687,7 @@ export default function App() {
             gamemode: newGamemode,
             generate_structures: newGenerateStructures,
             memory: newMemory || globalSettings.defaultMemory || "1G",
+            group: newGroup,
             whitelist_enabled: modalWhitelistEnabled,
             whitelist_users: (modalWhitelistUsers && modalWhitelistUsers.length > 0) ? modalWhitelistUsers : (globalSettings.defaultWhitelistUsers || [])
          };
@@ -744,11 +749,11 @@ export default function App() {
 
    const handleChangeGroup = async (id: string) => {
       const current = groups.filter(g => g !== "No group");
-      const options = ["No group", ...current, "+ New Group..."];
+      const options = ["No group", ...current, NEW_GROUP_OPTION];
       const sel = await showSelect("Select a folder to move this server to:", options, "Move to Folder");
       if (sel) {
          let finalGroup = sel;
-         if (sel === "+ New Group...") {
+         if (sel === NEW_GROUP_OPTION) {
             finalGroup = await showPrompt("Enter a name for the new folder:", "", "Create New Folder") || "";
             if (!finalGroup) return;
          }
@@ -2351,6 +2356,7 @@ export default function App() {
 
    useEffect(() => {
       fetchInstances();
+      fetchGroups();
       fetchMcVersions();
       fetchGlobalSettings();
 
@@ -2671,6 +2677,7 @@ export default function App() {
                   onClick={() => {
                      setIsAddModalOpen(true);
                      setNewIconFile(null);
+                     setNewGroup("No group");
                      setAddStep(1);
                      setAddTab("custom");
                      setNewName("");
@@ -3167,8 +3174,19 @@ export default function App() {
                         </div>
                         <div>
                            <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-1">Group</label>
-                           <select className="w-full bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-1 text-xs text-neutral-400 rounded focus:outline-none focus:border-[#3E8ED0]">
-                              <option>No group</option>
+                           <select
+                              aria-label="Group"
+                              value={newGroup}
+                              onChange={async (e) => {
+                                 const sel = e.target.value;
+                                 if (sel !== NEW_GROUP_OPTION) { setNewGroup(sel); return; }
+                                 const name = (await showPrompt("Enter a name for the new folder:", "", "Create New Folder"))?.trim();
+                                 if (name) setNewGroup(name);
+                              }}
+                              className="w-full bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-1 text-xs text-neutral-400 rounded focus:outline-none focus:border-[#3E8ED0]"
+                           >
+                              {Array.from(new Set(["No group", ...groups, newGroup])).map(g => <option key={g} value={g}>{g}</option>)}
+                              <option value={NEW_GROUP_OPTION}>{NEW_GROUP_OPTION}</option>
                            </select>
                         </div>
                      </div>
