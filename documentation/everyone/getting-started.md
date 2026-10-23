@@ -75,5 +75,8 @@ Live usage updates every few seconds while **Automatic Refresh** is on in Settin
 - **CPU** is a share of your whole machine: 100% means every core is busy. Minecraft mostly runs on one core, so a busy server on an 8-core machine shows around 12%.
 - **RAM** is shown as `2.2 GB used · 2.0 GB heap`. The heap is the memory set aside for Minecraft's world data: **Default RAM Allocation** in Settings when the server was created, or `MEMORY` in its raw environment config. Java needs extra memory on top of it, so using 10–30% more than the heap is normal and not a sign the server is over its limit.
 
+## 🔌 Lost Connection
+The dashboard checks every few seconds that it can still reach the Isopod backend, even with **Automatic Refresh** off. If two checks in a row fail, a **Lost connection to Isopod** banner appears and every server shows **Unknown**, because its last known status can't be trusted. Once the backend is reachable again, the banner clears and statuses reload on their own; **Retry** checks right away. If the dashboard can't reach the backend when it first loads, it shows **Can't reach Isopod** instead of an empty server list.
+
 ## ❓ Need Help?
 Check out the [FAQ](faq.md) (coming soon) or open an issue on GitHub.
