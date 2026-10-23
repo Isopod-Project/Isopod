@@ -1,5 +1,5 @@
 # Stage 1: Get Node.js binaries directly
-FROM node:20-slim AS node_base
+FROM node:25-slim AS node_base
 
 # Stage 2: Main Dev Image
 FROM python:3.11-slim
