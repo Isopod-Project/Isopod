@@ -13,6 +13,7 @@ services:
     ports:
       - "${DEV_PORT:-8001}:8000"
       - "${MC_PORT_RANGE:-25565-25585}:25565-25585"
+      - "${BEDROCK_PORT_RANGE:-19132-19152}:19132-19152/udp"
     volumes:
 
       - /var/run/docker.sock:/var/run/docker.sock

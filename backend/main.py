@@ -26,6 +26,7 @@ from . import resource_usage
 from . import players
 from . import modpacks
 from . import crashes
+from . import bedrock
 import threading
 
 load_dotenv()
@@ -373,7 +374,7 @@ async def get_instance_status(instance_id: str):
                     startup_percent = 70
                     break
                 # Check for online / ready
-                if "Done (" in line or "Done!" in line:
+                if "Done (" in line or "Done!" in line or bedrock.READY_MARKER in line:
                     is_ready = True
                     startup_status = "Online"
                     startup_percent = 100
@@ -419,6 +420,8 @@ async def get_instance_status(instance_id: str):
     # Get metadata like version and last active
     version = "Unknown"
     port = 25565
+    bedrock_port = None
+    server_type = "VANILLA"
     last_online = 0
     try:
         path = get_instance_path(instance_id)
@@ -439,12 +442,14 @@ async def get_instance_status(instance_id: str):
                            env_dict[k] = v
                    env = env_dict
                version = env.get("VERSION", "Unknown") if isinstance(env, dict) else "Unknown"
+               server_type = (env.get("TYPE") or "VANILLA").upper() if isinstance(env, dict) else "VANILLA"
                
                # Extract port
                ports = mc_config.get("ports", [])
                if ports:
                    p_str = str(ports[0]).split(":")[0]
                    port = int(p_str)
+               bedrock_port = bedrock.bedrock_port(mc_config)
         
         # Last online from docker-compose.yml mod date
         last_online = os.path.getmtime(compose_path)
@@ -484,7 +489,10 @@ async def get_instance_status(instance_id: str):
         "pending_snapshot": pending_snapshot,
         "crash": crash,
         "version": version,
+        "type": server_type,
         "port": port,
+        # UDP port Bedrock players join on (the game port itself on a Bedrock server); None without cross-play
+        "bedrock_port": bedrock_port,
         "public_ip": public_ip,
         "last_online": last_online,
         "containers": container_info,
@@ -579,35 +587,36 @@ async def start_instance(instance_id: str):
             except Exception as e:
                 print(f"Bundling failed during start: {e}")
 
-    # Sync whitelist and ops files from User Management schema before starting
-    try:
-        users, _ = get_instance_users_internal(instance_id)
-        data_dir = os.path.join(path, "data")
-        os.makedirs(data_dir, exist_ok=True)
-        wl_path = os.path.join(data_dir, "whitelist.json")
-        if not os.path.exists(wl_path) or os.path.getsize(wl_path) == 0:
-            wl_entries = [{"uuid": u["uuid"] or "", "name": u["name"]} for u in users if u.get("whitelisted") and u.get("active")]
-            with open(wl_path, "w") as f:
-                json.dump(wl_entries, f, indent=2)
-        # Repair entries saved with undashed UUIDs, which Minecraft ignores
-        for access_file in ("whitelist.json", "ops.json"):
-            access_path = os.path.join(data_dir, access_file)
-            if not os.path.exists(access_path):
-                continue
-            with open(access_path, "r") as f:
-                entries = json.load(f)
-            if not isinstance(entries, list):
-                continue
-            changed = False
-            for entry in entries:
-                if isinstance(entry, dict) and isinstance(entry.get("uuid"), str) and entry["uuid"] != format_uuid(entry["uuid"]):
-                    entry["uuid"] = format_uuid(entry["uuid"])
-                    changed = True
-            if changed:
-                with open(access_path, "w") as f:
-                    json.dump(entries, f, indent=2)
-    except Exception as e:
-        print(f"Error syncing user management on start: {e}")
+    # Sync whitelist and ops files from User Management schema before starting (Bedrock keeps its own allowlist.json)
+    if not bedrock.is_bedrock(env.get("TYPE")):
+        try:
+            users, _ = get_instance_users_internal(instance_id)
+            data_dir = os.path.join(path, "data")
+            os.makedirs(data_dir, exist_ok=True)
+            wl_path = os.path.join(data_dir, "whitelist.json")
+            if not os.path.exists(wl_path) or os.path.getsize(wl_path) == 0:
+                wl_entries = [{"uuid": u["uuid"] or "", "name": u["name"]} for u in users if u.get("whitelisted") and u.get("active")]
+                with open(wl_path, "w") as f:
+                    json.dump(wl_entries, f, indent=2)
+            # Repair entries saved with undashed UUIDs, which Minecraft ignores
+            for access_file in ("whitelist.json", "ops.json"):
+                access_path = os.path.join(data_dir, access_file)
+                if not os.path.exists(access_path):
+                    continue
+                with open(access_path, "r") as f:
+                    entries = json.load(f)
+                if not isinstance(entries, list):
+                    continue
+                changed = False
+                for entry in entries:
+                    if isinstance(entry, dict) and isinstance(entry.get("uuid"), str) and entry["uuid"] != format_uuid(entry["uuid"]):
+                        entry["uuid"] = format_uuid(entry["uuid"])
+                        changed = True
+                if changed:
+                    with open(access_path, "w") as f:
+                        json.dump(entries, f, indent=2)
+        except Exception as e:
+            print(f"Error syncing user management on start: {e}")
 
     # Starting by hand acknowledges any crash and re-arms the watchdog
     save_instance_meta(path, {"last_crash": None, "crash_loop_halted": None})
@@ -701,17 +710,24 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
         # Ensure EULA is preserved/added
         env = new_config.environment
         env["EULA"] = "TRUE"
-        if env.get("MODRINTH_ALLOWED_VERSION_TYPE") == "release,beta,alpha" or "MODRINTH_ALLOWED_VERSION_TYPE" not in env:
-            env["MODRINTH_ALLOWED_VERSION_TYPE"] = "alpha"
+        is_bedrock_server = bedrock.is_bedrock(env.get("TYPE"))
+        if not is_bedrock_server:
+            if env.get("MODRINTH_ALLOWED_VERSION_TYPE") == "release,beta,alpha" or "MODRINTH_ALLOWED_VERSION_TYPE" not in env:
+                env["MODRINTH_ALLOWED_VERSION_TYPE"] = "alpha"
+            try:
+                bedrock.apply_crossplay(config["services"][first_service_name], env, os.path.join(path, "data"), bedrock.crossplay_enabled(old_env))
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
         config['services'][first_service_name]['environment'] = env
-        
+
     with open(compose_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False)
-        
+
     # Synchronize configured mods directly to data/mods/ immediately upon saving
     sync_result = {}
     try:
-        sync_result = await sync_instance_mods_to_disk(instance_id, env) or {}
+        if not bedrock.is_bedrock(new_config.environment.get("TYPE")):
+            sync_result = await sync_instance_mods_to_disk(instance_id, new_config.environment) or {}
     except Exception as e:
         print(f"Error syncing mods to disk during config save: {e}")
         
@@ -1735,7 +1751,22 @@ async def create_instance(req: CreateInstanceRequest):
         raise HTTPException(status_code=400, detail="Instance with similar name already exists")
         
     os.makedirs(path, exist_ok=True)
-    
+
+    # Check default whitelist settings if not passed in request
+    settings = get_settings()
+    w_enabled = req.whitelist_enabled if req.whitelist_enabled is not None else settings.get("defaultWhitelistEnabled", False)
+    w_users = req.whitelist_users if req.whitelist_users is not None else settings.get("defaultWhitelistUsers", [])
+
+    if bedrock.is_bedrock(req.template):
+        service = bedrock.compose_service(
+            slug, req.name, req.port, req.version, req.seed, req.level_type,
+            req.difficulty, req.gamemode, bool(w_enabled), w_users or [],
+        )
+        with open(os.path.join(path, "docker-compose.yml"), "w") as f:
+            yaml.dump({"services": {"mc": service}}, f, default_flow_style=False)
+        save_instance_meta(path, {"group": req.group or "No group"})
+        return {"id": slug, "message": "Instance created"}
+
     # Generate the docker-compose template using itzg/minecraft-server
     compose_content = {
         "services": {
@@ -1766,11 +1797,6 @@ async def create_instance(req: CreateInstanceRequest):
         }
     }
     
-    # Check default whitelist settings if not passed in request
-    settings = get_settings()
-    w_enabled = req.whitelist_enabled if req.whitelist_enabled is not None else settings.get("defaultWhitelistEnabled", False)
-    w_users = req.whitelist_users if req.whitelist_users is not None else settings.get("defaultWhitelistUsers", [])
-
     env = compose_content["services"]["mc"]["environment"]
     if w_enabled:
         env.append("ENABLE_WHITELIST=true")
@@ -2001,12 +2027,13 @@ def rename_instance(instance_id: str, req: RenameInstanceRequest):
                 env = service.get("environment", [])
                 if isinstance(env, list):
                     for i, item in enumerate(env):
-                        if item.startswith("MOTD="):
-                            env[i] = f"MOTD={req.name} Hosted by Isopod"
-                            break
+                        for key in ("MOTD", "SERVER_NAME"):
+                            if item.startswith(f"{key}="):
+                                env[i] = f"{key}={req.name} Hosted by Isopod"
                 elif isinstance(env, dict):
-                    if "MOTD" in env:
-                        env["MOTD"] = f"{req.name} Hosted by Isopod"
+                    for key in ("MOTD", "SERVER_NAME"):
+                        if key in env:
+                            env[key] = f"{req.name} Hosted by Isopod"
             
             with open(compose_path, "w") as f:
                 yaml.dump(config, f, default_flow_style=False)
@@ -2016,6 +2043,19 @@ def rename_instance(instance_id: str, req: RenameInstanceRequest):
             print(f"Error updating compose after rename: {e}")
             
     return {"id": new_slug, "message": "Instance renamed"}
+
+def sync_bedrock_port_env(service: dict) -> None:
+    """After ports move, point ISOPOD_BEDROCK_PORT at the cross-play port's new host side."""
+    port = bedrock.bedrock_port(service)
+    env = service.get("environment")
+    if port is None or not env:
+        return
+    if isinstance(env, list):
+        for i, item in enumerate(env):
+            if str(item).startswith(f"{bedrock.BEDROCK_PORT_ENV}="):
+                env[i] = f"{bedrock.BEDROCK_PORT_ENV}={port}"
+    elif bedrock.BEDROCK_PORT_ENV in env:
+        env[bedrock.BEDROCK_PORT_ENV] = str(port)
 
 @app.post("/api/instances/{instance_id}/duplicate")
 def duplicate_instance(instance_id: str, req: DuplicateInstanceRequest):
@@ -2068,28 +2108,21 @@ def duplicate_instance(instance_id: str, req: DuplicateInstanceRequest):
                 service = services[service_name]
                 service["container_name"] = f"isopod_{new_slug}"
                 
-                # Update ports
-                if "ports" in service:
-                    try:
-                        p = service["ports"][0] or "25565:25565"
-                        current_port = int(str(p).split(':')[0])
-                        new_port = current_port
-                        # Try to find a new free port
-                        while new_port in used_ports or new_port < 1024:
-                            new_port += 1
-                        service["ports"] = [f"{new_port}:25565"]
-                    except: pass
-                
+                # Move every published port (game port, cross-play UDP port) to a free one
+                bedrock.reassign_ports(service, used_ports)
+                sync_bedrock_port_env(service)
+
                 # Update MOTD in environment
                 env = service.get("environment", [])
                 if isinstance(env, list):
                     for i, item in enumerate(env):
-                        if item.startswith("MOTD="):
-                            env[i] = f"MOTD={new_display_name} Hosted by Isopod"
-                            break
+                        for key in ("MOTD", "SERVER_NAME"):
+                            if item.startswith(f"{key}="):
+                                env[i] = f"{key}={new_display_name} Hosted by Isopod"
                 elif isinstance(env, dict):
-                    if "MOTD" in env:
-                        env["MOTD"] = f"{new_display_name} Hosted by Isopod"
+                    for key in ("MOTD", "SERVER_NAME"):
+                        if key in env:
+                            env[key] = f"{new_display_name} Hosted by Isopod"
             
             with open(compose_path, "w") as f:
                 yaml.dump(config, f, default_flow_style=False)
@@ -2293,15 +2326,8 @@ async def import_instance(
                         service = services[service_name]
                         service["container_name"] = f"isopod_{new_slug}"
                         
-                        if "ports" in service:
-                            try:
-                                p = service["ports"][0] or "25565:25565"
-                                current_port = int(str(p).split(':')[0])
-                                new_port = port_val if port_val else current_port
-                                while new_port in used_ports or new_port < 1024:
-                                    new_port += 1
-                                service["ports"] = [f"{new_port}:25565"]
-                            except: pass
+                        bedrock.reassign_ports(service, used_ports, port_val)
+                        sync_bedrock_port_env(service)
 
                         # Update other properties if provided
                         env = service.get("environment", [])
@@ -2424,6 +2450,10 @@ def get_instance_logs(instance_id: str, tail: int = 200):
 def execute_command(instance_id: str, req: CommandRequest):
     """Execute a command on the 'mc' service of the instance using docker compose exec."""
     path = get_instance_path(instance_id)
+    if bedrock.is_bedrock(read_compose_env(path).get("TYPE")):
+        # Bedrock has no RCON; the command's output shows up in the server log
+        ok, output = bedrock.send_command(path, req.command)
+        return {"output": output, "success": ok}
     # Using 'docker compose exec mc rcon-cli [command]'
     # rcon-cli is the built-in helper in itzg/minecraft-server
     cmd = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", req.command]
@@ -2446,7 +2476,11 @@ class PlayerActionRequest(BaseModel):
 @app.get("/api/instances/{instance_id}/players")
 def get_online_players(instance_id: str):
     """Who is online right now, from RCON `list`. Only meaningful while the server is Online."""
-    return players.online_players(instance_id, get_instance_path(instance_id))
+    path = get_instance_path(instance_id)
+    if bedrock.is_bedrock(read_compose_env(path).get("TYPE")):
+        # Bedrock has no RCON to ask, so the player list isn't available
+        return {"available": False, "online": 0, "max": 0, "players": []}
+    return players.online_players(instance_id, path)
 
 @app.get("/api/instances/{instance_id}/bans")
 def get_banned_players(instance_id: str):
@@ -2596,6 +2630,7 @@ UPDATE_ENV_KEYS = {
     "MODRINTH_VERSION": "modpack version",
     "MODRINTH_PROJECTS": "mods",
     "MODRINTH_DISABLED": "mods",
+    "ISOPOD_CROSSPLAY": "Bedrock cross-play",
 }
 UPDATE_ENV_PREFIXES = ("CF_",)
 

@@ -10,6 +10,7 @@
   - **Auto-Dependency Resolution**: Automatically find and add required library mods.
   - **Version/Loader Safety**: Warnings for mismatched mods (e.g., Forge mod on a Fabric server).
 - **Server Types**: Vanilla, Fabric, Forge, NeoForge, and Quilt for mods; Paper, Purpur, and Folia for plugins, each with a pickable loader version or build.
+- **Bedrock Edition**: Run a native Bedrock Dedicated Server, or switch on **Bedrock cross-play** for a Paper, Purpur, Fabric, or NeoForge server to install Geyser and Floodgate so phone, console, and Windows players can join Java worlds.
   - **Server-Only Filtering**: Results are filtered to hide client-only mods by default.
 - **Live Console & RCON**: 
   - Auto-scrolling logs with real-time updates.

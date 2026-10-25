@@ -59,12 +59,33 @@ Server folders and worlds are stored in `data/servers` inside your clone. Docker
   - `Esc`: Cancel inline editing or dismiss context menu.
 
 ## 🧱 Server Types
-Pick a server type when you add an instance, or change it later in the Edit window's **Loaders** tab. Each type lets you pin a loader version or build, or use **Latest Recommended**.
+Pick a server type when you add an instance, or change it later in the Edit window's **Loaders** tab. (For Bedrock servers, see [Bedrock Edition](#-bedrock-edition).) Each type lets you pin a loader version or build, or use **Latest Recommended**.
 - **Mod servers**: Fabric, Forge, NeoForge, and Quilt load mods from the `mods` folder.
 - **Plugin servers**: Paper, Purpur, and Folia load plugins from the `plugins` folder. On these servers the **Mods** tab manages plugins instead: its header reads **Plugins**, and **Download Plugins** searches Modrinth for plugins that run on that server type.
   - **Paper** runs Paper, Spigot, and Bukkit plugins.
   - **Purpur** is a Paper fork with extra gameplay and config options. It runs the same plugins as Paper, plus Purpur-only ones.
   - **Folia** runs each region of the world on its own thread, for large servers on machines with many CPU cores. Most Paper plugins don't work on Folia, so the plugin search only shows plugins marked Folia-compatible. Folia only exists for some Minecraft versions (1.19.4 and newer), and all its builds are experimental; Isopod warns you if the version you picked has no Folia build.
+
+## 📱 Bedrock Edition
+Isopod can host players on Minecraft for Windows, phones, tablets, and consoles in two ways.
+
+**A Bedrock server.** Pick **BEDROCK** as the server type in the Add Instance window. Isopod runs Mojang's Bedrock Dedicated Server, so only Bedrock players can join.
+- The port switches to `19132`, the standard Bedrock port. Bedrock uses **UDP**, so forward the port as UDP on your router.
+- Choose **Latest release** or **Preview** (for players on Minecraft Preview). To stay on one release, type its exact number, like `1.21.50.07`, in the **Versions** tab.
+- World types are Default, Flat, and Legacy. Bedrock has no Spectator game mode or structures switch.
+- The whitelist takes Xbox gamertags. Later changes go in the **Configuration** tab's `ALLOW_LIST_USERS` setting (comma-separated).
+- Bedrock servers can't run Java mods or plugins, so the Edit window has no **Loaders**, **Mods**, **Resource Packs**, or **User Management** tab. The online player list isn't available either.
+- Console commands work, but their output shows up in the log rather than under the input box.
+- Backups and snapshots include the `worlds` folder. While the server is running, Isopod pauses saving for a few seconds so the copy is consistent.
+
+**Cross-play on a Java server.** Open a Paper, Purpur, Fabric, or NeoForge server's **Loaders** tab and switch on **Bedrock cross-play**, then **Save Changes** and restart the server.
+- Isopod installs [Geyser](https://geysermc.org) (which translates between Bedrock and Java) and Floodgate (which lets Bedrock players join without a Java account). On Fabric it also adds Fabric API, which both need.
+- Bedrock players join on the **Bedrock port** (UDP, `19132` by default). The sidebar and the Edit window's status bar show it as **Bedrock** next to the Java address.
+- Bedrock players' names start with a `.` so they can't clash with Java names.
+- Geyser supports the newest Java releases. On an older Minecraft version, Bedrock players may not be able to join.
+- Switching cross-play off removes the Geyser and Floodgate jars and the Bedrock port. Their config folders stay, in case you turn it back on.
+
+Isopod publishes UDP ports `19132`-`19152` for Bedrock, so keep Bedrock ports in that range. If you installed Isopod before this feature, add `19132-19152:19132-19152/udp` to the ports in your compose file (see [the CasaOS guide](../../Documentation/CASAOS_INSTALL.md)).
 
 ## 💾 Saving in the Edit Window
 - **Mods tab**: Every change applies right away. **Add** downloads the mod (it shows **Installing...** until it's done), and enabling, disabling, or removing a mod changes its file immediately. There is nothing to save.
