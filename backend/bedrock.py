@@ -76,6 +76,9 @@ def compose_service(slug: str, name: str, port: int, version: Optional[str], see
         f"LEVEL_TYPE={level_type if level_type in LEVEL_TYPES else 'DEFAULT'}",
         f"DIFFICULTY={difficulty or 'easy'}",
         f"GAMEMODE={gamemode if gamemode in GAMEMODES else 'survival'}",
+        # BDS 1.26+ defaults to NetherNet, which negotiates extra UDP ports through a signaling
+        # service and fails behind Isopod's nested NAT. RakNet answers on the one published port.
+        "TRANSPORT=raknet",
     ]
     if allow_list_enabled or allow_list_users:
         env.append(f"ALLOW_LIST={'true' if allow_list_enabled else 'false'}")
