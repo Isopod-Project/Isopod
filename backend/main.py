@@ -196,15 +196,20 @@ class Instance(BaseModel):
     group: str = "No group"
     icon_url: Optional[str] = None
 
+def instance_dir(slug: str) -> Optional[str]:
+    """The folder for an instance slug inside SERVERS_DIR, or None if the slug would escape it."""
+    servers_root = os.path.realpath(SERVERS_DIR)
+    path = os.path.realpath(os.path.join(servers_root, slug))
+    # Containment check (also what CodeQL recognizes as a path-injection sanitizer)
+    if not slug or not path.startswith(servers_root + os.sep):
+        return None
+    return path
+
 def get_instance_path(instance_id: str) -> str:
     # Basic sanitize
     safe_id = "".join(c for c in instance_id if c.isalnum() or c in ('-', '_'))
-    servers_root = os.path.realpath(SERVERS_DIR)
-    path = os.path.realpath(os.path.join(servers_root, safe_id))
-    # Containment check (also what CodeQL recognizes as a path-injection sanitizer)
-    if not safe_id or not path.startswith(servers_root + os.sep):
-        raise HTTPException(status_code=404, detail="Instance not found")
-    if not os.path.exists(path) or not os.path.isdir(path):
+    path = instance_dir(safe_id)
+    if path is None or not os.path.isdir(path):
         raise HTTPException(status_code=404, detail="Instance not found")
     return path
 
@@ -1750,7 +1755,9 @@ def generate_slug(text: str) -> str:
 @app.post("/api/instances")
 async def create_instance(req: CreateInstanceRequest):
     slug = generate_slug(req.name)
-    path = os.path.join(SERVERS_DIR, slug)
+    path = instance_dir(slug)
+    if path is None:
+        raise HTTPException(status_code=400, detail="Instance name needs at least one letter or number")
     if os.path.exists(path):
         raise HTTPException(status_code=400, detail="Instance with similar name already exists")
         
