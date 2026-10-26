@@ -73,8 +73,9 @@ Isopod can host players on Minecraft for Windows, phones, tablets, and consoles 
 - The port switches to `19132`, the standard Bedrock port. Bedrock uses **UDP**, so forward the port as UDP on your router.
 - Choose **Latest release** or **Preview** (for players on Minecraft Preview). To stay on one release, type its exact number, like `1.21.50.07`, in the **Versions** tab.
 - World types are Default, Flat, and Legacy. Bedrock has no Spectator game mode or structures switch.
-- The whitelist takes Xbox gamertags. Later changes go in the **Configuration** tab's `ALLOW_LIST_USERS` setting (comma-separated).
-- Bedrock servers can't run Java mods or plugins, so the Edit window has no **Loaders**, **Mods**, **Resource Packs**, or **User Management** tab. The online player list isn't available either.
+- The whitelist (Bedrock calls it the allowlist) takes Xbox gamertags, spaces included. Manage it later in the **User Management** tab: add or remove players, turn the allowlist on or off, and make players operators. Changes reach a running server straight away, except that a new operator who isn't online gets operator powers at the next start.
+- Bedrock has no ban command, so there's no Banned Players list. To keep someone out, turn the allowlist on and remove them from it.
+- Bedrock servers can't run Java mods or plugins, so the Edit window has no **Loaders**, **Mods**, or **Resource Packs** tab. The online player list isn't available either.
 - Console commands work, but their output shows up in the log rather than under the input box.
 - Backups and snapshots include the `worlds` folder. While the server is running, Isopod pauses saving for a few seconds so the copy is consistent.
 

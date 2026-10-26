@@ -27,6 +27,7 @@ from . import players
 from . import modpacks
 from . import crashes
 from . import bedrock
+from . import bedrock_users
 import threading
 
 load_dotenv()
@@ -776,13 +777,32 @@ class WhitelistUser(BaseModel):
     is_op: bool = False
     whitelisted: bool = True
     active: bool = True
+    # Bedrock only: the Xbox user ID that permissions.json stores operators by
+    xuid: Optional[str] = None
 
 class UpdateUsersPayload(BaseModel):
     users: List[WhitelistUser]
     whitelist_enabled: Optional[bool] = None
 
+def get_bedrock_users(path: str, env: dict) -> Tuple[List[dict], bool]:
+    """A Bedrock server's users.json, topped up from the allowlist and operators the server already has."""
+    data_dir = os.path.join(path, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    users_file = os.path.join(data_dir, "users.json")
+    users, changed = bedrock_users.load_users(bedrock_users.read_json_list(users_file), data_dir, env)
+    if users and (changed or not os.path.exists(users_file)):
+        try:
+            with open(users_file, "w") as f:
+                json.dump(users, f, indent=2)
+        except OSError as e:
+            print(f"Error writing users.json: {e}")
+    return users, bedrock_users.allow_list_enabled(env)
+
 def get_instance_users_internal(instance_id: str) -> Tuple[List[dict], bool]:
     path = get_instance_path(instance_id)
+    env = read_compose_env(path)
+    if bedrock.is_bedrock(env.get("TYPE")):
+        return get_bedrock_users(path, env)
     data_dir = os.path.join(path, "data")
     os.makedirs(data_dir, exist_ok=True)
     users_file = os.path.join(data_dir, "users.json")
@@ -1042,6 +1062,8 @@ def update_instance_users(
         wl_enabled = whitelist_enabled
 
     path = get_instance_path(instance_id)
+    if bedrock.is_bedrock(read_compose_env(path).get("TYPE")):
+        return update_bedrock_users(path, users, wl_enabled, response)
     data_dir = os.path.join(path, "data")
     os.makedirs(data_dir, exist_ok=True)
     users_file = os.path.join(data_dir, "users.json")
@@ -1234,6 +1256,41 @@ def update_instance_users(
         response.headers["X-Whitelist-Enabled"] = "true" if wl_enabled else "false"
 
     return {"message": "Users updated successfully", "whitelist_enabled": wl_enabled}
+
+
+def update_bedrock_users(path: str, users: List[WhitelistUser], wl_enabled: Optional[bool], response: Optional[Response]):
+    """Save a Bedrock server's allowlist and operators. bedrock_users explains where each copy goes."""
+    data_dir = os.path.join(path, "data")
+    env = read_compose_env(path)
+    old_users, old_enabled = get_bedrock_users(path, env)
+    enabled = old_enabled if wl_enabled is None else wl_enabled
+    try:
+        new_users = bedrock_users.normalize([u.model_dump() for u in users], old_users)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        with open(os.path.join(data_dir, "users.json"), "w") as f:
+            json.dump(new_users, f, indent=2)
+        bedrock_users.write_access_files(data_dir, new_users, old_users)
+    except OSError as e:
+        print(f"Error writing Bedrock access files: {e}")
+        raise HTTPException(status_code=500, detail="Couldn't save the allowlist files.")
+
+    env_updates = bedrock_users.access_env(new_users, enabled, env, old_users)
+    set_compose_env(path, env_updates)
+
+    # Players who aren't online can't be opped live; OPS applies to them on the next start
+    commands = bedrock_users.live_commands(old_users, old_enabled, new_users, enabled)
+    if commands and is_instance_running(path):
+        for command in commands:
+            ok, output = bedrock.send_command(path, command)
+            if not ok:
+                print(f"Bedrock command '{command}' failed: {output}")
+
+    if response:
+        response.headers["X-Whitelist-Enabled"] = "true" if enabled else "false"
+    return {"message": "Users updated successfully", "whitelist_enabled": enabled, "environment": env_updates}
 
 
 # ==========================================
@@ -2970,6 +3027,25 @@ async def get_mod_conflicts(provider: str, project_id: str, current_mods: str = 
 # ==========================================
 # Instance Mods Management (Prism Launcher Style)
 # ==========================================
+
+def set_compose_env(instance_path: str, values: dict) -> None:
+    """Set variables on the mc service in docker-compose.yml, keeping its list or mapping form."""
+    compose_path = os.path.join(instance_path, "docker-compose.yml")
+    with open(compose_path, "r") as f:
+        cdata = yaml.safe_load(f) or {}
+    services = cdata.get("services") or {}
+    if not services:
+        return
+    service = services.get("mc") or list(services.values())[0]
+    env = service.get("environment") or []
+    if isinstance(env, dict):
+        env.update(values)
+    else:
+        env = [item for item in env if str(item).split("=", 1)[0] not in values]
+        env += [f"{k}={v}" for k, v in values.items()]
+    service["environment"] = env
+    with open(compose_path, "w") as f:
+        yaml.dump(cdata, f, default_flow_style=False)
 
 def read_compose_env(instance_path: str) -> dict:
     """The mc service's environment from docker-compose.yml, as a dict ({} if unreadable)."""
