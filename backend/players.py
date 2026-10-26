@@ -73,8 +73,11 @@ def rcon(path: str, command: str, timeout: int = 5) -> Tuple[bool, str]:
             ["docker", "compose", "exec", "-T", "mc", "rcon-cli", command],
             cwd=path, capture_output=True, text=True, timeout=timeout,
         )
+    except subprocess.TimeoutExpired:
+        return False, "The server didn't answer in time."
     except Exception as e:
-        return False, str(e)
+        print(f"rcon-cli failed: {e}")
+        return False, "Couldn't reach the server console."
     output = FORMATTING.sub("", (result.stdout + result.stderr)).strip()
     return result.returncode == 0 and not output.startswith(FAILURE_PREFIXES), output
 

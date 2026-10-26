@@ -11,6 +11,8 @@ services:
     ports:
       - "8000:8000"
       - "25565-25585:25565-25585"
+      # Bedrock servers and Java cross-play (Geyser) use UDP
+      - "19132-19152:19132-19152/udp"
     volumes:
       # Minecraft server instances and worlds
       - /DATA/AppData/isopod/servers:/servers

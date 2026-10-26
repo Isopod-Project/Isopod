@@ -7,6 +7,8 @@ import { crashLabel, crashSummary, type CrashInfo } from "./lib/crash";
 import { ResourceTotals, InstanceResources, type ResourceUsage } from "./components/ResourceUsage";
 import { BannedBadge, BannedPlayers, OnlineBadge, OnlinePlayers, PlayerCount, PlayerRowActions, type PlayerList } from "./components/OnlinePlayers";
 import { useBans } from "./components/usePlayerActions";
+import { BedrockVersionOptions, CrossplayCard } from "./components/Bedrock";
+import { BEDROCK_DEFAULT_PORT, BEDROCK_GAMEMODES, BEDROCK_LEVEL_TYPES, BEDROCK_SERVER_NOTE, CROSSPLAY_ENV, isBedrockType, supportsCrossplay } from "./lib/bedrock";
 import { formatBytes } from "./lib/utils";
 
 interface Instance {
@@ -24,7 +26,10 @@ interface InstanceStatus {
    is_running: boolean;
    is_ready: boolean;
    version?: string;
+   type?: string;
    port?: number;
+   // UDP port Bedrock players join on; set for Bedrock servers and Java servers with cross-play
+   bedrock_port?: number | null;
    public_ip?: string;
    last_online?: number;
    containers: unknown[];
@@ -48,6 +53,9 @@ const LOADER_VERSION_ENV: Record<string, string> = {
 
 // Server types that run plugins (in plugins/) instead of mods
 const PLUGIN_SERVER_TYPES = ["PAPER", "PURPUR", "FOLIA"];
+
+// Edit window tabs that only apply to Java servers
+const BEDROCK_HIDDEN_TABS = ["loader", "mods", "resource-pack", "users"];
 
 const FOLIA_WARNING = "Folia runs each region of the world on its own thread and is meant for large servers on machines with many CPU cores. Most Paper plugins don't work on it: only install plugins marked as Folia-compatible. All Folia builds are experimental.";
 
@@ -605,7 +613,7 @@ export default function App() {
    };
 
    const fetchLoaderVersions = async (loader: string, mcVersion: string) => {
-      if (!loader || loader === "VANILLA") {
+      if (!loader || loader === "VANILLA" || isBedrockType(loader)) {
          setLoaderVersions([]);
          return;
       }
@@ -648,6 +656,23 @@ export default function App() {
       } finally {
          setIsModpackVersionsLoading(false);
       }
+   };
+
+   const addingBedrock = addTab === "custom" && isBedrockType(selectedAddLoader);
+
+   // Bedrock uses its own versions, port, and world options, so switching to or from it resets them
+   const selectAddLoader = (loader: string) => {
+      const toBedrock = isBedrockType(loader);
+      if (toBedrock !== isBedrockType(selectedAddLoader)) {
+         setSelectedAddVersion("latest");
+         const javaPort = globalSettings.defaultPort || "25565";
+         if (toBedrock && (!newPort || newPort === javaPort)) setNewPort(BEDROCK_DEFAULT_PORT);
+         if (!toBedrock && newPort === BEDROCK_DEFAULT_PORT) setNewPort(javaPort);
+         if (toBedrock && !BEDROCK_LEVEL_TYPES.some(t => t.id === newLevelType)) setNewLevelType("DEFAULT");
+         if (!toBedrock && newLevelType === "LEGACY") setNewLevelType("DEFAULT");
+         if (toBedrock && !BEDROCK_GAMEMODES.includes(newGamemode)) setNewGamemode("survival");
+      }
+      setSelectedAddLoader(loader);
    };
 
    const handleAddInstance = async (e: React.FormEvent) => {
@@ -731,7 +756,8 @@ export default function App() {
 
          const body: any = {
             name: newName,
-            template: selectedAddLoader.toLowerCase(),
+            // Modpacks and imports are always Java servers
+            template: (isBedrockType(selectedAddLoader) && !addingBedrock ? "VANILLA" : selectedAddLoader).toLowerCase(),
             port: parseInt(newPort || globalSettings.defaultPort || "25565"),
             version: selectedAddVersion === 'latest' ? '' : selectedAddVersion,
             loader_version: selectedAddLoaderVersion,
@@ -1779,6 +1805,11 @@ export default function App() {
 
    const loaderVersionKey = (type?: string) => LOADER_VERSION_ENV[(type || "").toUpperCase()] || "LOADER_VERSION";
    const isPluginServer = PLUGIN_SERVER_TYPES.includes((config.environment?.["TYPE"] || "").toUpperCase());
+   // Bedrock servers have no mods, resource pack bundling, or Java player management, and name some world settings differently
+   const editingBedrock = isBedrockType(config.environment?.["TYPE"]);
+   const worldEnv = editingBedrock
+      ? { seed: "LEVEL_SEED", mode: "GAMEMODE" }
+      : { seed: "SEED", mode: "MODE" };
 
    const splitEnvList = (value?: string) => (value || "").split(',').map(s => s.trim()).filter(Boolean);
 
@@ -2607,6 +2638,11 @@ export default function App() {
       }
    }, [isEditModalOpen, selectedId, editTab]);
 
+   // A Bedrock server hides the Java-only tabs; don't leave one open from another instance
+   useEffect(() => {
+      if (editingBedrock && BEDROCK_HIDDEN_TABS.includes(editTab)) setEditTab("logs");
+   }, [editingBedrock, editTab]);
+
    // Debounced Resource Pack search
    useEffect(() => {
       if (editTab === "resource-pack") {
@@ -3336,6 +3372,22 @@ export default function App() {
                            </div>
                         </div>
                      )}
+                     {selectedStatus?.public_ip && selectedStatus.bedrock_port && !isBedrockType(selectedStatus.type) && (
+                        <div
+                           onClick={() => copyToClipboard(`${selectedStatus.public_ip}:${selectedStatus.bedrock_port}`, 'sidebar-bedrock')}
+                           className="flex items-center justify-between text-[11px] cursor-pointer hover:bg-[#323232] p-1.5 -mx-1.5 rounded-md transition group"
+                           title="Bedrock players join with this address and port (UDP)"
+                           data-testid="bedrock-address"
+                        >
+                           <span className="text-neutral-500 uppercase font-bold tracking-wider">Bedrock</span>
+                           <div className="flex items-center gap-1.5">
+                              <span className={`font-mono font-bold transition-colors ${copiedId === 'sidebar-bedrock' ? 'text-emerald-400' : 'text-emerald-500 group-hover:underline'}`}>
+                                 {copiedId === 'sidebar-bedrock' ? 'COPIED!' : `${selectedStatus.public_ip}:${selectedStatus.bedrock_port}`}
+                              </span>
+                              <Copy className={`w-2.5 h-2.5 transition-colors ${copiedId === 'sidebar-bedrock' ? 'text-emerald-400' : 'text-neutral-600 group-hover:text-emerald-400'} mt-[-2px]`} />
+                           </div>
+                        </div>
+                     )}
                      <div className="flex items-center justify-between text-[11px]">
                         <span className="text-neutral-500 uppercase font-bold tracking-wider">Version</span>
                         <span className="text-[#3E8ED0] font-mono font-bold bg-[#3E8ED0]/10 px-2 py-0.5 rounded border border-[#3E8ED0]/20">
@@ -3485,6 +3537,18 @@ export default function App() {
                               {addTab === "custom" && (
                                  <div className="flex flex-col h-full overflow-hidden">
                                     {/* Top Half: Minecraft Version Selection */}
+                                    {isBedrockType(selectedAddLoader) ? (
+                                    <div className="flex-1 flex flex-col p-4 overflow-auto border-b border-[#323232]">
+                                       <h4 className="text-sm font-bold text-neutral-300 flex items-center gap-2 mb-3">
+                                          <Layers className="w-4 h-4 text-[#3E8ED0]" />
+                                          Bedrock Version
+                                       </h4>
+                                       <BedrockVersionOptions
+                                          value={selectedAddVersion === "latest" ? "LATEST" : selectedAddVersion}
+                                          onChange={(v) => setSelectedAddVersion(v === "LATEST" ? "latest" : v)}
+                                       />
+                                    </div>
+                                    ) : (
                                     <div className="flex-1 flex flex-col p-4 overflow-hidden border-b border-[#323232]">
                                        <div className="flex items-center justify-between mb-3">
                                           <h4 className="text-sm font-bold text-neutral-300 flex items-center gap-2">
@@ -3575,6 +3639,7 @@ export default function App() {
                                           </div>
                                        </div>
                                     </div>
+                                    )}
 
                                     {/* Bottom Half: Mod Loader selection */}
                                     <div className="flex-1 flex flex-col p-4 bg-[#141414] overflow-hidden">
@@ -3584,10 +3649,10 @@ export default function App() {
                                              Mod Loader
                                           </h4>
                                           <div className="flex bg-[#1E1E1E] rounded p-1 border border-[#323232] overflow-x-auto max-w-full">
-                                             {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT', 'PAPER', 'PURPUR', 'FOLIA'].map(l => (
+                                             {['VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT', 'PAPER', 'PURPUR', 'FOLIA', 'BEDROCK'].map(l => (
                                                 <button
                                                    key={l}
-                                                   onClick={() => setSelectedAddLoader(l)}
+                                                   onClick={() => selectAddLoader(l)}
                                                    className={`px-3 py-1 rounded text-[10px] font-bold transition-all flex-shrink-0 ${(selectedAddLoader || '').toUpperCase() === l ? 'bg-[#3E8ED0] text-white shadow-md' : 'text-neutral-500 hover:text-white'}`}
                                                 >
                                                    {l}
@@ -3612,6 +3677,11 @@ export default function App() {
                                                    <Box className="w-6 h-6" />
                                                 </div>
                                                 Vanilla does not require a mod loader.
+                                             </div>
+                                          ) : isBedrockType(selectedAddLoader) ? (
+                                             <div role="note" className="flex flex-col items-center justify-center h-full text-neutral-400 text-xs gap-3 p-8 text-center">
+                                                <Gamepad2 className="w-6 h-6 text-[#3E8ED0]" />
+                                                {BEDROCK_SERVER_NOTE}
                                              </div>
                                           ) : (
                                              <>
@@ -3855,11 +3925,17 @@ export default function App() {
                                              onChange={(e) => setNewLevelType(e.target.value)}
                                              className="w-full bg-[#0F0F0F] border border-[#333] p-4 rounded-xl focus:outline-none focus:border-[#3E8ED0] text-sm text-neutral-300 appearance-none transition-all hover:border-[#444]"
                                           >
-                                             <option value="DEFAULT">Default</option>
-                                             <option value="FLAT">Flat</option>
-                                             <option value="LARGEBIOMES">Large Biomes</option>
-                                             <option value="AMPLIFIED">Amplified</option>
-                                             <option value="BUFFET">Buffet</option>
+                                             {addingBedrock ? (
+                                                BEDROCK_LEVEL_TYPES.map(t => <option key={t.id} value={t.id}>{t.name}</option>)
+                                             ) : (
+                                                <>
+                                                   <option value="DEFAULT">Default</option>
+                                                   <option value="FLAT">Flat</option>
+                                                   <option value="LARGEBIOMES">Large Biomes</option>
+                                                   <option value="AMPLIFIED">Amplified</option>
+                                                   <option value="BUFFET">Buffet</option>
+                                                </>
+                                             )}
                                           </select>
                                        </div>
                                        <div className="space-y-3">
@@ -3888,9 +3964,10 @@ export default function App() {
                                              <option value="survival">Survival</option>
                                              <option value="creative">Creative</option>
                                              <option value="adventure">Adventure</option>
-                                             <option value="spectator">Spectator</option>
+                                             {!addingBedrock && <option value="spectator">Spectator</option>}
                                           </select>
                                        </div>
+                                       {!addingBedrock && (
                                        <div className="space-y-3">
                                           <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">Structures</label>
                                           <button
@@ -3901,6 +3978,7 @@ export default function App() {
                                              {newGenerateStructures ? <Check className="w-5 h-5" /> : <X className="w-5 h-5" />}
                                           </button>
                                        </div>
+                                       )}
                                     </div>
                                  </div>
 
@@ -3913,7 +3991,7 @@ export default function App() {
                                           </div>
                                           <div>
                                              <h4 className="font-bold text-white text-base">Server Whitelist</h4>
-                                             <p className="text-xs text-neutral-400">Restrict access to specified Minecraft usernames.</p>
+                                             <p className="text-xs text-neutral-400">{addingBedrock ? "Restrict access to specified Xbox gamertags." : "Restrict access to specified Minecraft usernames."}</p>
                                           </div>
                                        </div>
                                        <button
@@ -3949,7 +4027,7 @@ export default function App() {
                                                       }
                                                    }
                                                 }}
-                                                placeholder="Enter Minecraft username..."
+                                                placeholder={addingBedrock ? "Enter Xbox gamertag..." : "Enter Minecraft username..."}
                                                 className="flex-1 bg-[#141414] border border-[#3A3A3A] px-3 py-2 rounded-lg text-sm text-white focus:outline-none focus:border-amber-500/50"
                                              />
                                              <button
@@ -4143,6 +4221,7 @@ export default function App() {
                               <Database className="w-4 h-4" />
                               Versions
                            </button>
+                           {!editingBedrock && (
                            <button
                               onClick={() => setEditTab("loader")}
                               className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "loader" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
@@ -4150,6 +4229,7 @@ export default function App() {
                               <Cpu className="w-4 h-4" />
                               Loaders
                            </button>
+                           )}
                            <button
                               onClick={() => {
                                  setEditTab("files");
@@ -4174,6 +4254,7 @@ export default function App() {
                               <Archive className="w-4 h-4" />
                               Backups
                            </button>
+                           {!editingBedrock && (
                            <button
                               onClick={() => setEditTab("mods")}
                               className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "mods" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
@@ -4181,6 +4262,8 @@ export default function App() {
                               <Box className="w-4 h-4" />
                               Mods
                            </button>
+                           )}
+                           {!editingBedrock && (
                            <button
                               onClick={() => setEditTab("resource-pack")}
                               className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "resource-pack" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
@@ -4188,6 +4271,7 @@ export default function App() {
                               <Layers className="w-4 h-4" />
                               Resource Packs
                            </button>
+                           )}
                            <button
                               onClick={() => setEditTab("config")}
                               className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "config" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
@@ -4195,6 +4279,7 @@ export default function App() {
                               <Settings className="w-4 h-4" />
                               Configuration
                            </button>
+                           {!editingBedrock && (
                            <button
                               onClick={() => {
                                  setEditTab("users");
@@ -4206,6 +4291,7 @@ export default function App() {
                               <Users className="w-4 h-4" />
                               User Management
                            </button>
+                           )}
                         </div>
 
                         <div className="mt-auto pt-4 flex flex-col gap-2">
@@ -4913,7 +4999,11 @@ export default function App() {
                                     <h3 className="text-xl font-bold mb-2 flex items-center gap-2">
                                        <Database className="text-[#3E8ED0]" /> Minecraft Version
                                     </h3>
-                                    <p className="text-neutral-400 text-sm mb-6">Select the base version of Minecraft for this instance. This will pull the appropriate server JAR.</p>
+                                    <p className="text-neutral-400 text-sm mb-6">
+                                       {editingBedrock
+                                          ? "Choose which Bedrock Dedicated Server release to run, or type an exact version like 1.21.50.07 to pin it."
+                                          : "Select the base version of Minecraft for this instance. This will pull the appropriate server JAR."}
+                                    </p>
                                  </div>
 
                                  <div className="space-y-4">
@@ -4931,6 +5021,12 @@ export default function App() {
                                        />
                                     </div>
 
+                                    {editingBedrock ? (
+                                       <BedrockVersionOptions
+                                          value={config.environment["VERSION"] || "LATEST"}
+                                          onChange={(v) => setConfig(prev => ({ ...prev, environment: { ...prev.environment, VERSION: v } }))}
+                                       />
+                                    ) : (<>
                                     <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg overflow-hidden h-72 flex flex-col">
                                        <div className="p-3 bg-[#2D2D2D] border-b border-[#3A3A3A] flex justify-between items-center">
                                           <span className="text-xs font-bold text-neutral-400 uppercase tracking-widest">Available Versions</span>
@@ -4956,6 +5052,7 @@ export default function App() {
                                        </div>
                                     </div>
                                     <p className="text-xs text-neutral-500 mt-2">Showing the 50 most recent versions from Mojang manifest.</p>
+                                    </>)}
                                  </div>
                               </div>
                            </div>
@@ -4984,10 +5081,12 @@ export default function App() {
                                     ].map((l) => (
                                        <div
                                           key={l.id}
-                                          onClick={() => setConfig(prev => ({
-                                             ...prev,
-                                             environment: { ...prev.environment, TYPE: l.id }
-                                          }))}
+                                          onClick={() => setConfig(prev => {
+                                             const environment: Record<string, string> = { ...prev.environment, TYPE: l.id };
+                                             // Geyser can't run on every server type
+                                             if (environment[CROSSPLAY_ENV] === "true" && !supportsCrossplay(l.id)) environment[CROSSPLAY_ENV] = "false";
+                                             return { ...prev, environment };
+                                          })}
                                           className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${config.environment["TYPE"] === l.id ? 'border-[#3E8ED0] bg-[#3E8ED0]/10' : 'border-[#333] hover:border-[#444] bg-[#222]'}`}
                                        >
                                           <div className="flex items-center gap-3 mb-2">
@@ -4998,6 +5097,11 @@ export default function App() {
                                        </div>
                                     ))}
                                  </div>
+
+                                 <CrossplayCard
+                                    environment={config.environment}
+                                    onChange={(environment) => setConfig(prev => ({ ...prev, environment }))}
+                                 />
 
                                  {config.environment["TYPE"] !== "VANILLA" && (
                                     <>
@@ -5091,10 +5195,10 @@ export default function App() {
                                        <div className="relative group">
                                           <input
                                              type="text"
-                                             value={config.environment["SEED"] || ""}
+                                             value={config.environment[worldEnv.seed] || ""}
                                              onChange={(e) => setConfig(prev => ({
                                                 ...prev,
-                                                environment: { ...prev.environment, SEED: e.target.value }
+                                                environment: { ...prev.environment, [worldEnv.seed]: e.target.value }
                                              }))}
                                              placeholder="Random Seed"
                                              className="w-full bg-[#0F0F0F] border border-[#333] p-4 rounded-xl focus:outline-none focus:border-[#3E8ED0] text-sm font-mono text-white transition-all group-hover:border-[#444]"
@@ -5114,11 +5218,17 @@ export default function App() {
                                              }))}
                                              className="w-full bg-[#0F0F0F] border border-[#333] p-4 rounded-xl focus:outline-none focus:border-[#3E8ED0] text-sm text-neutral-300 appearance-none transition-all hover:border-[#444]"
                                           >
-                                             <option value="DEFAULT">Default</option>
-                                             <option value="FLAT">Flat</option>
-                                             <option value="LARGEBIOMES">Large Biomes</option>
-                                             <option value="AMPLIFIED">Amplified</option>
-                                             <option value="BUFFET">Buffet</option>
+                                             {editingBedrock ? (
+                                                BEDROCK_LEVEL_TYPES.map(t => <option key={t.id} value={t.id}>{t.name}</option>)
+                                             ) : (
+                                                <>
+                                                   <option value="DEFAULT">Default</option>
+                                                   <option value="FLAT">Flat</option>
+                                                   <option value="LARGEBIOMES">Large Biomes</option>
+                                                   <option value="AMPLIFIED">Amplified</option>
+                                                   <option value="BUFFET">Buffet</option>
+                                                </>
+                                             )}
                                           </select>
                                        </div>
                                        <div className="space-y-3">
@@ -5143,19 +5253,20 @@ export default function App() {
                                        <div className="space-y-3">
                                           <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">Game Mode</label>
                                           <select
-                                             value={config.environment["MODE"] || "survival"}
+                                             value={config.environment[worldEnv.mode] || "survival"}
                                              onChange={(e) => setConfig(prev => ({
                                                 ...prev,
-                                                environment: { ...prev.environment, MODE: e.target.value }
+                                                environment: { ...prev.environment, [worldEnv.mode]: e.target.value }
                                              }))}
                                              className="w-full bg-[#0F0F0F] border border-[#333] p-4 rounded-xl focus:outline-none focus:border-[#3E8ED0] text-sm text-neutral-300 appearance-none transition-all hover:border-[#444]"
                                           >
                                              <option value="survival">Survival</option>
                                              <option value="creative">Creative</option>
                                              <option value="adventure">Adventure</option>
-                                             <option value="spectator">Spectator</option>
+                                             {!editingBedrock && <option value="spectator">Spectator</option>}
                                           </select>
                                        </div>
+                                       {!editingBedrock && (
                                        <div className="space-y-3">
                                           <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest pl-1">Structures</label>
                                           <button
@@ -5169,6 +5280,7 @@ export default function App() {
                                              {config.environment["GENERATE_STRUCTURES"] !== "false" ? <Check className="w-5 h-5" /> : <X className="w-5 h-5" />}
                                           </button>
                                        </div>
+                                       )}
                                     </div>
                                  </div>
 
@@ -6801,6 +6913,21 @@ export default function App() {
                                           {copiedId === 'statusBar' ? 'COPIED!' : address}
                                        </span>
                                        <Copy className={`w-3 h-3 ${copiedId === 'statusBar' ? 'text-emerald-400' : 'text-neutral-500 group-hover:text-[#3E8ED0]'}`} />
+                                    </button>
+                                 )}
+
+                                 {/* Bedrock players' address when cross-play is on */}
+                                 {status?.public_ip && status.bedrock_port && !isBedrockType(status.type) && (
+                                    <button
+                                       onClick={() => copyToClipboard(`${status.public_ip}:${status.bedrock_port}`, 'statusBarBedrock')}
+                                       className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#242424] hover:bg-[#2A2A2A] border border-[#333] hover:border-[#444] text-[11px] font-mono transition group"
+                                       title="Bedrock players join with this address and port (UDP)"
+                                    >
+                                       <span className="text-neutral-500 font-bold text-[10px]">BEDROCK:</span>
+                                       <span className={copiedId === 'statusBarBedrock' ? 'text-emerald-400 font-bold' : 'text-neutral-300'}>
+                                          {copiedId === 'statusBarBedrock' ? 'COPIED!' : `${status.public_ip}:${status.bedrock_port}`}
+                                       </span>
+                                       <Copy className={`w-3 h-3 ${copiedId === 'statusBarBedrock' ? 'text-emerald-400' : 'text-neutral-500 group-hover:text-[#3E8ED0]'}`} />
                                     </button>
                                  )}
                               </div>

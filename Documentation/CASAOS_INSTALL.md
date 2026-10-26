@@ -35,6 +35,8 @@ services:
     ports:
       - "8000:8000"
       - "25565-25585:25565-25585"
+      # Bedrock servers and Java cross-play (Geyser) use UDP
+      - "19132-19152:19132-19152/udp"
     volumes:
       - /DATA/AppData/isopod/servers:/servers
       - /DATA/AppData/isopod/docker:/var/lib/docker
@@ -74,6 +76,7 @@ If you prefer to fill out the form manually, ensure these settings are correct:
 - **Privileged Mode**: `Enabled` (Required for internal Docker-in-Docker isolation)
 - **Web UI Port**: `8000` (Host `8000` -> Container `8000`)
 - **Game Server Ports**: Host `25565-25585` -> Container `25565-25585` (Allows up to 21 concurrent server instances)
+- **Bedrock Ports (UDP)**: Host `19132-19152` -> Container `19132-19152`, protocol UDP (Bedrock servers and Java servers with Bedrock cross-play)
 - **Volumes**:
     - `/DATA/AppData/isopod/servers` -> `/servers` (Stores your Minecraft servers and world data)
     - `/DATA/AppData/isopod/docker` -> `/var/lib/docker` (Persists downloaded server images and caches)

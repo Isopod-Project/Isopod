@@ -1,7 +1,7 @@
 """Scheduled and on-demand world backups for Isopod instances.
 
 Backups are zip files of an instance's world folders (any folder under data/ that
-contains a level.dat), stored in <instance>/backups/, or in <root>/<instance id>/ when a
+contains a level.dat, or data/worlds/ on Bedrock), stored in <instance>/backups/, or in <root>/<instance id>/ when a
 backup folder is set in the global settings. Per-instance schedule settings live in
 isopod-meta.json under the "backups" key.
 
@@ -19,6 +19,8 @@ import time
 import zipfile
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
+
+from . import bedrock
 
 BACKUPS_DIR_NAME = "backups"
 ARCHIVE_NAME_RE = re.compile(r"^(backup|snapshot)-\d{8}-\d{6}(-\d+)?\.zip$")
@@ -79,20 +81,24 @@ def backup_file_path(instance_path: str, name: str) -> str:
     """Resolve a backup or snapshot file name, rejecting anything that isn't one of ours."""
     if not ARCHIVE_NAME_RE.match(name):
         raise ValueError("Invalid backup name.")
-    path = os.path.join(backups_dir(instance_path), name)
+    folder = os.path.realpath(backups_dir(instance_path))
+    path = os.path.realpath(os.path.join(folder, name))
+    if not path.startswith(folder + os.sep):
+        raise ValueError("Invalid backup name.")
     if not os.path.isfile(path):
         raise FileNotFoundError(name)
     return path
 
 
 def find_world_dirs(instance_path: str) -> List[str]:
-    """Return world folder names under data/ (any folder holding a level.dat)."""
+    """Return world folder names under data/ (any folder holding a level.dat, or Bedrock's worlds/)."""
     data_dir = os.path.join(instance_path, "data")
     if not os.path.isdir(data_dir):
         return []
     return sorted(
-        entry.name for entry in os.scandir(data_dir)
-        if entry.is_dir() and os.path.isfile(os.path.join(entry.path, "level.dat"))
+        [entry.name for entry in os.scandir(data_dir)
+         if entry.is_dir() and os.path.isfile(os.path.join(entry.path, "level.dat"))]
+        + bedrock.find_world_dirs(data_dir)
     )
 
 
@@ -169,6 +175,8 @@ def _write_archive(instance_path: str, zip_path: str, fill: Callable[[zipfile.Zi
     saving_paused = _rcon(instance_path, "save-off")
     if saving_paused:
         _rcon(instance_path, "save-all flush")
+    # Bedrock servers have no RCON; they pause saving through the console instead.
+    bedrock_held = not saving_paused and bedrock.hold_saving(instance_path)
     try:
         with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zipf:
             fill(zipf)
@@ -176,6 +184,8 @@ def _write_archive(instance_path: str, zip_path: str, fill: Callable[[zipfile.Zi
     finally:
         if saving_paused:
             _rcon(instance_path, "save-on")
+        if bedrock_held:
+            bedrock.resume_saving(instance_path)
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
