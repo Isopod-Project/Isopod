@@ -81,7 +81,10 @@ def backup_file_path(instance_path: str, name: str) -> str:
     """Resolve a backup or snapshot file name, rejecting anything that isn't one of ours."""
     if not ARCHIVE_NAME_RE.match(name):
         raise ValueError("Invalid backup name.")
-    path = os.path.join(backups_dir(instance_path), name)
+    folder = os.path.realpath(backups_dir(instance_path))
+    path = os.path.realpath(os.path.join(folder, name))
+    if not path.startswith(folder + os.sep):
+        raise ValueError("Invalid backup name.")
     if not os.path.isfile(path):
         raise FileNotFoundError(name)
     return path

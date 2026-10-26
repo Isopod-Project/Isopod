@@ -200,10 +200,36 @@ def instance_dir(slug: str) -> Optional[str]:
     """The folder for an instance slug inside SERVERS_DIR, or None if the slug would escape it."""
     servers_root = os.path.realpath(SERVERS_DIR)
     path = os.path.realpath(os.path.join(servers_root, slug))
-    # Containment check (also what CodeQL recognizes as a path-injection sanitizer)
-    if not slug or not path.startswith(servers_root + os.sep):
+    # Containment check (also what CodeQL recognizes as a path-injection sanitizer).
+    # An empty slug resolves to SERVERS_DIR itself, which this rejects too.
+    if not path.startswith(servers_root + os.sep):
         return None
     return path
+
+def new_instance_dir(name: str) -> Tuple[str, str]:
+    """A free slug and folder for a new instance called name, adding -1, -2... on collisions."""
+    base_slug = generate_slug(name)
+    slug = base_slug
+    counter = 1
+    while True:
+        path = instance_dir(slug)
+        if path is None:
+            raise HTTPException(status_code=400, detail="Instance name needs at least one letter or number")
+        if not os.path.exists(path):
+            return slug, path
+        slug = f"{base_slug}-{counter}"
+        counter += 1
+
+# An ID, slug, or version number that's safe to put in a URL path: no slashes, no "..".
+URL_SEGMENT_RE = re.compile(r"[A-Za-z0-9_+-]+(?:\.[A-Za-z0-9_+-]+)*")
+
+def url_segment(value: Optional[str], label: str) -> Optional[str]:
+    """value, checked safe to put in a URL path. Empty stays None; anything else is a 400."""
+    if not value:
+        return None
+    if URL_SEGMENT_RE.fullmatch(value):
+        return value
+    raise HTTPException(status_code=400, detail=f"Invalid {label}")
 
 def get_instance_path(instance_id: str) -> str:
     # Basic sanitize
@@ -558,7 +584,8 @@ async def start_instance(instance_id: str):
     if m_ids_str:
         cache_dir = os.path.join(SERVERS_DIR, ".cache", "resource_packs")
         os.makedirs(cache_dir, exist_ok=True)
-        hash_file = os.path.join(cache_dir, f"{instance_id}_key.txt")
+        cache_key = os.path.basename(path)
+        hash_file = os.path.join(cache_dir, f"{cache_key}_key.txt")
         
         # Check cache
         last_key = ""
@@ -580,7 +607,7 @@ async def start_instance(instance_id: str):
                                 downloaded_zips.append(z_path)
 
                     if downloaded_zips:
-                        bundle_path = os.path.join(cache_dir, f"bundle_{instance_id}.zip")
+                        bundle_path = os.path.join(cache_dir, f"bundle_{cache_key}.zip")
                         rp.merge_resource_packs(downloaded_zips, bundle_path)
                         public_url, sha1 = await rp.upload_to_mcpacks(bundle_path)
                         if public_url and sha1:
@@ -1410,7 +1437,7 @@ async def get_mc_versions():
 async def get_loader_versions(loader: str, mc_version: Optional[str] = None, game_version: Optional[str] = None):
     """Fetch available versions for a specific mod loader, optionally filtered by MC version."""
     loader = loader.lower()
-    mc_version = mc_version or game_version
+    mc_version = url_segment(mc_version or game_version, "Minecraft version")
     print(f"DEBUG: Fetching {loader} versions for MC={mc_version}")
     headers = {"User-Agent": "Isopod-Server-Manager/1.0 (https://github.com/Isopod-Project/Isopod)"}
     try:
@@ -1630,6 +1657,7 @@ def is_client_only_mod(filename: str) -> bool:
 
 @app.get("/api/mods/modrinth/{project_id}/versions")
 async def get_modrinth_project_versions(project_id: str):
+    project_id = url_segment(project_id, "project ID")
     url = f"https://api.modrinth.com/v2/project/{project_id}/version"
     try:
         async with httpx.AsyncClient() as client:
@@ -1752,6 +1780,8 @@ def generate_slug(text: str) -> str:
     slug = re.sub(r'[^a-z0-9]+', '-', slug)
     return slug.strip('-')
 
+ICON_URL_RE = re.compile(r"https://(?:cdn\.modrinth\.com|media\.forgecdn\.net)/[A-Za-z0-9._~%/+-]+")
+
 @app.post("/api/instances")
 async def create_instance(req: CreateInstanceRequest):
     slug = generate_slug(req.name)
@@ -1828,12 +1858,14 @@ async def create_instance(req: CreateInstanceRequest):
         try:
             async with httpx.AsyncClient() as client:
                 vdata = None
-                if req.modpack_version:
-                    res = await client.get(f"https://api.modrinth.com/v2/version/{req.modpack_version}")
+                modpack_version = url_segment(req.modpack_version, "modpack version")
+                if modpack_version:
+                    res = await client.get(f"https://api.modrinth.com/v2/version/{modpack_version}")
                     if res.status_code == 200:
                         vdata = res.json()
                 else:
-                    res = await client.get(f"https://api.modrinth.com/v2/project/{req.modrinth_id}/version")
+                    modrinth_id = url_segment(req.modrinth_id, "modpack ID")
+                    res = await client.get(f"https://api.modrinth.com/v2/project/{modrinth_id}/version")
                     if res.status_code == 200:
                         versions = res.json()
                         if versions:
@@ -1927,15 +1959,17 @@ async def create_instance(req: CreateInstanceRequest):
     # Save metadata
     save_instance_meta(path, {"group": req.group or "No group"})
 
-    # Download Icon if provided
-    if req.icon_url:
+    # Download Icon if provided. Only from the mod sites' image CDNs, so a request can't
+    # point the server at an internal address.
+    icon_url = req.icon_url or ""
+    if ICON_URL_RE.fullmatch(icon_url):
         try:
             from PIL import Image
             import io
-            print(f"DEBUG: Attempting to download icon from {req.icon_url}")
+            print(f"DEBUG: Attempting to download icon from {icon_url}")
             # Use headers to avoid being blocked by CDNs
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
-            res = httpx.get(req.icon_url, headers=headers, timeout=15.0, follow_redirects=True)
+            res = httpx.get(icon_url, headers=headers, timeout=15.0, follow_redirects=False)
             if res.status_code == 200:
                 print(f"DEBUG: Got response: {len(res.content)} bytes, Content-Type: {res.headers.get('Content-Type')}")
                 img = Image.open(io.BytesIO(res.content))
@@ -2000,8 +2034,9 @@ def delete_instance(instance_id: str):
 def rename_instance(instance_id: str, req: RenameInstanceRequest):
     old_path = get_instance_path(instance_id)
     new_slug = generate_slug(req.name)
-    new_path = os.path.join(SERVERS_DIR, new_slug)
-    
+    new_path = instance_dir(new_slug)
+    if new_path is None:
+        raise HTTPException(status_code=400, detail="Instance name needs at least one letter or number")
     if os.path.exists(new_path):
         raise HTTPException(status_code=400, detail="Instance with that name already exists")
 
@@ -2010,7 +2045,8 @@ def rename_instance(instance_id: str, req: RenameInstanceRequest):
     try:
         os.rename(old_path, new_path)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Failed to rename instance folder: {e}")
+        raise HTTPException(status_code=500, detail="Couldn't rename the instance folder.")
 
     # Backups kept in a global folder are keyed by instance id, so move them along
     new_backups = backups.backups_dir(new_path)
@@ -2076,20 +2112,14 @@ def duplicate_instance(instance_id: str, req: DuplicateInstanceRequest):
     original_display_name = instance_id.replace('-', ' ').title()
     new_display_name = req.name or f"Copy of {original_display_name}"
     
-    new_slug = generate_slug(new_display_name)
-    base_slug = new_slug
-    counter = 1
-    while os.path.exists(os.path.join(SERVERS_DIR, new_slug)):
-        new_slug = f"{base_slug}-{counter}"
-        counter += 1
-        
-    new_path = os.path.join(SERVERS_DIR, new_slug)
+    new_slug, new_path = new_instance_dir(new_display_name)
     
     # Clone the entire directory
     try:
         shutil.copytree(old_path, new_path, ignore=shutil.ignore_patterns(backups.BACKUPS_DIR_NAME))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to copy directory: {str(e)}")
+        print(f"Failed to copy instance folder: {e}")
+        raise HTTPException(status_code=500, detail="Couldn't copy the instance folder.")
         
     # Update docker-compose.yml to avoid conflicts
     compose_path = os.path.join(new_path, "docker-compose.yml")
@@ -2237,16 +2267,7 @@ async def import_instance(
         
     # Generate a unique slug for the new instance
     base_name = name if name else file.filename.rsplit('.', 1)[0]
-    new_slug = generate_slug(base_name)
-    
-    # Avoid collisions
-    base_slug = new_slug
-    counter = 1
-    while os.path.exists(os.path.join(SERVERS_DIR, new_slug)):
-        new_slug = f"{base_slug}-{counter}"
-        counter += 1
-        
-    target_path = os.path.join(SERVERS_DIR, new_slug)
+    new_slug, target_path = new_instance_dir(base_name)
     os.makedirs(target_path, exist_ok=True)
     
     # Save the file temporarily
@@ -2268,13 +2289,15 @@ async def import_instance(
 
         temp_extract_dir = os.path.join(target_path, "temp_extract")
         os.makedirs(temp_extract_dir, exist_ok=True)
+        extract_root = os.path.realpath(temp_extract_dir)
         
         with zipfile.ZipFile(tmp_path, 'r') as zipf:
             for member in zipf.infolist():
-                filename_normalized = member.filename.replace('\\', '/')
-                if filename_normalized.startswith('/') or '..' in filename_normalized:
+                filename_normalized = member.filename.replace('\\', '/').lstrip('/')
+                target_file = os.path.realpath(os.path.join(extract_root, filename_normalized))
+                # Skip entries that would land outside the extract folder (zip slip)
+                if not target_file.startswith(extract_root + os.sep):
                     continue
-                target_file = os.path.join(temp_extract_dir, filename_normalized)
                 if member.is_dir():
                     os.makedirs(target_file, exist_ok=True)
                 else:
@@ -2455,7 +2478,8 @@ def get_instance_logs(instance_id: str, tail: int = 200):
         )
         return {"logs": result.stdout + result.stderr}
     except Exception as e:
-        return {"logs": f"Error fetching logs: {str(e)}"}
+        print(f"Failed to fetch logs for {instance_id}: {e}")
+        return {"logs": "Couldn't fetch the server logs."}
 
 @app.post("/api/instances/{instance_id}/command")
 def execute_command(instance_id: str, req: CommandRequest):
@@ -2476,7 +2500,8 @@ def execute_command(instance_id: str, req: CommandRequest):
             "success": result.returncode == 0
         }
     except Exception as e:
-        return {"output": f"Execution error: {str(e)}", "success": False}
+        print(f"Failed to run command on {instance_id}: {e}")
+        return {"output": "Couldn't run the command on the server.", "success": False}
 
 class PlayerActionRequest(BaseModel):
     action: str
@@ -2822,6 +2847,7 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = "", modrinth_m
         # If modrinth_modpack is specified, fetch its dependencies (constituent mods)
         if modrinth_modpack:
             try:
+                modrinth_modpack = url_segment(modrinth_modpack, "modpack ID")
                 res = await client.get(f"https://api.modrinth.com/v2/project/{modrinth_modpack}/version")
                 if res.status_code == 200:
                     versions = res.json()
@@ -2897,6 +2923,7 @@ async def check_mod_compatibility(req: Dict[str, Any]):
             try:
                 loaders_param = json.dumps(PLUGIN_SERVER_LOADERS.get(target_loader, [target_loader.lower()]))
                 versions_param = json.dumps([target_mc])
+                mid = url_segment(str(mid), "mod ID")
                 url = f"https://api.modrinth.com/v2/project/{mid}/version"
                 res = await client.get(url, params={"loaders": loaders_param, "game_versions": versions_param})
                 
@@ -2915,6 +2942,7 @@ async def get_mod_dependencies(provider: str, project_id: str):
     if provider == "modrinth":
         try:
             async with httpx.AsyncClient() as client:
+                project_id = url_segment(project_id, "project ID")
                 res = await client.get(f"https://api.modrinth.com/v2/project/{project_id}/version")
                 if res.status_code == 200:
                     versions = res.json()
@@ -3071,11 +3099,13 @@ def parse_mod_jar_metadata(jar_path: str) -> dict:
 
     import re
     if not meta["name"]:
-        m = re.match(r"^([A-Za-z0-9_\s\+\-]+?)[-_]([vV]?\d+.*)$", clean_name)
-        if m:
-            meta["name"] = m.group(1).replace("-", " ").replace("_", " ").title()
+        # "Some-Mod_1.2.3" -> name "Some Mod", version "1.2.3": split at the first - or _ before a version
+        split = re.search(r"[-_](?=[vV]?\d)", clean_name[1:])
+        prefix = clean_name[:split.start() + 1] if split else ""
+        if prefix and re.fullmatch(r"[A-Za-z0-9_\s+-]+", prefix):
+            meta["name"] = prefix.replace("-", " ").replace("_", " ").title()
             if not meta["version"]:
-                meta["version"] = m.group(2)
+                meta["version"] = clean_name[len(prefix) + 1:]
         else:
             meta["name"] = clean_name.replace("-", " ").replace("_", " ").title()
     else:
@@ -3284,6 +3314,15 @@ def set_modpack_mod_excluded(instance_id: str, filename: Optional[str], excluded
     return True
 
 
+def mod_file_path(mods_dir: str, filename: str) -> Optional[str]:
+    """The path of a file directly inside mods_dir, or None if filename points anywhere else."""
+    root = os.path.realpath(mods_dir)
+    path = os.path.realpath(os.path.join(root, filename))
+    if not path.startswith(root + os.sep) or os.path.dirname(path) != root:
+        return None
+    return path
+
+
 class ToggleModRequest(BaseModel):
     filename: Optional[str] = None
     mod_id: Optional[str] = None
@@ -3300,8 +3339,8 @@ def toggle_instance_mod(instance_id: str, req: ToggleModRequest):
 
     # Check disk file
     if req.filename:
-        full_path = os.path.join(mods_dir, req.filename)
-        if os.path.exists(full_path):
+        full_path = mod_file_path(mods_dir, req.filename)
+        if full_path and os.path.exists(full_path):
             target_file = full_path
 
     # If filename didn't match directly, try by mod_id or stem
@@ -3425,8 +3464,8 @@ def delete_instance_mod(instance_id: str, req: DeleteModRequest):
     # Check file
     if req.filename:
         for fname in [req.filename, req.filename + ".disabled", req.filename.replace(".disabled", "")]:
-            p = os.path.join(mods_dir, fname)
-            if os.path.exists(p) and os.path.isfile(p):
+            p = mod_file_path(mods_dir, fname)
+            if p and os.path.isfile(p):
                 os.remove(p)
                 deleted = True
                 break
@@ -3769,10 +3808,12 @@ class FileDeleteRequest(BaseModel):
     paths: List[str]
 
 def get_safe_target_path(base_path: str, rel_path: str) -> str:
-    base = os.path.abspath(base_path)
+    base = os.path.realpath(base_path)
     clean_rel = rel_path.lstrip("/\\")
-    target = os.path.abspath(os.path.join(base, clean_rel))
-    if not target.startswith(base):
+    target = os.path.realpath(os.path.join(base, clean_rel))
+    if target == base:
+        return base
+    if not target.startswith(base + os.sep):
         raise HTTPException(status_code=403, detail="Access denied: Path traversal detected")
     return target
 
@@ -3830,7 +3871,7 @@ def core_move_files(base_path: str, req: FileMoveCopyRequest):
         conflicts = [
             os.path.basename(p.rstrip("/\\"))
             for p in req.source_paths
-            if os.path.exists(os.path.join(dst_dir, os.path.basename(p.rstrip("/\\"))))
+            if os.path.exists(get_safe_target_path(dst_dir, os.path.basename(p.rstrip("/\\"))))
         ]
         if conflicts:
             raise HTTPException(status_code=409, detail=f"Conflicts detected: {', '.join(conflicts)}")
@@ -3867,7 +3908,7 @@ def core_copy_files(base_path: str, req: FileMoveCopyRequest):
         conflicts = [
             os.path.basename(p.rstrip("/\\"))
             for p in req.source_paths
-            if os.path.exists(os.path.join(dst_dir, os.path.basename(p.rstrip("/\\"))))
+            if os.path.exists(get_safe_target_path(dst_dir, os.path.basename(p.rstrip("/\\"))))
         ]
         if conflicts:
             raise HTTPException(status_code=409, detail=f"Conflicts detected: {', '.join(conflicts)}")
