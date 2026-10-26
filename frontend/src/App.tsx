@@ -9,7 +9,7 @@ import { BannedBadge, BannedPlayers, OnlineBadge, OnlinePlayers, PlayerCount, Pl
 import { useBans } from "./components/usePlayerActions";
 import { BedrockVersionOptions, CrossplayCard } from "./components/Bedrock";
 import { BEDROCK_DEFAULT_PORT, BEDROCK_GAMEMODES, BEDROCK_LEVEL_TYPES, BEDROCK_NO_BAN_NOTE, BEDROCK_OPS_NOTE, BEDROCK_SERVER_NOTE, CROSSPLAY_ENV, isBedrockType, supportsCrossplay } from "./lib/bedrock";
-import { formatBytes } from "./lib/utils";
+import { fallbackAvatarUrl, formatBytes, playerAvatarUrl } from "./lib/utils";
 
 interface Instance {
    id: string;
@@ -379,10 +379,6 @@ export default function App() {
    const [isUserSearchVerifying, setIsUserSearchVerifying] = useState(false);
    const [isUserSearchFocused, setIsUserSearchFocused] = useState(false);
 
-   const getPlayerAvatarUrl = (identifier: string, size = 32) => {
-      if (!identifier) return `https://mc-heads.net/avatar/steve/${size}`;
-      return `https://mc-heads.net/avatar/${identifier}/${size}`;
-   };
 
    // Autocomplete suggestions for User Management (2-3 gamertags)
    const userSearchSuggestions = useMemo<{ name: string; uuid?: string }[]>(() => {
@@ -4061,11 +4057,11 @@ export default function App() {
                                                       className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#141414] border border-[#3A3A3A] text-xs font-mono text-neutral-200"
                                                    >
                                                       <img
-                                                         src={getPlayerAvatarUrl(u, 24)}
+                                                         src={playerAvatarUrl(u, 24)}
                                                          alt=""
                                                          className="w-4 h-4 rounded-sm"
                                                          onError={(e) => {
-                                                            e.currentTarget.src = `https://crafthead.net/avatar/${u}/24`;
+                                                            e.currentTarget.src = fallbackAvatarUrl(u, 24);
                                                          }}
                                                       />
                                                       <span>{u}</span>
@@ -4680,12 +4676,12 @@ export default function App() {
                                              <div className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-[#1A1A1A] border border-[#333] flex items-center justify-center overflow-hidden">
                                                 {userSearchPreview ? (
                                                    <img
-                                                      src={getPlayerAvatarUrl(userSearchPreview.uuid || userSearchPreview.name, 32)}
+                                                      src={playerAvatarUrl(userSearchPreview.uuid || userSearchPreview.name, 32)}
                                                       referrerPolicy="no-referrer"
                                                       alt=""
                                                       className="w-full h-full"
                                                       onError={(e) => {
-                                                         e.currentTarget.src = `https://crafthead.net/avatar/${userSearchPreview.name}/32`;
+                                                         e.currentTarget.src = fallbackAvatarUrl(userSearchPreview.name, 32);
                                                       }}
                                                    />
                                                 ) : (
@@ -4768,11 +4764,11 @@ export default function App() {
                                                             className="flex items-center gap-3.5 px-4 py-3 hover:bg-[#2A2A2A] cursor-pointer transition-colors group"
                                                          >
                                                             <img
-                                                               src={getPlayerAvatarUrl(sug.uuid || sug.name, 32)}
+                                                               src={playerAvatarUrl(sug.uuid || sug.name, 32)}
                                                                alt=""
                                                                className="w-7 h-7 rounded-md border border-[#444] shadow-sm shrink-0 bg-[#141414]"
                                                                onError={(e) => {
-                                                                  e.currentTarget.src = `https://crafthead.net/avatar/${sug.name}/32`;
+                                                                  e.currentTarget.src = fallbackAvatarUrl(sug.name, 32);
                                                                }}
                                                             />
                                                             <div className="flex flex-col min-w-0">
@@ -4866,11 +4862,11 @@ export default function App() {
                                                             </div>
                                                          ) : (
                                                             <img
-                                                               src={getPlayerAvatarUrl(user.uuid || user.name, 32)}
+                                                               src={playerAvatarUrl(user.uuid || user.name, 32)}
                                                                alt=""
                                                                className="w-7 h-7 rounded bg-[#141414] border border-[#333]"
                                                                onError={(e) => {
-                                                                  e.currentTarget.src = `https://crafthead.net/avatar/${user.name}/32`;
+                                                                  e.currentTarget.src = fallbackAvatarUrl(user.name, 32);
                                                                }}
                                                             />
                                                          )}
@@ -7373,12 +7369,12 @@ export default function App() {
                                                 <div className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-sm bg-[#1A1A1A] border border-[#333] flex items-center justify-center overflow-hidden">
                                                    {whitelistPreview ? (
                                                       <img
-                                                         src={getPlayerAvatarUrl(whitelistPreview.uuid || whitelistPreview.name, 32)}
+                                                         src={playerAvatarUrl(whitelistPreview.uuid || whitelistPreview.name, 32)}
                                                          referrerPolicy="no-referrer"
                                                          alt=""
                                                          className="w-full h-full"
                                                          onError={(e) => {
-                                                            e.currentTarget.src = `https://crafthead.net/avatar/${newWhitelistUser}/32`;
+                                                            e.currentTarget.src = fallbackAvatarUrl(newWhitelistUser, 32);
                                                          }}
                                                       />
                                                    ) : (
@@ -7422,7 +7418,7 @@ export default function App() {
                                                             }}
                                                             className="flex items-center gap-3 px-4 py-2.5 hover:bg-[#333] cursor-pointer border-b border-[#282828] last:border-0 group"
                                                          >
-                                                            <img src={getPlayerAvatarUrl(p.uuid || p.name, 16)} alt="" className="w-4 h-4 rounded-sm" onError={(e) => { e.currentTarget.src = `https://crafthead.net/avatar/${p.name}/16`; }} />
+                                                            <img src={playerAvatarUrl(p.uuid || p.name, 16)} alt="" className="w-4 h-4 rounded-sm" onError={(e) => { e.currentTarget.src = fallbackAvatarUrl(p.name, 16); }} />
                                                             <span className="text-sm font-medium text-neutral-300 group-hover:text-white">{p.name}</span>
                                                             <span className="text-[10px] text-neutral-600 font-mono ml-auto">RECENT</span>
                                                          </div>
@@ -7453,7 +7449,7 @@ export default function App() {
                                              ) : (
                                                 globalSettings.defaultWhitelistUsers.map(user => (
                                                    <div key={user} className="flex items-center gap-2 px-2.5 py-1 bg-[#242424] border border-[#333] rounded-md text-xs group hover:border-amber-500/30 transition-colors">
-                                                      <img src={getPlayerAvatarUrl(user, 16)} alt="" className="w-3 h-3 rounded-sm" onError={(e) => { e.currentTarget.src = `https://crafthead.net/avatar/${user}/16`; }} />
+                                                      <img src={playerAvatarUrl(user, 16)} alt="" className="w-3 h-3 rounded-sm" onError={(e) => { e.currentTarget.src = fallbackAvatarUrl(user, 16); }} />
                                                       <span className="text-neutral-300 font-medium">{user}</span>
                                                       <button
                                                          onClick={() => {
