@@ -217,8 +217,11 @@ def send_command(instance_path: str, command: str, timeout: int = 10) -> Tuple[b
             ["docker", "compose", "exec", "-T", "mc", "send-command", command],
             cwd=instance_path, capture_output=True, text=True, timeout=timeout,
         )
+    except subprocess.TimeoutExpired:
+        return False, "The server didn't accept the command in time."
     except Exception as e:
-        return False, str(e)
+        print(f"Bedrock send-command failed: {e}")
+        return False, "Couldn't send the command to the server."
     return result.returncode == 0, (result.stdout + result.stderr).strip()
 
 

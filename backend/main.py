@@ -199,7 +199,11 @@ class Instance(BaseModel):
 def get_instance_path(instance_id: str) -> str:
     # Basic sanitize
     safe_id = "".join(c for c in instance_id if c.isalnum() or c in ('-', '_'))
-    path = os.path.join(SERVERS_DIR, safe_id)
+    servers_root = os.path.realpath(SERVERS_DIR)
+    path = os.path.realpath(os.path.join(servers_root, safe_id))
+    # Containment check (also what CodeQL recognizes as a path-injection sanitizer)
+    if not safe_id or not path.startswith(servers_root + os.sep):
+        raise HTTPException(status_code=404, detail="Instance not found")
     if not os.path.exists(path) or not os.path.isdir(path):
         raise HTTPException(status_code=404, detail="Instance not found")
     return path
