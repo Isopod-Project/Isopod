@@ -21,3 +21,7 @@ export const isBedrockType = (type?: string) => (type || "").toUpperCase() === B
 export const supportsCrossplay = (type?: string) => CROSSPLAY_SERVER_TYPES.includes((type || "").toUpperCase());
 
 export const BEDROCK_SERVER_NOTE = "Bedrock Dedicated Server is Mojang's server for Minecraft on Windows, phones, tablets, and consoles. It can't run Java mods or plugins. Players join over UDP, so forward the port as UDP on your router.";
+
+export const BEDROCK_OPS_NOTE = "Players added or removed here change on the running server straight away. Making someone an operator takes effect right away only if they're online; otherwise it applies the next time the server starts.";
+
+export const BEDROCK_NO_BAN_NOTE = "Bedrock Dedicated Server has no ban command, so there's no Banned Players list. To keep someone out, turn the allowlist on and remove them from it.";

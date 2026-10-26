@@ -8,8 +8,8 @@ import { ResourceTotals, InstanceResources, type ResourceUsage } from "./compone
 import { BannedBadge, BannedPlayers, OnlineBadge, OnlinePlayers, PlayerCount, PlayerRowActions, type PlayerList } from "./components/OnlinePlayers";
 import { useBans } from "./components/usePlayerActions";
 import { BedrockVersionOptions, CrossplayCard } from "./components/Bedrock";
-import { BEDROCK_DEFAULT_PORT, BEDROCK_GAMEMODES, BEDROCK_LEVEL_TYPES, BEDROCK_SERVER_NOTE, CROSSPLAY_ENV, isBedrockType, supportsCrossplay } from "./lib/bedrock";
-import { formatBytes } from "./lib/utils";
+import { BEDROCK_DEFAULT_PORT, BEDROCK_GAMEMODES, BEDROCK_LEVEL_TYPES, BEDROCK_NO_BAN_NOTE, BEDROCK_OPS_NOTE, BEDROCK_SERVER_NOTE, CROSSPLAY_ENV, isBedrockType, supportsCrossplay } from "./lib/bedrock";
+import { fallbackAvatarUrl, formatBytes, playerAvatarUrl } from "./lib/utils";
 
 interface Instance {
    id: string;
@@ -55,7 +55,7 @@ const LOADER_VERSION_ENV: Record<string, string> = {
 const PLUGIN_SERVER_TYPES = ["PAPER", "PURPUR", "FOLIA"];
 
 // Edit window tabs that only apply to Java servers
-const BEDROCK_HIDDEN_TABS = ["loader", "mods", "resource-pack", "users"];
+const BEDROCK_HIDDEN_TABS = ["loader", "mods", "resource-pack"];
 
 const FOLIA_WARNING = "Folia runs each region of the world on its own thread and is meant for large servers on machines with many CPU cores. Most Paper plugins don't work on it: only install plugins marked as Folia-compatible. All Folia builds are experimental.";
 
@@ -368,6 +368,8 @@ export default function App() {
       is_op: boolean;
       whitelisted: boolean;
       active?: boolean;
+      // Bedrock only: the Xbox user ID operators are stored by
+      xuid?: string | null;
    }
    const [instanceUsers, setInstanceUsers] = useState<InstanceUser[]>([]);
    const [isUsersLoading, setIsUsersLoading] = useState(false);
@@ -377,10 +379,6 @@ export default function App() {
    const [isUserSearchVerifying, setIsUserSearchVerifying] = useState(false);
    const [isUserSearchFocused, setIsUserSearchFocused] = useState(false);
 
-   const getPlayerAvatarUrl = (identifier: string, size = 32) => {
-      if (!identifier) return `https://mc-heads.net/avatar/steve/${size}`;
-      return `https://mc-heads.net/avatar/${identifier}/${size}`;
-   };
 
    // Autocomplete suggestions for User Management (2-3 gamertags)
    const userSearchSuggestions = useMemo<{ name: string; uuid?: string }[]>(() => {
@@ -1034,7 +1032,8 @@ export default function App() {
             setUsersWhitelistOn(whitelistOn);
             setSavedUsers({ users: usersList, whitelistOn });
             if (wlHeader !== null) {
-               applySavedEnv(env => ({ ...env, ENABLE_WHITELIST: whitelistOn ? "true" : "false" }));
+               // Bedrock's allowlist lives in ALLOW_LIST, which the save response carries
+               applySavedEnv(env => isBedrockType(env.TYPE) ? env : { ...env, ENABLE_WHITELIST: whitelistOn ? "true" : "false" });
             }
          }
       } catch (e) {
@@ -1057,11 +1056,14 @@ export default function App() {
             })
          });
          if (res.ok) {
+            const data = await res.json().catch(() => ({}));
             setSavedUsers({ users: instanceUsers, whitelistOn: isWlOn });
-            applySavedEnv(env => ({ ...env, ENABLE_WHITELIST: isWlOn ? "true" : "false" }));
-            await showAlert("User management and whitelist saved successfully.", "Success");
+            // Bedrock saves return the ALLOW_LIST, ALLOW_LIST_USERS and OPS they wrote
+            applySavedEnv(env => data.environment ? { ...env, ...data.environment } : { ...env, ENABLE_WHITELIST: isWlOn ? "true" : "false" });
+            await showAlert(isBedrockType(config.environment?.["TYPE"]) ? "Allowlist and operators saved." : "User management and whitelist saved successfully.", "Success");
          } else {
-            throw new Error("Failed to save user configuration");
+            const data = await res.json().catch(() => null);
+            throw new Error(data?.detail || "Failed to save user configuration");
          }
       } catch (e: any) {
          await showAlert("Error saving users: " + e.message, "Save Failed");
@@ -1070,10 +1072,12 @@ export default function App() {
       }
    };
 
-   // Verify Minecraft User for User Management Tab
+   // Verify Minecraft User for User Management Tab. playerdb's lookup is for Java accounts;
+   // a Bedrock gamertag is used as typed.
+   const lookupJavaUsers = !isBedrockType(config.environment?.["TYPE"]);
    useEffect(() => {
       const timer = setTimeout(async () => {
-         if (userSearchText.length >= 3) {
+         if (userSearchText.length >= 3 && lookupJavaUsers) {
             setIsUserSearchVerifying(true);
             try {
                const res = await fetch(`https://playerdb.co/api/player/minecraft/${userSearchText}`);
@@ -1102,7 +1106,7 @@ export default function App() {
          }
       }, 500);
       return () => clearTimeout(timer);
-   }, [userSearchText]);
+   }, [userSearchText, lookupJavaUsers]);
 
    const fetchMcVersions = async () => {
       setIsVersionsLoading(true);
@@ -4053,11 +4057,11 @@ export default function App() {
                                                       className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#141414] border border-[#3A3A3A] text-xs font-mono text-neutral-200"
                                                    >
                                                       <img
-                                                         src={getPlayerAvatarUrl(u, 24)}
+                                                         src={playerAvatarUrl(u, 24)}
                                                          alt=""
                                                          className="w-4 h-4 rounded-sm"
                                                          onError={(e) => {
-                                                            e.currentTarget.src = `https://crafthead.net/avatar/${u}/24`;
+                                                            e.currentTarget.src = fallbackAvatarUrl(u, 24);
                                                          }}
                                                       />
                                                       <span>{u}</span>
@@ -4279,19 +4283,17 @@ export default function App() {
                               <Settings className="w-4 h-4" />
                               Configuration
                            </button>
-                           {!editingBedrock && (
                            <button
                               onClick={() => {
                                  setEditTab("users");
                                  fetchInstanceUsers(selectedInstance?.id || "");
-                                 banList.refresh();
+                                 if (!editingBedrock) banList.refresh();
                               }}
                               className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "users" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
                            >
                               <Users className="w-4 h-4" />
                               User Management
                            </button>
-                           )}
                         </div>
 
                         <div className="mt-auto pt-4 flex flex-col gap-2">
@@ -4610,7 +4612,7 @@ export default function App() {
                                        </div>
                                        <div>
                                           <h3 className="text-xl font-bold tracking-tight">User Management</h3>
-                                          <p className="text-xs text-neutral-400">Manage player access, whitelist gating, and operator permissions.</p>
+                                          <p className="text-xs text-neutral-400">{editingBedrock ? "Manage the allowlist and operators by Xbox gamertag." : "Manage player access, whitelist gating, and operator permissions."}</p>
                                        </div>
                                     </div>
 
@@ -4619,14 +4621,14 @@ export default function App() {
                                        <div className="flex items-center gap-2">
                                           <Shield className={`w-4 h-4 transition-colors ${usersWhitelistOn ? 'text-amber-400' : 'text-neutral-500'}`} />
                                           <div className="flex flex-col">
-                                             <span className="text-xs font-bold text-neutral-200 uppercase tracking-wider">Whitelist</span>
+                                             <span className="text-xs font-bold text-neutral-200 uppercase tracking-wider">{editingBedrock ? "Allowlist" : "Whitelist"}</span>
                                              <span className="text-[10px] text-neutral-500 font-medium">Access Restriction</span>
                                           </div>
                                        </div>
                                        <button
                                           type="button"
                                           onClick={() => setUsersWhitelistOn(on => !on)}
-                                          aria-label="Toggle Whitelist"
+                                          aria-label={editingBedrock ? "Toggle Allowlist" : "Toggle Whitelist"}
                                           className={`w-12 h-6 rounded-full transition-all relative outline-none focus:ring-2 focus:ring-[#3E8ED0]/40 ${usersWhitelistOn ? 'bg-amber-500 shadow-md shadow-amber-500/25' : 'bg-neutral-800 border border-neutral-700'
                                              }`}
                                        >
@@ -4647,14 +4649,18 @@ export default function App() {
                                     <div className="flex items-center gap-3 p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300">
                                        <Shield className="w-4 h-4 text-amber-400 shrink-0" />
                                        <div>
-                                          <span className="font-bold">Whitelist Gating Active:</span> Only explicitly whitelisted and active players listed below are permitted to join this server.
+                                          {editingBedrock
+                                             ? <><span className="font-bold">Allowlist On:</span> Only allowlisted, active players below can join this server.</>
+                                             : <><span className="font-bold">Whitelist Gating Active:</span> Only explicitly whitelisted and active players listed below are permitted to join this server.</>}
                                        </div>
                                     </div>
                                  ) : (
                                     <div className="flex items-center gap-3 p-3.5 bg-[#242424] border border-[#3A3A3A] rounded-xl text-xs text-neutral-400">
                                        <Users className="w-4 h-4 text-neutral-500 shrink-0" />
                                        <div>
-                                          <span className="font-bold text-neutral-300">Standard Access Active:</span> Whitelist gating is disabled. Standard user access rules apply without whitelist gating.
+                                          {editingBedrock
+                                             ? <><span className="font-bold text-neutral-300">Allowlist Off:</span> Anyone can join. The players below are kept for when you turn the allowlist on.</>
+                                             : <><span className="font-bold text-neutral-300">Standard Access Active:</span> Whitelist gating is disabled. Standard user access rules apply without whitelist gating.</>}
                                        </div>
                                     </div>
                                  )}
@@ -4670,12 +4676,12 @@ export default function App() {
                                              <div className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-[#1A1A1A] border border-[#333] flex items-center justify-center overflow-hidden">
                                                 {userSearchPreview ? (
                                                    <img
-                                                      src={getPlayerAvatarUrl(userSearchPreview.uuid || userSearchPreview.name, 32)}
+                                                      src={playerAvatarUrl(userSearchPreview.uuid || userSearchPreview.name, 32)}
                                                       referrerPolicy="no-referrer"
                                                       alt=""
                                                       className="w-full h-full"
                                                       onError={(e) => {
-                                                         e.currentTarget.src = `https://crafthead.net/avatar/${userSearchPreview.name}/32`;
+                                                         e.currentTarget.src = fallbackAvatarUrl(userSearchPreview.name, 32);
                                                       }}
                                                    />
                                                 ) : (
@@ -4721,7 +4727,7 @@ export default function App() {
                                                       setIsUserSearchFocused(false);
                                                    }
                                                 }}
-                                                placeholder="Minecraft Gamertag..."
+                                                placeholder={editingBedrock ? "Xbox gamertag..." : "Minecraft Gamertag..."}
                                                 className="w-full bg-[#1A1A1A] border border-[#333] pl-12 pr-4 py-3 rounded-lg focus:outline-none focus:border-[#3E8ED0]/60 text-sm placeholder:text-neutral-700 transition-all font-medium text-neutral-200"
                                              />
                                              {isUserSearchVerifying && (
@@ -4758,11 +4764,11 @@ export default function App() {
                                                             className="flex items-center gap-3.5 px-4 py-3 hover:bg-[#2A2A2A] cursor-pointer transition-colors group"
                                                          >
                                                             <img
-                                                               src={getPlayerAvatarUrl(sug.uuid || sug.name, 32)}
+                                                               src={playerAvatarUrl(sug.uuid || sug.name, 32)}
                                                                alt=""
                                                                className="w-7 h-7 rounded-md border border-[#444] shadow-sm shrink-0 bg-[#141414]"
                                                                onError={(e) => {
-                                                                  e.currentTarget.src = `https://crafthead.net/avatar/${sug.name}/32`;
+                                                                  e.currentTarget.src = fallbackAvatarUrl(sug.name, 32);
                                                                }}
                                                             />
                                                             <div className="flex flex-col min-w-0">
@@ -4840,8 +4846,8 @@ export default function App() {
                                                 <tr className="border-b border-[#2D2D2D] text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
                                                    <th className="px-5 py-3.5">Player</th>
                                                    <th className="px-5 py-3.5">Account Status</th>
-                                                   <th className="px-5 py-3.5">Whitelist</th>
-                                                   <th className="px-5 py-3.5">Operator (OP) Level</th>
+                                                   <th className="px-5 py-3.5">{editingBedrock ? "Allowlist" : "Whitelist"}</th>
+                                                   <th className="px-5 py-3.5">{editingBedrock ? "Permission" : "Operator (OP) Level"}</th>
                                                    <th className="px-5 py-3.5 text-right">Actions</th>
                                                 </tr>
                                              </thead>
@@ -4849,21 +4855,30 @@ export default function App() {
                                                 {instanceUsers.map((user, idx) => (
                                                    <tr key={user.name} className={`hover:bg-[#2A2A2A]/40 transition-colors ${user.active === false ? 'opacity-60 bg-black/20' : ''}`}>
                                                       <td className="px-5 py-3 flex items-center gap-3">
-                                                         <img
-                                                            src={getPlayerAvatarUrl(user.uuid || user.name, 32)}
-                                                            alt=""
-                                                            className="w-7 h-7 rounded bg-[#141414] border border-[#333]"
-                                                            onError={(e) => {
-                                                               e.currentTarget.src = `https://crafthead.net/avatar/${user.name}/32`;
-                                                            }}
-                                                         />
+                                                         {editingBedrock ? (
+                                                            // A gamertag isn't a Java account, so there's no skin to show
+                                                            <div className="w-7 h-7 rounded bg-[#141414] border border-[#333] flex items-center justify-center">
+                                                               <Users className="w-3.5 h-3.5 text-neutral-600" />
+                                                            </div>
+                                                         ) : (
+                                                            <img
+                                                               src={playerAvatarUrl(user.uuid || user.name, 32)}
+                                                               alt=""
+                                                               className="w-7 h-7 rounded bg-[#141414] border border-[#333]"
+                                                               onError={(e) => {
+                                                                  e.currentTarget.src = fallbackAvatarUrl(user.name, 32);
+                                                               }}
+                                                            />
+                                                         )}
                                                          <div className="flex flex-col">
                                                             <span className="flex items-center gap-2">
                                                                <span className={`text-sm font-bold ${user.active === false ? 'text-neutral-500 line-through' : 'text-neutral-200'}`}>{user.name}</span>
                                                                {selectedInstance && <OnlineBadge list={playerLists[selectedInstance.id]} name={user.name} />}
                                                                <BannedBadge banned={banList.isBanned(user.name)} />
                                                             </span>
-                                                            {user.uuid && <span className="text-[9px] font-mono text-neutral-600">{user.uuid}</span>}
+                                                            {editingBedrock
+                                                               ? user.xuid && <span className="text-[9px] font-mono text-neutral-600">XUID {user.xuid}</span>
+                                                               : user.uuid && <span className="text-[9px] font-mono text-neutral-600">{user.uuid}</span>}
                                                          </div>
                                                       </td>
                                                       <td className="px-5 py-3">
@@ -4891,14 +4906,17 @@ export default function App() {
                                                                   ? 'bg-amber-500/20 border-amber-500/50 text-amber-400 hover:bg-amber-500/30'
                                                                   : 'bg-neutral-800 border-neutral-700 text-neutral-500 hover:bg-neutral-700 hover:text-neutral-300'
                                                                }`}
-                                                            title="Toggle player whitelist eligibility"
+                                                            title={editingBedrock ? "Toggle whether the player is on the allowlist" : "Toggle player whitelist eligibility"}
                                                          >
-                                                            {user.whitelisted ? 'WHITELISTED' : 'NOT WHITELISTED'}
+                                                            {editingBedrock
+                                                               ? (user.whitelisted ? 'ALLOWLISTED' : 'NOT ALLOWLISTED')
+                                                               : (user.whitelisted ? 'WHITELISTED' : 'NOT WHITELISTED')}
                                                          </button>
                                                       </td>
                                                       <td className="px-5 py-3">
                                                          <select
-                                                            value={user.is_op ? user.level : 0}
+                                                            value={user.is_op ? (editingBedrock ? 4 : user.level) : 0}
+                                                            aria-label={`Permission for ${user.name}`}
                                                             onChange={(e) => {
                                                                const val = parseInt(e.target.value);
                                                                setInstanceUsers(prev => prev.map((u, i) => i === idx ? {
@@ -4909,16 +4927,22 @@ export default function App() {
                                                             }}
                                                             className="w-44 bg-[#141414] border border-[#333] p-1.5 rounded text-xs text-neutral-300 focus:outline-none focus:border-[#3E8ED0]/40"
                                                          >
-                                                            <option value={0}>Standard Player (No OP)</option>
-                                                            <option value={1}>Level 1: Bypass Spawn Protection</option>
-                                                            <option value={2}>Level 2: Cheat Commands / Command Blocks</option>
-                                                            <option value={3}>Level 3: Kick, Ban, Promote</option>
-                                                            <option value={4}>Level 4: Full Operator</option>
+                                                            {editingBedrock ? (<>
+                                                               {/* Bedrock has no operator levels */}
+                                                               <option value={0}>Member</option>
+                                                               <option value={4}>Operator</option>
+                                                            </>) : (<>
+                                                               <option value={0}>Standard Player (No OP)</option>
+                                                               <option value={1}>Level 1: Bypass Spawn Protection</option>
+                                                               <option value={2}>Level 2: Cheat Commands / Command Blocks</option>
+                                                               <option value={3}>Level 3: Kick, Ban, Promote</option>
+                                                               <option value={4}>Level 4: Full Operator</option>
+                                                            </>)}
                                                          </select>
                                                       </td>
                                                       <td className="px-5 py-3">
                                                          <div className="flex flex-wrap justify-end gap-1.5 min-w-[96px]">
-                                                         {selectedInstance && (
+                                                         {selectedInstance && !editingBedrock && (
                                                             <PlayerRowActions
                                                                instanceId={selectedInstance.id}
                                                                name={user.name}
@@ -4955,7 +4979,14 @@ export default function App() {
                                     )}
                                  </div>
 
-                                 {selectedInstance && (
+                                 {editingBedrock && (
+                                    <div role="note" className="flex flex-col gap-1.5 p-3.5 bg-[#242424] border border-[#3A3A3A] rounded-xl text-xs text-neutral-400">
+                                       <span>{BEDROCK_OPS_NOTE}</span>
+                                       <span>{BEDROCK_NO_BAN_NOTE}</span>
+                                    </div>
+                                 )}
+
+                                 {selectedInstance && !editingBedrock && (
                                     <BannedPlayers
                                        instanceId={selectedInstance.id}
                                        bans={banList.bans}
@@ -7338,12 +7369,12 @@ export default function App() {
                                                 <div className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-sm bg-[#1A1A1A] border border-[#333] flex items-center justify-center overflow-hidden">
                                                    {whitelistPreview ? (
                                                       <img
-                                                         src={getPlayerAvatarUrl(whitelistPreview.uuid || whitelistPreview.name, 32)}
+                                                         src={playerAvatarUrl(whitelistPreview.uuid || whitelistPreview.name, 32)}
                                                          referrerPolicy="no-referrer"
                                                          alt=""
                                                          className="w-full h-full"
                                                          onError={(e) => {
-                                                            e.currentTarget.src = `https://crafthead.net/avatar/${newWhitelistUser}/32`;
+                                                            e.currentTarget.src = fallbackAvatarUrl(newWhitelistUser, 32);
                                                          }}
                                                       />
                                                    ) : (
@@ -7387,7 +7418,7 @@ export default function App() {
                                                             }}
                                                             className="flex items-center gap-3 px-4 py-2.5 hover:bg-[#333] cursor-pointer border-b border-[#282828] last:border-0 group"
                                                          >
-                                                            <img src={getPlayerAvatarUrl(p.uuid || p.name, 16)} alt="" className="w-4 h-4 rounded-sm" onError={(e) => { e.currentTarget.src = `https://crafthead.net/avatar/${p.name}/16`; }} />
+                                                            <img src={playerAvatarUrl(p.uuid || p.name, 16)} alt="" className="w-4 h-4 rounded-sm" onError={(e) => { e.currentTarget.src = fallbackAvatarUrl(p.name, 16); }} />
                                                             <span className="text-sm font-medium text-neutral-300 group-hover:text-white">{p.name}</span>
                                                             <span className="text-[10px] text-neutral-600 font-mono ml-auto">RECENT</span>
                                                          </div>
@@ -7418,7 +7449,7 @@ export default function App() {
                                              ) : (
                                                 globalSettings.defaultWhitelistUsers.map(user => (
                                                    <div key={user} className="flex items-center gap-2 px-2.5 py-1 bg-[#242424] border border-[#333] rounded-md text-xs group hover:border-amber-500/30 transition-colors">
-                                                      <img src={getPlayerAvatarUrl(user, 16)} alt="" className="w-3 h-3 rounded-sm" onError={(e) => { e.currentTarget.src = `https://crafthead.net/avatar/${user}/16`; }} />
+                                                      <img src={playerAvatarUrl(user, 16)} alt="" className="w-3 h-3 rounded-sm" onError={(e) => { e.currentTarget.src = fallbackAvatarUrl(user, 16); }} />
                                                       <span className="text-neutral-300 font-medium">{user}</span>
                                                       <button
                                                          onClick={() => {

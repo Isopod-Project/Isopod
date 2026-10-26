@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Ban, Crown, LogOut, MessageSquare, Navigation, RefreshCw, ShieldCheck, ShieldOff, Undo2, Users } from "lucide-react";
 import { usePlayerActions, type BannedPlayer, type PlayerDialogs } from "./usePlayerActions";
+import { fallbackAvatarUrl, playerAvatarUrl } from "../lib/utils";
 
 export interface PlayerList {
    /** False when RCON couldn't be reached, e.g. the server is still finishing startup. */
@@ -225,10 +226,10 @@ export function BannedPlayers({ instanceId, bans, loading, refresh, ...dialogs }
                {bans.map((b) => (
                   <li key={b.name} className="px-5 py-3 flex items-center gap-3 text-xs">
                      <img
-                        src={`https://mc-heads.net/avatar/${b.uuid || b.name}/32`}
+                        src={playerAvatarUrl(b.uuid || b.name, 32)}
                         alt=""
                         className="w-7 h-7 rounded bg-[#141414] border border-[#333]"
-                        onError={(e) => { e.currentTarget.src = `https://crafthead.net/avatar/${b.name}/32`; }}
+                        onError={(e) => { e.currentTarget.src = fallbackAvatarUrl(b.name, 32); }}
                      />
                      <div className="flex flex-col min-w-0 flex-1">
                         <span className="text-sm font-bold text-neutral-200">{b.name}</span>

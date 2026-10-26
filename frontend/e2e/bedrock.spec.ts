@@ -70,7 +70,7 @@ test.describe("Bedrock and cross-play in the Edit window", () => {
 
   test("a Bedrock server hides the Java-only tabs and picks Bedrock versions", async ({ page }) => {
     await openEdit(page, { TYPE: "BEDROCK", VERSION: "LATEST", GAMEMODE: "creative", LEVEL_SEED: "42" })
-    for (const tab of ["Loaders", "Mods", "Resource Packs", "User Management"]) {
+    for (const tab of ["Loaders", "Mods", "Resource Packs"]) {
       await expect(page.getByRole("button", { name: tab, exact: true })).toHaveCount(0)
     }
 
@@ -114,5 +114,77 @@ test.describe("Bedrock and cross-play in the Edit window", () => {
   test("the sidebar shows the Bedrock address of a cross-play server", async ({ page }) => {
     await openEdit(page, { TYPE: "PAPER" }, { type: "PAPER", port: 25565, bedrock_port: 19133, public_ip: "203.0.113.5" })
     await expect(page.getByTestId("bedrock-address")).toContainText("203.0.113.5:19133")
+  })
+})
+
+test.describe("Bedrock User Management", () => {
+  let saves: { users: Record<string, unknown>[]; whitelist_enabled: boolean }[]
+  let lookups: string[]
+
+  test.beforeEach(async ({ page }) => {
+    saves = []
+    lookups = []
+    await page.route("**/api/instances/alpha/config", (route) =>
+      route.fulfill({ json: { image: "itzg/minecraft-bedrock-server", environment: { TYPE: "BEDROCK", ALLOW_LIST: "true", ALLOW_LIST_USERS: "Tacoz YouTube" } } }),
+    )
+    await page.route("**/api/instances/alpha/users", (route) => {
+      if (route.request().method() === "PUT") {
+        saves.push(route.request().postDataJSON())
+        return route.fulfill({
+          json: { message: "Users updated successfully", whitelist_enabled: true, environment: { ALLOW_LIST: "true", ALLOW_LIST_USERS: "Tacoz YouTube,Steve Two", OPS: "Steve Two" } },
+        })
+      }
+      return route.fulfill({
+        headers: { "X-Whitelist-Enabled": "true" },
+        json: [{ name: "Tacoz YouTube", uuid: null, xuid: "2535400000000001", level: 0, is_op: false, whitelisted: true, active: true }],
+      })
+    })
+    await page.route(/playerdb\.co/, (route) => {
+      lookups.push(route.request().url())
+      return route.fulfill({ json: {} })
+    })
+    await page.goto("/")
+    await page.getByText("Alpha Server").first().click()
+    await page.getByRole("button", { name: "Edit" }).first().click()
+    await page.getByRole("button", { name: "User Management", exact: true }).click()
+  })
+
+  test("lists the allowlist by gamertag and hides the Java-only controls", async ({ page }) => {
+    await expect(page.getByText("Tacoz YouTube", { exact: true })).toBeVisible()
+    await expect(page.getByText("XUID 2535400000000001")).toBeVisible()
+    await expect(page.getByRole("button", { name: "ALLOWLISTED", exact: true })).toBeVisible()
+    await expect(page.getByLabel("Permission for Tacoz YouTube")).toHaveValue("0")
+    await expect(page.getByRole("option", { name: /Level 2/ })).toHaveCount(0)
+    await expect(page.getByText(/Banned Players \(/)).toHaveCount(0)
+    await expect(page.getByRole("note").filter({ hasText: "no ban command" })).toBeVisible()
+  })
+
+  test("adds a gamertag with a space, makes them operator and saves", async ({ page }) => {
+    await page.getByPlaceholder("Xbox gamertag...").fill("Steve Two")
+    await page.getByRole("button", { name: "Add Player" }).click()
+    await page.getByLabel("Permission for Steve Two").selectOption("4")
+    await page.getByRole("button", { name: "Save User Configuration" }).click()
+    await expect(page.getByText("Allowlist and operators saved.")).toBeVisible()
+
+    expect(saves).toHaveLength(1)
+    expect(saves[0].whitelist_enabled).toBe(true)
+    expect(saves[0].users).toEqual([
+      expect.objectContaining({ name: "Tacoz YouTube", is_op: false, whitelisted: true }),
+      expect.objectContaining({ name: "Steve Two", is_op: true, level: 4, whitelisted: true }),
+    ])
+    // A gamertag isn't looked up as a Java account
+    expect(lookups).toEqual([])
+  })
+
+  test("shows the server's error when a gamertag is rejected", async ({ page, errors }) => {
+    await page.unroute("**/api/instances/alpha/users")
+    await page.route("**/api/instances/alpha/users", (route) =>
+      route.request().method() === "PUT"
+        ? route.fulfill({ status: 400, json: { detail: "\"a,b\" isn't a valid Xbox gamertag." } })
+        : route.fulfill({ headers: { "X-Whitelist-Enabled": "false" }, json: [] }),
+    )
+    errors.expect(/400/)
+    await page.getByRole("button", { name: "Save User Configuration" }).click()
+    await expect(page.getByText("isn't a valid Xbox gamertag")).toBeVisible()
   })
 })

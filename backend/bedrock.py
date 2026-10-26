@@ -82,7 +82,9 @@ def compose_service(slug: str, name: str, port: int, version: Optional[str], see
     ]
     if allow_list_enabled or allow_list_users:
         env.append(f"ALLOW_LIST={'true' if allow_list_enabled else 'false'}")
-    if allow_list_users:
+    # The entrypoint turns the allowlist on whenever ALLOW_LIST_USERS has names, so it's only
+    # set while the allowlist is on. users.json keeps the names either way.
+    if allow_list_enabled and allow_list_users:
         env.append(f"ALLOW_LIST_USERS={','.join(allow_list_users)}")
     return {
         "image": BEDROCK_IMAGE,
