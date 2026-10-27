@@ -12,7 +12,7 @@ Isopod is built to run on a trusted home network. Today:
 
 - The dashboard and API on port 8000 need a login. The admin account is created the first time someone opens the dashboard, so open it yourself right after installing.
 - Isopod serves plain HTTP. Over an untrusted network, the password and session cookie can be read in transit.
-- The container runs **privileged** with its own Docker daemon, so control of Isopod amounts to control of the machine it runs on.
+- The container runs its own Docker daemon. It no longer needs privileged mode, but it still has enough permissions that control of Isopod amounts to control of the machine it runs on. See [docs/adr/0001-unprivileged-docker-in-docker.md](docs/adr/0001-unprivileged-docker-in-docker.md).
 
 Don't forward port 8000 to the internet. To reach Isopod remotely, use a VPN such as Tailscale or WireGuard.
 

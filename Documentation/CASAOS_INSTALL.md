@@ -29,7 +29,17 @@ services:
   isopod:
     image: isopod:latest
     container_name: isopod
-    privileged: true
+    # Runs its own Docker daemon without privileged mode. See docs/adr/0001 in the Isopod repo.
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    devices:
+      - /dev/fuse
+    cgroup: private
     restart: unless-stopped
     network_mode: bridge
     ports:
@@ -73,7 +83,15 @@ x-casaos:
 ## 3. Configuration Details (Manual Check)
 If you prefer to fill out the form manually, ensure these settings are correct:
 
-- **Privileged Mode**: `Enabled` (Required for internal Docker-in-Docker isolation)
+- **Privileged Mode**: `Disabled`. Isopod's internal Docker daemon only needs:
+    - **Capabilities**: `SYS_ADMIN`, `NET_ADMIN`, `SYS_PTRACE`
+    - **Security options**: `seccomp:unconfined`, `apparmor:unconfined`
+    - **Devices**: `/dev/fuse`
+    - **Cgroup namespace**: `private`
+
+  The CasaOS form may not show all of these. Use the import above when you can.
+
+  Installs from older versions of this guide used `privileged: true`. They keep working, but to drop privileged mode, open the app's settings in CasaOS and replace `privileged: true` with the `cap_add` through `cgroup` lines above.
 - **Web UI Port**: `8000` (Host `8000` -> Container `8000`)
 - **Game Server Ports**: Host `25565-25585` -> Container `25565-25585` (Allows up to 21 concurrent server instances)
 - **Bedrock Ports (UDP)**: Host `19132-19152` -> Container `19132-19152`, protocol UDP (Bedrock servers and Java servers with Bedrock cross-play)
