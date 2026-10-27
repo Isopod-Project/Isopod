@@ -29,13 +29,19 @@ GITHUB_REPO = os.getenv("GITHUB_REPO", "Tacoz234/Isopod")
 # Internal state for background update checks
 cached_update_info: Optional[Dict[str, Any]] = None
 
-# Headers and client helper for CurseForge (curse.tools proxy requires User-Agent and redirects)
+# Headers and client helper for the official CurseForge API (requires an API key)
+CF_API_BASE = "https://api.curseforge.com/v1"
 CF_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Isopod/1.0"
+    "User-Agent": "Isopod/1.0",
+    "Accept": "application/json",
 }
 
 def get_cf_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(headers=CF_HEADERS, follow_redirects=True, timeout=20.0)
+    api_key = os.getenv("CURSEFORGE_API_KEY", "").strip()
+    headers = dict(CF_HEADERS)
+    if api_key:
+        headers["x-api-key"] = api_key
+    return httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=20.0)
 
 class SystemInfo(BaseModel):
     version: str
@@ -1118,7 +1124,7 @@ async def get_modrinth_project_versions(project_id: str):
 
 @app.get("/api/mods/curseforge/{project_id}/versions")
 async def get_curseforge_project_versions(project_id: str):
-    url = f"https://api.curse.tools/v1/cf/mods/{project_id}/files"
+    url = f"{CF_API_BASE}/mods/{project_id}/files"
     try:
         async with get_cf_client() as client:
             res = await client.get(url)
@@ -1213,7 +1219,7 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
         
     # Using a known public proxy for CurseForge searches
     # itzg/minecraft-server uses the CurseForge ID (int)
-    url = "https://api.curse.tools/v1/cf/mods/search"
+    url = f"{CF_API_BASE}/mods/search"
     
     mod_loader_type = 0 # Any
     if loader:
@@ -1229,22 +1235,31 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
         "searchFilter": q,
         "classId": class_id, 
         "excludeCategoryIds": "4764" if class_id == 6 else None, # Client Side only for mods
-        "pageSize": 120
+        "sortField": 2, # Popularity
+        "sortOrder": "desc",
+        "pageSize": 50
     }
     if mc_version:
         params["gameVersion"] = mc_version
-    if mod_loader_type > 0:
+    if mod_loader_type > 0 and class_id != 12: # resource packs have no loader
         params["modLoaderType"] = mod_loader_type
+    params = {k: v for k, v in params.items() if v is not None}
 
     # Note: ATLauncher, Feed The Beast (FTB), and Technic modpack endpoints
     # can be added here in the future once dedicated API integrations are implemented.
 
     try:
+        if not os.getenv("CURSEFORGE_API_KEY", "").strip():
+            raise HTTPException(status_code=503, detail="CURSEFORGE_API_KEY is not set")
         async with get_cf_client() as client:
             res = await client.get(url, params=params)
-            data = res.json()
+        if res.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"CurseForge API returned {res.status_code}: {res.text[:200]}")
+        data = res.json()
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"CurseForge proxy error: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"CurseForge API error: {str(e)}")
         
     results = []
     try:
@@ -1405,7 +1420,7 @@ async def create_instance(req: CreateInstanceRequest):
                 if req.modpack_version:
                     file_id = req.modpack_version
                 else:
-                    res = await client.get(f"https://api.curse.tools/v1/cf/mods/{req.cf_id}")
+                    res = await client.get(f"{CF_API_BASE}/mods/{req.cf_id}")
                     if res.status_code == 200:
                         data = res.json().get("data", {})
                         latest_files = data.get("latestFiles", [])
@@ -1418,7 +1433,7 @@ async def create_instance(req: CreateInstanceRequest):
                                     break
                 
                 if file_id and not mc_version:
-                    res = await client.get(f"https://api.curse.tools/v1/cf/mods/{req.cf_id}/files/{file_id}")
+                    res = await client.get(f"{CF_API_BASE}/mods/{req.cf_id}/files/{file_id}")
                     if res.status_code == 200:
                         fdata = res.json().get("data", {})
                         for ver in fdata.get("gameVersions", []):
@@ -2026,7 +2041,7 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = "", modrinth_m
         if cf_modpack:
             try:
                 async with get_cf_client() as cf_client:
-                    res = await cf_client.get(f"https://api.curse.tools/v1/cf/mods/{cf_modpack}")
+                    res = await cf_client.get(f"{CF_API_BASE}/mods/{cf_modpack}")
                     if res.status_code == 200:
                         data = res.json().get("data", {})
                         latest_files = data.get("latestFiles", [])
@@ -2094,7 +2109,7 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = "", modrinth_m
                     continue
                 try:
                     async with get_cf_client() as cf_client:
-                        res = await cf_client.get(f"https://api.curse.tools/v1/cf/mods/{cid}")
+                        res = await cf_client.get(f"{CF_API_BASE}/mods/{cid}")
                         if res.status_code == 200:
                             item = res.json()["data"]
                             latest_file = item.get("latestFiles", [{}])[0]
@@ -2166,7 +2181,7 @@ async def check_mod_compatibility(req: Dict[str, Any]):
             try:
                 async with get_cf_client() as cf_client:
                     # Use project lookup to see latest files
-                    res = await cf_client.get(f"https://api.curse.tools/v1/cf/mods/{cid}")
+                    res = await cf_client.get(f"{CF_API_BASE}/mods/{cid}")
                     if res.status_code == 200:
                         data = res.json()["data"]
                         found = False
@@ -2214,7 +2229,7 @@ async def get_mod_dependencies(provider: str, project_id: str):
         try:
             async with get_cf_client() as client:
                 # CurseForge dependency lookup requires hitting the mod details
-                res = await client.get(f"https://api.curse.tools/v1/cf/mods/{project_id}")
+                res = await client.get(f"{CF_API_BASE}/mods/{project_id}")
                 if res.status_code == 200:
                     data = res.json()["data"]
                     # CF dependencies are objects in 'latestFiles'

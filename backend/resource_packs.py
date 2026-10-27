@@ -10,6 +10,7 @@ from typing import List, Dict, Optional
 
 # Constants
 MCPACKS_API_URL = "https://mcpacks.dev/api/v1/packs"
+CF_API_BASE = "https://api.curseforge.com/v1"
 
 
 async def _fetch_pack_url(client: httpx.AsyncClient, pack_id: str, provider: str, mc_version: str):
@@ -32,9 +33,12 @@ async def _fetch_pack_url(client: httpx.AsyncClient, pack_id: str, provider: str
             print(f"  [modrinth] Error fetching {pack_id} for {mc_version}: {e}")
 
     elif provider == 'curseforge':
-        # CurseForge API (via proxy)
+        # CurseForge official API (requires CURSEFORGE_API_KEY)
         try:
-            res = await client.get(f"https://api.curse.tools/v1/cf/mods/{pack_id}")
+            res = await client.get(
+                f"{CF_API_BASE}/mods/{pack_id}",
+                headers={"x-api-key": os.getenv("CURSEFORGE_API_KEY", "").strip()}
+            )
             if res.status_code == 200:
                 data = res.json().get("data", {})
                 for file in data.get("latestFiles", []):
