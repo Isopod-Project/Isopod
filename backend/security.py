@@ -31,7 +31,7 @@ def allowed_origins_from_env() -> List[str]:
     return parse_origins(os.getenv("ISOPOD_CORS_ORIGINS"))
 
 
-def _header(scope, name: bytes) -> Optional[str]:
+def header(scope, name: bytes) -> Optional[str]:
     for key, value in scope.get("headers") or []:
         if key == name:
             return value.decode("latin-1")
@@ -54,6 +54,16 @@ def is_origin_allowed(origin: str, host: Optional[str], allowed: Iterable[str]) 
     return parts.netloc in (host, f"{host}:{default_port}") or f"{parts.netloc}:{default_port}" == host
 
 
+async def deny(scope, receive, send, status: int, detail: str) -> None:
+    """Reject an HTTP request or WebSocket upgrade with a JSON error."""
+    response = JSONResponse(status_code=status, content={"detail": detail})
+    if scope["type"] == "websocket" and "websocket.http.response" not in scope.get("extensions", {}):
+        # Server can't send an HTTP response to an upgrade; closing before accept gives a 403
+        await send({"type": "websocket.close", "code": 1008})
+        return
+    await response(scope, receive, send)
+
+
 class OriginGuardMiddleware:
     """Pure ASGI middleware so it covers WebSocket upgrades as well as HTTP requests."""
 
@@ -64,14 +74,10 @@ class OriginGuardMiddleware:
     async def __call__(self, scope, receive, send):
         if scope["type"] in ("http", "websocket"):
             needs_check = scope["type"] == "websocket" or scope.get("method", "GET").upper() not in SAFE_METHODS
-            origin = _header(scope, b"origin")
+            origin = header(scope, b"origin")
             # Browsers always send Origin on cross-site POSTs and WebSocket upgrades. A missing
             # Origin means a non-browser client (curl, scripts), which CSRF can't come from.
-            if needs_check and origin is not None and not is_origin_allowed(origin, _header(scope, b"host"), self.allowed):
-                if scope["type"] == "websocket":
-                    await send({"type": "websocket.close", "code": 1008})
-                    return
-                response = JSONResponse(status_code=403, content={"detail": "Cross-origin request blocked"})
-                await response(scope, receive, send)
+            if needs_check and origin is not None and not is_origin_allowed(origin, header(scope, b"host"), self.allowed):
+                await deny(scope, receive, send, 403, "Cross-origin request blocked")
                 return
         await self.app(scope, receive, send)
