@@ -42,7 +42,7 @@ Review everything since the previous release, `git diff <last-tag>..main`, with 
   - URLs come from the expected hosts.
   - Hashes are checked where the API provides them.
   - Archives are extracted with path checks, not with a bare `extractall` (zip slip).
-- [ ] **`isopod-compose*.yml`, `Dockerfile`, `docker/`:** no new ports, mounts, capabilities, or privileges without a reason in the PR.
+- [ ] **`isopod-compose*.yml`, `Dockerfile`, `docker/`:** no new ports, mounts, capabilities, or privileges without a reason in the PR, and no `privileged: true`. New capabilities go in the table in [ADR 0001](adr/0001-unprivileged-docker-in-docker.md).
 - [ ] **Network exposure:** no new routes in `auth.PUBLIC_PATHS` or outside `/api` that skip the login, and no CORS or bind-address changes.
 - [ ] **New dependencies:** maintained, widely used, and spelled correctly (no typosquats).
 - [ ] **No secrets,** tokens, or personal paths committed.
@@ -55,7 +55,7 @@ These are by design for now and are tracked separately:
 
 - First-run setup is open: until the admin account exists, anyone who can reach port 8000 can create it.
 - Isopod serves plain HTTP, so logins and session cookies aren't encrypted in transit.
-- The container runs `privileged: true` with its own Docker daemon.
+- The container runs its own Docker daemon. Since #145 it isn't privileged, but `SYS_ADMIN` with seccomp and AppArmor off is still enough to reach the host. See [ADR 0001](adr/0001-unprivileged-docker-in-docker.md).
 
 `SECURITY.md` tells users not to expose port 8000 for these reasons.
 

@@ -7,7 +7,18 @@ services:
       dockerfile: docker/Dockerfile.dev
     image: isopod:dev
     container_name: isopod-dev
-    privileged: true
+    # Same permissions as isopod-compose.yml, for when the host socket below isn't reachable
+    # and the container starts its own Docker daemon
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    devices:
+      - /dev/fuse
+    cgroup: private
     restart: unless-stopped
     entrypoint: /app/docker/dev-entrypoint.sh
     ports:
