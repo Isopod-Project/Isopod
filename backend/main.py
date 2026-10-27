@@ -29,6 +29,7 @@ from . import crashes
 from . import bedrock
 from . import bedrock_users
 from . import security
+from . import auth
 import threading
 
 load_dotenv()
@@ -53,19 +54,6 @@ class UpdateInfo(BaseModel):
     published_at: Optional[str] = None
 
 
-# The frontend is served from this same origin, so cross-origin access is off unless
-# ISOPOD_CORS_ORIGINS lists extra origins (e.g. the Vite dev server). See backend/security.py.
-CORS_ORIGINS = security.allowed_origins_from_env()
-app.add_middleware(security.OriginGuardMiddleware, allowed_origins=CORS_ORIGINS)
-if CORS_ORIGINS:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=CORS_ORIGINS,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
 class AuthorizationMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         inst_user = request.headers.get("X-Instance-User")
@@ -86,6 +74,25 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
 app.add_middleware(AuthorizationMiddleware)
 
 SERVERS_DIR = os.getenv("SERVERS_DIR", "./servers")
+
+# Middleware added last runs first: CORS, then the cross-origin guard, then the login check.
+# Every /api route needs a session from the dashboard login (backend/auth.py).
+auth_store = auth.AuthStore(os.path.join(SERVERS_DIR, ".isopod_auth.json"))
+app.include_router(auth.create_router(auth_store))
+app.add_middleware(auth.AuthMiddleware, store=auth_store)
+
+# The frontend is served from this same origin, so cross-origin access is off unless
+# ISOPOD_CORS_ORIGINS lists extra origins (e.g. the Vite dev server). See backend/security.py.
+CORS_ORIGINS = security.allowed_origins_from_env()
+app.add_middleware(security.OriginGuardMiddleware, allowed_origins=CORS_ORIGINS)
+if CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 def get_current_version() -> str:
     version_file = os.path.join(SERVERS_DIR, ".isopod_version")
