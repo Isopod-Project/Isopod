@@ -155,6 +155,21 @@ The Isopod container publishes UDP `19132-19152` for these ports next to TCP `25
 
 ---
 
+## 🔒 Cross-origin requests
+
+The backend serves the frontend, so the browser only talks to the API from the same origin and the backend allows no cross-origin access by default (`backend/security.py`):
+
+- No CORS headers are sent unless `ISOPOD_CORS_ORIGINS` is set.
+- `POST`/`PUT`/`PATCH`/`DELETE` requests and WebSocket upgrades are rejected with `403` when their `Origin` header doesn't match the `Host` they were sent to. CORS alone doesn't stop a foreign page from sending a simple form `POST` or opening a WebSocket. Requests without an `Origin` header (curl, scripts) aren't affected.
+
+For the Vite dev server, `npm run dev` proxies `/api` to `http://localhost:8000` (change it with `VITE_API_PROXY`), so the frontend stays same-origin and needs no extra setting. To call the API from another origin, such as a reverse proxy that rewrites the `Host` header or a separately hosted frontend, list the origins comma-separated:
+
+```env
+ISOPOD_CORS_ORIGINS=http://localhost:5173,https://isopod.example.com
+```
+
+---
+
 ## 🛠️ Tech Stack
 - **Backend**: FastAPI (Python 3.11)
 - **Frontend**: React + Vite (TypeScript)

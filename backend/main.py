@@ -28,6 +28,7 @@ from . import modpacks
 from . import crashes
 from . import bedrock
 from . import bedrock_users
+from . import security
 import threading
 
 load_dotenv()
@@ -52,13 +53,18 @@ class UpdateInfo(BaseModel):
     published_at: Optional[str] = None
 
 
-# We will need CORS for frontend development
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# The frontend is served from this same origin, so cross-origin access is off unless
+# ISOPOD_CORS_ORIGINS lists extra origins (e.g. the Vite dev server). See backend/security.py.
+CORS_ORIGINS = security.allowed_origins_from_env()
+app.add_middleware(security.OriginGuardMiddleware, allowed_origins=CORS_ORIGINS)
+if CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 class AuthorizationMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):

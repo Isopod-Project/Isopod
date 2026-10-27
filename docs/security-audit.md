@@ -54,7 +54,8 @@ Add the result to the release notes, for example: `Security audit: passed (0 hig
 These are by design for now and are tracked separately:
 
 - The API has no authentication.
-- CORS allows every origin (`allow_origins=["*"]`).
 - The container runs `privileged: true` with its own Docker daemon.
 
 `SECURITY.md` tells users not to expose port 8000 for these reasons.
+
+Cross-origin access is off by default: there are no CORS headers unless `ISOPOD_CORS_ORIGINS` lists extra origins, and state-changing requests and WebSocket upgrades from a foreign `Origin` get `403` (`backend/security.py`, #144). This doesn't stop DNS rebinding, where the attacker's page and the API share an origin; authentication covers that.
