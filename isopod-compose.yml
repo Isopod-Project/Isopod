@@ -33,11 +33,11 @@ x-casaos:
     - amd64
     - arm64
   main: isopod
-  author: Tacoz234
+  author: Isopod-Project
   category: Utilities
   description:
     en_us: Modern, lightweight Minecraft instance manager with a sleek web dashboard.
-  developer: Tacoz234
+  developer: Isopod-Project
   icon: https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png
   thumbnail: https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png
   title:

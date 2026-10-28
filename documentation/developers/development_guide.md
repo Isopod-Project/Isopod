@@ -23,7 +23,7 @@ Follow these steps exactly to get a "100% working" setup.
 SSH into your server and download the code to a known location:
 ```bash
 cd /home/your-user  # Or wherever you store apps
-git clone https://github.com/tacoz234/Isopod.git
+git clone https://github.com/Isopod-Project/Isopod.git
 cd Isopod
 ```
 
@@ -39,7 +39,7 @@ docker build -t isopod:dev -f docker/Dockerfile.dev .
 3. Click the **Import** button (top right icon) and paste the contents of `docker/docker-compose.dev.yml` from your repo.
 4. **Important UI Settings**: After importing, fill in these specific fields:
    - **App Name**: `Isopod Dev`
-   - **Icon URL**: `https://raw.githubusercontent.com/tacoz234/Isopod/main/assets/dev_logo.png`
+   - **Icon URL**: `https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/dev_logo.png`
    - **Web UI Port**: `8001`
    - **Network**: `Bridge`
 5. **Volume Mapping**: Scroll down to "Volumes" and ensure these are set:
