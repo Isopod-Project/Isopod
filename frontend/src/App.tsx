@@ -190,6 +190,7 @@ export default function App() {
    const [onlyServerSideModpacks, setOnlyServerSideModpacks] = useState(true);
    const [modpackResults, setModpackResults] = useState<any[]>([]);
    const [isModpackLoading, setIsModpackLoading] = useState(false);
+   const [modpackSearchError, setModpackSearchError] = useState("");
    const [selectedModpack, setSelectedModpack] = useState<any>(null);
    const [modpackVersions, setModpackVersions] = useState<any[]>([]);
    const [selectedModpackVersion, setSelectedModpackVersion] = useState<string>("");
@@ -1133,16 +1134,21 @@ export default function App() {
 
    const handleModpackSearch = async (query: string, provider: string) => {
       setIsModpackLoading(true);
+      setModpackSearchError("");
       try {
          const url = provider === "modrinth"
             ? `/api/mods/search/${provider}?q=${encodeURIComponent(query)}&class_type=modpack&only_server_side=${onlyServerSideModpacks}`
             : `/api/mods/search/${provider}?q=${encodeURIComponent(query)}&class_type=modpack`;
          const res = await fetch(url);
-         if (!res.ok) throw new Error(`${provider} search failed`);
+         if (!res.ok) {
+            const body = await res.json().catch(() => null);
+            throw new Error(typeof body?.detail === "string" ? body.detail : `${provider} search failed`);
+         }
          const data = await res.json();
          setModpackResults(Array.isArray(data) ? data : []);
       } catch (e) {
          console.error("Search error:", e);
+         setModpackSearchError(e instanceof Error ? e.message : `${provider} search failed`);
          setModpackResults([]);
       } finally {
          setIsModpackLoading(false);
@@ -3813,6 +3819,12 @@ export default function App() {
                                           <div className="flex flex-col items-center justify-center h-64 text-neutral-600 gap-3">
                                              <RefreshCw className="w-8 h-8 animate-spin" />
                                              <span className="text-sm font-medium">Fetching modpacks...</span>
+                                          </div>
+                                       ) : modpackSearchError ? (
+                                          <div role="alert" className="flex flex-col items-center justify-center h-64 text-red-400 gap-2 px-6 text-center">
+                                             <AlertCircle className="w-10 h-10" />
+                                             <p className="text-sm font-medium">Couldn't load modpacks</p>
+                                             <p className="text-xs text-red-400/80 break-words max-w-md">{modpackSearchError}</p>
                                           </div>
                                        ) : modpackResults.length === 0 ? (
                                           <div className="flex flex-col items-center justify-center h-64 text-neutral-600 opacity-40">

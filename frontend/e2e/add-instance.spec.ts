@@ -37,6 +37,18 @@ test.describe("Add Instance CurseForge", () => {
     await expect(page.getByPlaceholder("Search curseforge modpacks...")).toBeVisible()
     expect(errors.problems).toEqual([])
   })
+
+  test("CurseForge tab shows why the search failed", async ({ page, errors }) => {
+    errors.expect(/503/, /Search error/)
+    await page.route("**/api/mods/search/curseforge*", (route) =>
+      route.fulfill({ status: 503, json: { detail: "CURSEFORGE_API_KEY is not set" } }),
+    )
+    await page.goto("/")
+    await expect(page.getByText("Alpha Server").first()).toBeVisible()
+    await page.getByRole("button", { name: /Add Instance/ }).click()
+    await page.getByRole("button", { name: "CurseForge", exact: true }).click()
+    await expect(page.getByRole("alert")).toContainText("CURSEFORGE_API_KEY is not set")
+  })
 })
 
 test.describe("Add Instance group", () => {
