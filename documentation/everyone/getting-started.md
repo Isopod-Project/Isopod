@@ -9,7 +9,7 @@ Welcome to **Isopod**! This guide will help you get your Minecraft Instance Mana
 ## 🛠 Installation
 1. **Clone the project:**
    ```bash
-   git clone https://github.com/Tacoz234/Isopod.git
+   git clone https://github.com/Isopod-Project/Isopod.git
    ```
 2. **Launch the service:**
    ```bash

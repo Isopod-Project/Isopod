@@ -30,7 +30,7 @@ services:
       - CURSEFORGE_API_KEY=${CURSEFORGE_API_KEY:-}
     
     labels:
-      icon: "https://raw.githubusercontent.com/tacoz234/Isopod/main/assets/dev_logo.png"
+      icon: "https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/dev_logo.png"
       title: "Isopod Dev"
       description: "Development build: Restart to rebuild frontend and sync backend."
       casaos_app_id: "isopod-dev"

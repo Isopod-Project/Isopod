@@ -27,7 +27,7 @@
 
 ## 🚀 Quick Start
 1. Ensure you have **Docker** and **Docker Compose** installed.
-2. Clone this repository: `git clone https://github.com/Tacoz234/Isopod.git`
+2. Clone this repository: `git clone https://github.com/Isopod-Project/Isopod.git`
 3. Start the application: `docker compose -f isopod-compose.yml up -d --build`
 
 ### CurseForge (optional)
@@ -60,4 +60,4 @@ The official mascot of Isopod is a colorful, rolling isopod (woodlouse), represe
 - **[Development Environment](documentation/developers/development_guide.md)**: Setting up the "Pull & Restart" dev workflow.
 
 ---
-*Created by [Tacoz234](https://github.com/Tacoz234)*
+*Made by the [Isopod Project](https://github.com/Isopod-Project)*
