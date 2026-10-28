@@ -23,6 +23,7 @@ services:
     environment:
       - SERVERS_DIR=${SERVERS_DIR:-/DATA/AppData/isopod/servers}
       - ENV=development
+      - CURSEFORGE_API_KEY=${CURSEFORGE_API_KEY:-}
     
     labels:
       icon: "https://raw.githubusercontent.com/tacoz234/Isopod/main/assets/dev_logo.png"

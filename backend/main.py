@@ -43,6 +43,15 @@ def get_cf_client() -> httpx.AsyncClient:
         headers["x-api-key"] = api_key
     return httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=20.0)
 
+def compose_env() -> Dict[str, str]:
+    """Environment for `docker compose` calls. Instance compose files reference
+    ${CF_API_KEY}, so the key never has to be written to disk (itzg's AUTO_CURSEFORGE needs it)."""
+    env = os.environ.copy()
+    key = os.getenv("CURSEFORGE_API_KEY", "").strip()
+    if key:
+        env["CF_API_KEY"] = key
+    return env
+
 class SystemInfo(BaseModel):
     version: str
     is_docker: bool
@@ -265,7 +274,7 @@ async def get_instance_status(instance_id: str):
             log_result = subprocess.run(
                 ["docker", "compose", "logs", "--tail=200", "mc"],
                 cwd=get_instance_path(instance_id),
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, timeout=5, env=compose_env()
             )
             # Log heartbeats: Done (2.345s)! or Done!
             if "Done (" in log_result.stdout or "Done!" in log_result.stdout:
@@ -427,7 +436,7 @@ async def start_instance(instance_id: str):
                 print(f"Bundling failed during start: {e}")
 
     # Start all services
-    result = subprocess.run(["docker", "compose", "up", "-d"], cwd=path, capture_output=True, text=True)
+    result = subprocess.run(["docker", "compose", "up", "-d"], cwd=path, capture_output=True, text=True, env=compose_env())
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
     return {"message": "Started"}
@@ -436,7 +445,7 @@ async def start_instance(instance_id: str):
 def stop_instance(instance_id: str):
     path = get_instance_path(instance_id)
     # Use 'down' instead of 'stop' to remove the container, which clears Docker logs
-    result = subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True, text=True)
+    result = subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True, text=True, env=compose_env())
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
     return {"message": "Stopped"}
@@ -444,7 +453,7 @@ def stop_instance(instance_id: str):
 @app.post("/api/instances/{instance_id}/kill")
 def kill_instance(instance_id: str):
     path = get_instance_path(instance_id)
-    result = subprocess.run(["docker", "compose", "kill"], cwd=path, capture_output=True, text=True)
+    result = subprocess.run(["docker", "compose", "kill"], cwd=path, capture_output=True, text=True, env=compose_env())
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
     return {"message": "Killed"}
@@ -736,7 +745,7 @@ def update_instance_users(instance_id: str, users: List[WhitelistUser]):
     if is_running:
         cmd = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", "whitelist reload"]
         try:
-            subprocess.run(cmd, cwd=path, capture_output=True, text=True, timeout=5)
+            subprocess.run(cmd, cwd=path, capture_output=True, text=True, timeout=5, env=compose_env())
         except Exception as e:
             print(f"RCON whitelist reload failed: {e}")
             
@@ -1414,9 +1423,17 @@ async def create_instance(req: CreateInstanceRequest):
 
     if req.cf_id:
         file_id = None
+        cf_slug = req.cf_id
         # If curseforge, req.modpack_version is the file ID
         try:
             async with get_cf_client() as client:
+                # itzg's CF_SLUG needs the slug, but the frontend sends the numeric project ID
+                if str(req.cf_id).isdigit():
+                    res = await client.get(f"{CF_API_BASE}/mods/{req.cf_id}")
+                    if res.status_code == 200:
+                        cf_slug = res.json().get("data", {}).get("slug") or cf_slug
+                    else:
+                        raise HTTPException(status_code=502, detail=f"CurseForge API returned {res.status_code} while resolving modpack {req.cf_id}")
                 if req.modpack_version:
                     file_id = req.modpack_version
                 else:
@@ -1440,6 +1457,9 @@ async def create_instance(req: CreateInstanceRequest):
                              if ver and ver[0].isdigit():
                                  mc_version = ver
                                  break
+        except HTTPException:
+            shutil.rmtree(path, ignore_errors=True)
+            raise
         except Exception as e:
             print(f"Error fetching CurseForge version details: {e}")
 
@@ -1448,7 +1468,8 @@ async def create_instance(req: CreateInstanceRequest):
             if val.startswith("TYPE="):
                 env[i] = "TYPE=AUTO_CURSEFORGE"
                 break
-        env.append(f"CF_SLUG={req.cf_id}")
+        env.append(f"CF_SLUG={cf_slug}")
+        env.append("CF_API_KEY=${CF_API_KEY}")
         if req.modpack_version:
             env.append(f"CF_FILE_ID={req.modpack_version}")
         
@@ -1521,7 +1542,7 @@ def delete_instance(instance_id: str):
     path = get_instance_path(instance_id)
     # Safely stop and remove containers and volumes before purging
     # Use --volumes to ensure bind mounts or volumes are handled, --remove-orphans for completeness
-    subprocess.run(["docker", "compose", "down", "-v", "--remove-orphans", "--timeout", "5"], cwd=path, capture_output=True)
+    subprocess.run(["docker", "compose", "down", "-v", "--remove-orphans", "--timeout", "5"], cwd=path, capture_output=True, env=compose_env())
     
     # Direct fallback: Try to remove by name in case compose lost track
     if docker_client:
@@ -1989,7 +2010,8 @@ def get_instance_logs(instance_id: str, tail: int = 200):
             ["docker", "compose", "logs", f"--tail={tail}"],
             cwd=path,
             capture_output=True,
-            text=True
+            text=True,
+            env=compose_env()
         )
         return {"logs": result.stdout + result.stderr}
     except Exception as e:
@@ -2004,7 +2026,7 @@ def execute_command(instance_id: str, req: CommandRequest):
     cmd = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", req.command]
     try:
         # Check if running
-        result = subprocess.run(cmd, cwd=path, capture_output=True, text=True, timeout=10)
+        result = subprocess.run(cmd, cwd=path, capture_output=True, text=True, timeout=10, env=compose_env())
         return {
             "output": result.stdout + result.stderr,
             "success": result.returncode == 0
