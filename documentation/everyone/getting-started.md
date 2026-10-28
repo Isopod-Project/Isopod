@@ -107,7 +107,6 @@ Isopod can host players on Minecraft for Windows, phones, tablets, and consoles 
 - The whitelist (Bedrock calls it the allowlist) takes Xbox gamertags, spaces included. Manage it later in the **User Management** tab: add or remove players, turn the allowlist on or off, and make players operators. Changes reach a running server straight away, except that a new operator who isn't online gets operator powers at the next start.
 - Bedrock has no ban command, so there's no Banned Players list. To keep someone out, turn the allowlist on and remove them from it.
 - Bedrock servers can't run Java mods or plugins, so the Edit window has no **Loaders**, **Mods**, or **Resource Packs** tab. The online player list isn't available either.
-- Console commands work, but their output shows up in the log rather than under the input box.
 - Backups and snapshots include the `worlds` folder. While the server is running, Isopod pauses saving for a few seconds so the copy is consistent.
 
 **Cross-play on a Java server.** Open a Paper, Purpur, Fabric, or NeoForge server's **Loaders** tab and switch on **Bedrock cross-play**, then **Save Changes** and restart the server.
