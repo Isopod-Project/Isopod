@@ -20,6 +20,8 @@ services:
       - /DATA/AppData/isopod/docker:/var/lib/docker
     environment:
       - SERVERS_DIR=/servers
+      # CurseForge API key (https://console.curseforge.com), needed for CurseForge search and modpacks
+      - CURSEFORGE_API_KEY=${CURSEFORGE_API_KEY:-}
     labels:
       icon: "https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png"
       title: "Isopod"

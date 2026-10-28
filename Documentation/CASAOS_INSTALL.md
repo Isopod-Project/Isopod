@@ -42,6 +42,8 @@ services:
       - /DATA/AppData/isopod/docker:/var/lib/docker
     environment:
       - SERVERS_DIR=/servers
+      # Optional: CurseForge API key (console.curseforge.com). Write every `$` in the key as `$$`.
+      - CURSEFORGE_API_KEY=
     labels:
       icon: "https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png"
       title: "Isopod"
@@ -82,6 +84,7 @@ If you prefer to fill out the form manually, ensure these settings are correct:
     - `/DATA/AppData/isopod/docker` -> `/var/lib/docker` (Persists downloaded server images and caches)
 - **Environment Variables**:
     - `SERVERS_DIR`: `/servers`
+    - `CURSEFORGE_API_KEY` (optional): your CurseForge API key from [console.curseforge.com](https://console.curseforge.com). Needed to search and install CurseForge modpacks. If you paste it into the compose YAML, write every `$` in the key as `$$`.
 
 > [!NOTE]
 > **Single App Dashboard Experience**:
