@@ -3300,6 +3300,7 @@ export default function App() {
                            instanceId={selectedInstance.id}
                            list={playerLists[selectedInstance.id]}
                            onChanged={() => fetchPlayers(selectedInstance.id)}
+                           readOnly={isBedrockType(selectedStatus.type)}
                            showAlert={showAlert}
                            showConfirm={showConfirm}
                            showPrompt={showPrompt}
