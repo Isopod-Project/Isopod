@@ -160,6 +160,15 @@ Isopod watches for servers that stop on their own. Stopping or killing a server 
 - A server that crashed and came back on its own shows a note in the side panel until you **Dismiss** it or start it yourself.
 - **View Crash Report** (or **Crash Report** in the Edit window's **Logs** tab) opens the newest file from `crash-reports/`. It shows what crashed, the root cause (the last `Caused by:` line), and any mods the report names as suspects, with the full report below it. Crashes that write no report, such as running out of memory or a port already in use, show the last log lines instead.
 
+## 💤 Sleep When Empty
+A Java server can pause itself when nobody is playing, so it stops using CPU.
+- Turn on **Sleep when empty** in the Edit window's **Configuration** tab and pick how many minutes it waits (10 by default). The timer starts when the last player leaves, or at startup if nobody joins. It takes effect the next time the server starts.
+- Before pausing, the server saves the world. While it's paused, its tile shows a blue dot and the side panel says **Sleeping**.
+- To wake it, connect to it in Minecraft, or just refresh your server list. It resumes within a few seconds and the join goes through as normal. A wake from a server-list refresh that nobody follows up on lets it go back to sleep after about 2 minutes.
+- Stopping a sleeping server from the dashboard wakes it first, so it shuts down cleanly.
+- A paused server still holds its RAM, though your computer can move it out to disk. Stop the server if you need the memory back.
+- Not available for Bedrock servers.
+
 ## 🔌 Lost Connection
 The dashboard checks every few seconds that it can still reach the Isopod backend, even with **Automatic Refresh** off. If two checks in a row fail, a **Lost connection to Isopod** banner appears and every server shows **Unknown**, because its last known status can't be trusted. Once the backend is reachable again, the banner clears and statuses reload on their own; **Retry** checks right away. If the dashboard can't reach the backend when it first loads, it shows **Can't reach Isopod** instead of an empty server list.
 

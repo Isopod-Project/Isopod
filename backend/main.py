@@ -29,6 +29,7 @@ from . import crashes
 from . import bedrock
 from . import bedrock_users
 from . import security
+from . import autopause
 import threading
 
 load_dotenv()
@@ -410,6 +411,7 @@ async def get_instance_status(instance_id: str):
     
     # Check logs for "Done" heartbeat if running
     is_ready = False
+    is_paused = False
     startup_status = "Offline"
     startup_percent = 0
     if is_running:
@@ -466,6 +468,11 @@ async def get_instance_status(instance_id: str):
                     startup_percent = 10
                     break
         except: pass
+        if is_ready:
+            started = [autopause.parse_started_at(c.attrs.get("State", {}).get("StartedAt")) for c in containers if c.status == "running"]
+            is_paused = autopause.is_sleeping(get_instance_path(instance_id), max((t for t in started if t), default=None))
+            if is_paused:
+                startup_status = "Sleeping"
     else:
         is_restarting = any(c.status == "restarting" for c in containers)
         if is_restarting:
@@ -544,6 +551,8 @@ async def get_instance_status(instance_id: str):
         "instance_id": instance_id,
         "is_running": is_running,
         "is_ready": is_ready,
+        # Paused by auto-pause; the first player to connect wakes it
+        "is_paused": is_paused,
         "pending_snapshot": pending_snapshot,
         "crash": crash,
         "version": version,
@@ -692,6 +701,8 @@ async def start_instance(instance_id: str):
 @app.post("/api/instances/{instance_id}/stop")
 def stop_instance(instance_id: str):
     path = get_instance_path(instance_id)
+    # A paused server ignores the shutdown signal until Docker kills it, which looks like a crash
+    autopause.wake(path)
     # Use 'down' instead of 'stop' to remove the container, which clears Docker logs
     result = subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
@@ -777,6 +788,7 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
                 bedrock.apply_crossplay(config["services"][first_service_name], env, os.path.join(path, "data"), bedrock.crossplay_enabled(old_env))
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
+            autopause.apply_settings(env)
         config['services'][first_service_name]['environment'] = env
 
     with open(compose_path, "w") as f:
