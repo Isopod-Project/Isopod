@@ -2,6 +2,10 @@
 node_modules
 frontend/node_modules
 backend/__pycache__
+**/__pycache__
+# Local Python virtualenvs; the image installs its own packages from requirements.txt
+**/venv
+**/.venv
 .env
 *.tar
 local_logs.txt

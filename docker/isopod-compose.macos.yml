@@ -1,0 +1,17 @@
+# macOS (Docker Desktop) overlay for isopod-compose.yml. The base file's /DATA/AppData paths are
+# CasaOS-only, and Docker Desktop only bind-mounts shared paths (your home folder by default).
+# One-time setup from the repo root, then use plain `docker compose up -d --build` (no -f flags):
+#   echo "COMPOSE_FILE=isopod-compose.yml:docker/isopod-compose.macos.yml" > .env
+services:
+  isopod:
+    volumes:
+      # Replaces the base mounts with the same targets. Relative paths resolve from the repo root.
+      - ./data/servers:/servers
+      # Named volume: the inner Docker daemon's overlay storage doesn't work on a macOS bind mount
+      - isopod-docker:/var/lib/docker
+    environment:
+      # fuse-overlayfs breaks container exec on Docker Desktop's kernel
+      - DOCKER_STORAGE_DRIVER=overlay2
+
+volumes:
+  isopod-docker:

@@ -10,7 +10,6 @@ from typing import List, Dict, Optional
 
 # Constants
 MCPACKS_API_URL = "https://mcpacks.dev/api/v1/packs"
-CF_API_BASE = "https://api.curseforge.com/v1"
 
 
 async def _fetch_pack_url(client: httpx.AsyncClient, pack_id: str, provider: str, mc_version: str):
@@ -31,21 +30,6 @@ async def _fetch_pack_url(client: httpx.AsyncClient, pack_id: str, provider: str
                         return primary["url"]
         except Exception as e:
             print(f"  [modrinth] Error fetching {pack_id} for {mc_version}: {e}")
-
-    elif provider == 'curseforge':
-        # CurseForge official API (requires CURSEFORGE_API_KEY)
-        try:
-            res = await client.get(
-                f"{CF_API_BASE}/mods/{pack_id}",
-                headers={"x-api-key": os.getenv("CURSEFORGE_API_KEY", "").strip()}
-            )
-            if res.status_code == 200:
-                data = res.json().get("data", {})
-                for file in data.get("latestFiles", []):
-                    if mc_version in file.get("gameVersions", []):
-                        return file.get("downloadUrl")
-        except Exception as e:
-            print(f"  [curseforge] Error fetching {pack_id} for {mc_version}: {e}")
 
     return None
 
@@ -196,7 +180,8 @@ async def upload_to_mcpacks(zip_path: str):
 
 def get_file_sha1(path: str):
     """Calculate SHA-1 hash of a file."""
-    sha1 = hashlib.sha1()
+    # Minecraft verifies resource packs by SHA-1; this is a checksum, not a security use
+    sha1 = hashlib.sha1(usedforsecurity=False)
     with open(path, "rb") as f:
         while True:
             data = f.read(65536)

@@ -1,18 +1,44 @@
-version: '3.8'
+name: isopod
 
 services:
   isopod:
     build: .
     image: isopod:latest
     container_name: isopod
+    privileged: true
     restart: unless-stopped
+    network_mode: bridge
     ports:
       - "8000:8000"
+      - "25565-25585:25565-25585"
+      # Bedrock servers and Java cross-play (Geyser) use UDP
+      - "19132-19152:19132-19152/udp"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Critical: Host and internal path must match perfectly 
-      # so that compose up commands resolve relative paths on the host daemon natively!
-      - /DATA/AppData/isopod/servers:/DATA/AppData/isopod/servers
+      # Minecraft server instances and worlds
+      - /DATA/AppData/isopod/servers:/servers
+      # Caches pulled Docker images (like itzg/minecraft-server) on host storage
+      - /DATA/AppData/isopod/docker:/var/lib/docker
     environment:
-      - SERVERS_DIR=/DATA/AppData/isopod/servers
-      - CURSEFORGE_API_KEY=${CURSEFORGE_API_KEY:-}
+      - SERVERS_DIR=/servers
+    labels:
+      icon: "https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png"
+      title: "Isopod"
+      description: "Modern Minecraft Server Manager"
+      casaos_app_id: "isopod"
+
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: isopod
+  author: Tacoz234
+  category: Utilities
+  description:
+    en_us: Modern, lightweight Minecraft instance manager with a sleek web dashboard.
+  developer: Tacoz234
+  icon: https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png
+  thumbnail: https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png
+  title:
+    en_us: Isopod
+  port_map: "8000"
+  scheme: http

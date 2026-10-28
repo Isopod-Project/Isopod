@@ -5,52 +5,41 @@ import re
 import zipfile
 import tempfile
 import asyncio
-from fastapi import FastAPI, HTTPException, File, UploadFile, Request, BackgroundTasks, Form
+from fastapi import FastAPI, HTTPException, File, UploadFile, Request, BackgroundTasks, Form, Body
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import docker
 import yaml
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union, Tuple
+from datetime import datetime, timezone
 import httpx
 import json
 import time
 from . import resource_packs as rp
+from . import backups
+from . import resource_usage
+from . import players
+from . import modpacks
+from . import crashes
+from . import bedrock
+from . import bedrock_users
+from . import security
+import threading
 
 load_dotenv()
 
 app = FastAPI(title="Isopod Backend")
 
-ISOPOD_VERSION = "v0.0.1"
-GITHUB_REPO = os.getenv("GITHUB_REPO", "Tacoz234/Isopod")
+ISOPOD_VERSION = "v0.3.0"
+GITHUB_REPO = os.getenv("GITHUB_REPO", "Isopod-Project/Isopod")
 
 # Internal state for background update checks
 cached_update_info: Optional[Dict[str, Any]] = None
-
-# Headers and client helper for the official CurseForge API (requires an API key)
-CF_API_BASE = "https://api.curseforge.com/v1"
-CF_HEADERS = {
-    "User-Agent": "Isopod/1.0",
-    "Accept": "application/json",
-}
-
-def get_cf_client() -> httpx.AsyncClient:
-    api_key = os.getenv("CURSEFORGE_API_KEY", "").strip()
-    headers = dict(CF_HEADERS)
-    if api_key:
-        headers["x-api-key"] = api_key
-    return httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=20.0)
-
-def compose_env() -> Dict[str, str]:
-    """Environment for `docker compose` calls. Instance compose files reference
-    ${CF_API_KEY}, so the key never has to be written to disk (itzg's AUTO_CURSEFORGE needs it)."""
-    env = os.environ.copy()
-    key = os.getenv("CURSEFORGE_API_KEY", "").strip()
-    if key:
-        env["CF_API_KEY"] = key
-    return env
 
 class SystemInfo(BaseModel):
     version: str
@@ -64,15 +53,61 @@ class UpdateInfo(BaseModel):
     published_at: Optional[str] = None
 
 
-# We will need CORS for frontend development
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# The frontend is served from this same origin, so cross-origin access is off unless
+# ISOPOD_CORS_ORIGINS lists extra origins (e.g. the Vite dev server). See backend/security.py.
+CORS_ORIGINS = security.allowed_origins_from_env()
+app.add_middleware(security.OriginGuardMiddleware, allowed_origins=CORS_ORIGINS)
+if CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+class AuthorizationMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        inst_user = request.headers.get("X-Instance-User")
+        inst_id = request.headers.get("X-Instance-Id")
+        if inst_user and inst_id:
+            try:
+                access = check_instance_user_access(inst_id, inst_user)
+                if not access.get("permitted", True):
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": access.get("reason", "Access denied"), "access": access}
+                    )
+            except Exception as e:
+                print(f"Error in AuthorizationMiddleware: {e}")
+        response = await call_next(request)
+        return response
+
+app.add_middleware(AuthorizationMiddleware)
 
 SERVERS_DIR = os.getenv("SERVERS_DIR", "./servers")
+
+def get_current_version() -> str:
+    version_file = os.path.join(SERVERS_DIR, ".isopod_version")
+    if os.path.exists(version_file):
+        try:
+            with open(version_file, "r", encoding="utf-8") as f:
+                v = f.read().strip()
+                if v:
+                    return v
+        except Exception:
+            pass
+    return ISOPOD_VERSION
+
+def set_current_version(version: str):
+    try:
+        version_file = os.path.join(SERVERS_DIR, ".isopod_version")
+        os.makedirs(os.path.dirname(version_file), exist_ok=True)
+        with open(version_file, "w", encoding="utf-8") as f:
+            f.write(version.strip())
+    except Exception as e:
+        print(f"Failed to set current version: {e}")
+
 
 try:
     docker_client = docker.from_env()
@@ -80,9 +115,33 @@ except docker.errors.DockerException:
     print("Warning: Could not connect to Docker daemon.")
     docker_client = None
 
+def get_docker_client():
+    global docker_client
+    if docker_client is None:
+        try:
+            settings_path = os.path.join(SERVERS_DIR, "isopod_settings.json")
+            socket_path = None
+            if os.path.exists(settings_path):
+                try:
+                    with open(settings_path, "r") as f:
+                        cfg = json.load(f)
+                        socket_path = cfg.get("dockerSocket")
+                except Exception:
+                    pass
+            if socket_path and os.path.exists(socket_path):
+                docker_client = docker.DockerClient(base_url=f"unix://{socket_path}")
+            else:
+                docker_client = docker.from_env()
+        except Exception:
+            pass
+    return docker_client
+
+
 class InstanceConfig(BaseModel):
     image: str
     environment: Dict[str, str]
+    # always | on-failure | never; left unchanged when omitted
+    restart_policy: Optional[str] = None
 
 class ModResponse(BaseModel):
     id: str
@@ -116,6 +175,8 @@ class CreateInstanceRequest(BaseModel):
     difficulty: Optional[str] = "easy"
     gamemode: Optional[str] = "survival"
     generate_structures: Optional[bool] = True
+    whitelist_enabled: Optional[bool] = None
+    whitelist_users: Optional[List[str]] = None
 
 
 class RenameInstanceRequest(BaseModel):
@@ -123,6 +184,12 @@ class RenameInstanceRequest(BaseModel):
 
 class DuplicateInstanceRequest(BaseModel):
     name: Optional[str] = None
+
+class BackupSettingsRequest(BaseModel):
+    enabled: bool
+    interval_hours: float
+    keep: int
+    snapshot_keep: int = backups.DEFAULT_SETTINGS["snapshot_keep"]
 
 class CommandRequest(BaseModel):
     command: str
@@ -136,11 +203,46 @@ class Instance(BaseModel):
     group: str = "No group"
     icon_url: Optional[str] = None
 
+def instance_dir(slug: str) -> Optional[str]:
+    """The folder for an instance slug inside SERVERS_DIR, or None if the slug would escape it."""
+    servers_root = os.path.realpath(SERVERS_DIR)
+    path = os.path.realpath(os.path.join(servers_root, slug))
+    # Containment check (also what CodeQL recognizes as a path-injection sanitizer).
+    # An empty slug resolves to SERVERS_DIR itself, which this rejects too.
+    if not path.startswith(servers_root + os.sep):
+        return None
+    return path
+
+def new_instance_dir(name: str) -> Tuple[str, str]:
+    """A free slug and folder for a new instance called name, adding -1, -2... on collisions."""
+    base_slug = generate_slug(name)
+    slug = base_slug
+    counter = 1
+    while True:
+        path = instance_dir(slug)
+        if path is None:
+            raise HTTPException(status_code=400, detail="Instance name needs at least one letter or number")
+        if not os.path.exists(path):
+            return slug, path
+        slug = f"{base_slug}-{counter}"
+        counter += 1
+
+# An ID, slug, or version number that's safe to put in a URL path: no slashes, no "..".
+URL_SEGMENT_RE = re.compile(r"[A-Za-z0-9_+-]+(?:\.[A-Za-z0-9_+-]+)*")
+
+def url_segment(value: Optional[str], label: str) -> Optional[str]:
+    """value, checked safe to put in a URL path. Empty stays None; anything else is a 400."""
+    if not value:
+        return None
+    if URL_SEGMENT_RE.fullmatch(value):
+        return value
+    raise HTTPException(status_code=400, detail=f"Invalid {label}")
+
 def get_instance_path(instance_id: str) -> str:
     # Basic sanitize
     safe_id = "".join(c for c in instance_id if c.isalnum() or c in ('-', '_'))
-    path = os.path.join(SERVERS_DIR, safe_id)
-    if not os.path.exists(path) or not os.path.isdir(path):
+    path = instance_dir(safe_id)
+    if path is None or not os.path.isdir(path):
         raise HTTPException(status_code=404, detail="Instance not found")
     return path
 
@@ -185,8 +287,31 @@ def list_instances():
                     group=meta.get("group", "No group"),
                     icon_url=f"/api/instances/{entry.name}/icon" if os.path.exists(icon_path) else None
                 ))
-                
+
     return instances
+
+def get_instance_memory_setting(instance_path: str) -> Optional[str]:
+    """The MEMORY value from an instance's docker-compose.yml, e.g. "2G"."""
+    try:
+        with open(os.path.join(instance_path, "docker-compose.yml"), "r") as f:
+            services = (yaml.safe_load(f) or {}).get("services", {})
+        mc_config = services.get("mc") or list(services.values())[0]
+        env = mc_config.get("environment", {})
+        if isinstance(env, list):
+            env = dict(item.split("=", 1) for item in env if "=" in item)
+        return env.get("MEMORY")
+    except Exception:
+        return None
+
+@app.get("/api/resources")
+def get_resource_usage():
+    """Live CPU and RAM usage per running instance, plus totals across all instances."""
+    client = get_docker_client()
+    if not client:
+        raise HTTPException(status_code=500, detail="Docker client not initialized")
+    instances = list_instances()
+    allocated = {inst.id: resource_usage.parse_memory(get_instance_memory_setting(inst.path)) for inst in instances}
+    return resource_usage.collect(client, [inst.id for inst in instances], allocated)
 
 @app.get("/api/groups")
 def list_groups():
@@ -252,38 +377,93 @@ def rename_group(group_name: str, req: RenameGroupRequest):
 @app.get("/api/instances/{instance_id}/status")
 async def get_instance_status(instance_id: str):
     """Pull real running status of the Docker containers for an instance."""
-    if not docker_client:
+    client = get_docker_client()
+    if not client:
         raise HTTPException(status_code=500, detail="Docker client not initialized")
 
     project_label_value = "".join(c for c in instance_id if c.isalnum() or c in ('-', '_')).lower()
     
     filters = {"label": f"com.docker.compose.project={project_label_value}"}
-    containers = docker_client.containers.list(all=True, filters=filters)
+    containers = client.containers.list(all=True, filters=filters)
     
     if not containers:
         filters = {"label": f"com.docker.compose.project={instance_id}"}
-        containers = docker_client.containers.list(all=True, filters=filters)
+        containers = client.containers.list(all=True, filters=filters)
 
     is_running = any(c.status == "running" for c in containers)
     
     # Check logs for "Done" heartbeat if running
     is_ready = False
+    startup_status = "Offline"
+    startup_percent = 0
     if is_running:
+        startup_status = "Starting..."
+        startup_percent = 10
         try:
             # Check most recent logs for Minecraft heartbeats
             log_result = subprocess.run(
                 ["docker", "compose", "logs", "--tail=200", "mc"],
                 cwd=get_instance_path(instance_id),
-                capture_output=True, text=True, timeout=5, env=compose_env()
+                capture_output=True, text=True, timeout=5
             )
-            # Log heartbeats: Done (2.345s)! or Done!
-            if "Done (" in log_result.stdout or "Done!" in log_result.stdout:
-                is_ready = True
+            stdout = log_result.stdout
+            lines = stdout.splitlines()
+            for line in reversed(lines):
+                # Check for stopping / shutdown first (most recent event)
+                if any(x in line for x in ["Stopping server", "Stopping the server", "Closing Server"]):
+                    is_ready = False
+                    startup_status = "Stopping..."
+                    startup_percent = 70
+                    break
+                # Check for online / ready
+                if "Done (" in line or "Done!" in line or bedrock.READY_MARKER in line:
+                    is_ready = True
+                    startup_status = "Online"
+                    startup_percent = 100
+                    break
+                # Parse logs for startup state
+                import re
+                m = re.search(r"Preparing spawn area:\s*(\d+)%", line)
+                if m:
+                    pct = int(m.group(1))
+                    startup_status = f"Preparing spawn area ({pct}%)"
+                    startup_percent = int(45 + pct * 0.5)
+                    break
+                if "Preparing level" in line or "Preparing start region" in line:
+                    startup_status = "Preparing level..."
+                    startup_percent = 40
+                    break
+                if "Loading mods" in line or ("Loaded " in line and " mods" in line) or "Applying patches" in line or "Patching" in line:
+                    startup_status = "Loading mods..."
+                    startup_percent = 30
+                    break
+                if "Loading properties" in line or "Default game type:" in line:
+                    startup_status = "Loading properties..."
+                    startup_percent = 20
+                    break
+                if "Starting minecraft server version" in line or "Starting Minecraft server" in line or "Loading libraries" in line:
+                    startup_status = "Starting Minecraft server..."
+                    startup_percent = 15
+                    break
+                if any(x in line.lower() for x in ["downloading", "installing", "resolving"]):
+                    startup_status = "Downloading server files..."
+                    startup_percent = 10
+                    break
         except: pass
+    else:
+        is_restarting = any(c.status == "restarting" for c in containers)
+        if is_restarting:
+            startup_status = "Restarting..."
+            startup_percent = 20
+        else:
+            startup_status = "Offline"
+            startup_percent = 0
 
     # Get metadata like version and last active
     version = "Unknown"
     port = 25565
+    bedrock_port = None
+    server_type = "VANILLA"
     last_online = 0
     try:
         path = get_instance_path(instance_id)
@@ -304,12 +484,14 @@ async def get_instance_status(instance_id: str):
                            env_dict[k] = v
                    env = env_dict
                version = env.get("VERSION", "Unknown") if isinstance(env, dict) else "Unknown"
+               server_type = (env.get("TYPE") or "VANILLA").upper() if isinstance(env, dict) else "VANILLA"
                
                # Extract port
                ports = mc_config.get("ports", [])
                if ports:
                    p_str = str(ports[0]).split(":")[0]
                    port = int(p_str)
+               bedrock_port = bedrock.bedrock_port(mc_config)
         
         # Last online from docker-compose.yml mod date
         last_online = os.path.getmtime(compose_path)
@@ -327,15 +509,37 @@ async def get_instance_status(instance_id: str):
             "image": c.image.tags[0] if c.image.tags else c.image.id,    
         })
 
+    pending_snapshot = None
+    crash = None
+    try:
+        instance_path = get_instance_path(instance_id)
+        pending_snapshot = current_pending_snapshot(instance_path, containers, is_ready)
+        crash = current_crash_state(instance_path, containers, is_running)
+    except HTTPException:
+        pass
+    if crash and crash["state"] == "crashed":
+        startup_status = "Out of memory" if crash.get("oom_killed") else f"Crashed (Code: {crash.get('exit_code')})"
+    elif crash and crash["state"] == "halted":
+        startup_status = "Crash loop stopped"
+    elif crash and crash["state"] == "restarting":
+        startup_status = "Restarting after crash..."
+
     return {
         "instance_id": instance_id,
         "is_running": is_running,
         "is_ready": is_ready,
+        "pending_snapshot": pending_snapshot,
+        "crash": crash,
         "version": version,
+        "type": server_type,
         "port": port,
+        # UDP port Bedrock players join on (the game port itself on a Bedrock server); None without cross-play
+        "bedrock_port": bedrock_port,
         "public_ip": public_ip,
         "last_online": last_online,
-        "containers": container_info
+        "containers": container_info,
+        "startup_status": startup_status,
+        "startup_percent": startup_percent
     }
 
 @app.post("/api/instances/{instance_id}/start")
@@ -381,15 +585,14 @@ async def start_instance(instance_id: str):
 
     mc_version = env.get("VERSION", "1.20.4")
     
-    # Resource Pack Bundling Logic
     m_ids_str = env.get("RESOURCE_PACKS_MODRINTH", "")
-    c_ids_str = env.get("RESOURCE_PACKS_CF", "")
-    pack_list_key = f"{m_ids_str}|{c_ids_str}|{mc_version}"
+    pack_list_key = f"{m_ids_str}|{mc_version}"
     
-    if m_ids_str or c_ids_str:
+    if m_ids_str:
         cache_dir = os.path.join(SERVERS_DIR, ".cache", "resource_packs")
         os.makedirs(cache_dir, exist_ok=True)
-        hash_file = os.path.join(cache_dir, f"{instance_id}_key.txt")
+        cache_key = os.path.basename(path)
+        hash_file = os.path.join(cache_dir, f"{cache_key}_key.txt")
         
         # Check cache
         last_key = ""
@@ -399,7 +602,6 @@ async def start_instance(instance_id: str):
         if pack_list_key != last_key:
             print(f"--- Bundling Needed for {instance_id} ---")
             m_ids = [i.strip() for i in m_ids_str.split(",") if i.strip()]
-            c_ids = [i.strip() for i in c_ids_str.split(",") if i.strip()]
             
             try:
                 async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
@@ -411,15 +613,8 @@ async def start_instance(instance_id: str):
                             if await rp.download_file(client, url, z_path):
                                 downloaded_zips.append(z_path)
 
-                    for cid in c_ids:
-                        url = await rp.get_latest_version_url(client, "curseforge", cid, mc_version)
-                        if url:
-                            z_path = os.path.join(cache_dir, f"{cid}.zip")
-                            if await rp.download_file(client, url, z_path):
-                                downloaded_zips.append(z_path)
-
                     if downloaded_zips:
-                        bundle_path = os.path.join(cache_dir, f"bundle_{instance_id}.zip")
+                        bundle_path = os.path.join(cache_dir, f"bundle_{cache_key}.zip")
                         rp.merge_resource_packs(downloaded_zips, bundle_path)
                         public_url, sha1 = await rp.upload_to_mcpacks(bundle_path)
                         if public_url and sha1:
@@ -435,27 +630,68 @@ async def start_instance(instance_id: str):
             except Exception as e:
                 print(f"Bundling failed during start: {e}")
 
+    # Sync whitelist and ops files from User Management schema before starting (Bedrock keeps its own allowlist.json)
+    if not bedrock.is_bedrock(env.get("TYPE")):
+        try:
+            users, _ = get_instance_users_internal(instance_id)
+            data_dir = os.path.join(path, "data")
+            os.makedirs(data_dir, exist_ok=True)
+            wl_path = os.path.join(data_dir, "whitelist.json")
+            if not os.path.exists(wl_path) or os.path.getsize(wl_path) == 0:
+                wl_entries = [{"uuid": u["uuid"] or "", "name": u["name"]} for u in users if u.get("whitelisted") and u.get("active")]
+                with open(wl_path, "w") as f:
+                    json.dump(wl_entries, f, indent=2)
+            # Repair entries saved with undashed UUIDs, which Minecraft ignores
+            for access_file in ("whitelist.json", "ops.json"):
+                access_path = os.path.join(data_dir, access_file)
+                if not os.path.exists(access_path):
+                    continue
+                with open(access_path, "r") as f:
+                    entries = json.load(f)
+                if not isinstance(entries, list):
+                    continue
+                changed = False
+                for entry in entries:
+                    if isinstance(entry, dict) and isinstance(entry.get("uuid"), str) and entry["uuid"] != format_uuid(entry["uuid"]):
+                        entry["uuid"] = format_uuid(entry["uuid"])
+                        changed = True
+                if changed:
+                    with open(access_path, "w") as f:
+                        json.dump(entries, f, indent=2)
+        except Exception as e:
+            print(f"Error syncing user management on start: {e}")
+
+    # Starting by hand acknowledges any crash and re-arms the watchdog
+    save_instance_meta(path, {"last_crash": None, "crash_loop_halted": None})
+
     # Start all services
-    result = subprocess.run(["docker", "compose", "up", "-d"], cwd=path, capture_output=True, text=True, env=compose_env())
+    result = subprocess.run(["docker", "compose", "up", "-d"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
-        raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
+        raw_lines = [l.strip() for l in result.stderr.splitlines() if l.strip()]
+        err_lines = [l for l in raw_lines if not any(k in l for k in ["Downloading", "Extracting", "Waiting", "Pulling fs layer", "Verifying Checksum", "Download complete", "Pull complete"])]
+        clean_err = "\n".join(err_lines).strip() or "\n".join(raw_lines[-5:]).strip() or "Unknown error"
+        raise HTTPException(status_code=400, detail=f"Docker Compose failed: {clean_err}")
     return {"message": "Started"}
 
 @app.post("/api/instances/{instance_id}/stop")
 def stop_instance(instance_id: str):
     path = get_instance_path(instance_id)
     # Use 'down' instead of 'stop' to remove the container, which clears Docker logs
-    result = subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True, text=True, env=compose_env())
+    result = subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
-        raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
+        clean_err = result.stderr.strip() or "Unknown error"
+        raise HTTPException(status_code=400, detail=f"Docker Compose failed: {clean_err}")
     return {"message": "Stopped"}
 
 @app.post("/api/instances/{instance_id}/kill")
 def kill_instance(instance_id: str):
     path = get_instance_path(instance_id)
-    result = subprocess.run(["docker", "compose", "kill"], cwd=path, capture_output=True, text=True, env=compose_env())
+    # A killed container exits non-zero; this keeps it from showing as crashed
+    save_instance_meta(path, {"manual_stop_at": time.time()})
+    result = subprocess.run(["docker", "compose", "kill"], cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
-        raise HTTPException(status_code=400, detail=f"Docker Compose failed: {result.stderr}")
+        clean_err = result.stderr.strip() or "Unknown error"
+        raise HTTPException(status_code=400, detail=f"Docker Compose failed: {clean_err}")
     return {"message": "Killed"}
 
 @app.get("/api/instances/{instance_id}/config")
@@ -488,6 +724,7 @@ def get_config(instance_id: str):
     return {
         "image": service.get("image", ""),
         "environment": env,
+        "restart_policy": crashes.policy_from_compose(service.get("restart")),
     }
 
 @app.put("/api/instances/{instance_id}/config")
@@ -501,18 +738,43 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
         config = yaml.safe_load(f)
         
     services = config.get("services", {})
+    snapshot = None
     if services:
+        old_env = env_as_dict(list(services.values())[0].get("environment"))
+        reason = describe_update(old_env, new_config.environment)
+        if reason:
+            snapshot = await asyncio.to_thread(take_pre_update_snapshot, path, reason)
         first_service_name = list(services.keys())[0]
         config['services'][first_service_name]['image'] = new_config.image
+        if new_config.restart_policy is not None:
+            if new_config.restart_policy not in crashes.RESTART_POLICIES:
+                raise HTTPException(status_code=400, detail="Restart policy must be always, on-failure, or never.")
+            config['services'][first_service_name]['restart'] = crashes.RESTART_POLICIES[new_config.restart_policy]
         # Ensure EULA is preserved/added
         env = new_config.environment
         env["EULA"] = "TRUE"
+        is_bedrock_server = bedrock.is_bedrock(env.get("TYPE"))
+        if not is_bedrock_server:
+            if env.get("MODRINTH_ALLOWED_VERSION_TYPE") == "release,beta,alpha" or "MODRINTH_ALLOWED_VERSION_TYPE" not in env:
+                env["MODRINTH_ALLOWED_VERSION_TYPE"] = "alpha"
+            try:
+                bedrock.apply_crossplay(config["services"][first_service_name], env, os.path.join(path, "data"), bedrock.crossplay_enabled(old_env))
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
         config['services'][first_service_name]['environment'] = env
-        
+
     with open(compose_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False)
+
+    # Synchronize configured mods directly to data/mods/ immediately upon saving
+    sync_result = {}
+    try:
+        if not bedrock.is_bedrock(new_config.environment.get("TYPE")):
+            sync_result = await sync_instance_mods_to_disk(instance_id, new_config.environment) or {}
+    except Exception as e:
+        print(f"Error syncing mods to disk during config save: {e}")
         
-    return {"message": "Config updated"}
+    return {"message": "Config updated", "snapshot": snapshot, **sync_result}
 
 class WhitelistUser(BaseModel):
     name: str
@@ -520,133 +782,316 @@ class WhitelistUser(BaseModel):
     level: int = 0
     is_op: bool = False
     whitelisted: bool = True
+    active: bool = True
+    # Bedrock only: the Xbox user ID that permissions.json stores operators by
+    xuid: Optional[str] = None
 
-@app.get("/api/instances/{instance_id}/users")
-def get_instance_users(instance_id: str):
-    path = get_instance_path(instance_id)
-    
-    # Paths for files
+class UpdateUsersPayload(BaseModel):
+    users: List[WhitelistUser]
+    whitelist_enabled: Optional[bool] = None
+
+def get_bedrock_users(path: str, env: dict) -> Tuple[List[dict], bool]:
+    """A Bedrock server's users.json, topped up from the allowlist and operators the server already has."""
     data_dir = os.path.join(path, "data")
     os.makedirs(data_dir, exist_ok=True)
+    users_file = os.path.join(data_dir, "users.json")
+    users, changed = bedrock_users.load_users(bedrock_users.read_json_list(users_file), data_dir, env)
+    if users and (changed or not os.path.exists(users_file)):
+        try:
+            with open(users_file, "w") as f:
+                json.dump(users, f, indent=2)
+        except OSError as e:
+            print(f"Error writing users.json: {e}")
+    return users, bedrock_users.allow_list_enabled(env)
+
+def get_instance_users_internal(instance_id: str) -> Tuple[List[dict], bool]:
+    path = get_instance_path(instance_id)
+    env = read_compose_env(path)
+    if bedrock.is_bedrock(env.get("TYPE")):
+        return get_bedrock_users(path, env)
+    data_dir = os.path.join(path, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    users_file = os.path.join(data_dir, "users.json")
+    whitelist_path = os.path.join(data_dir, "whitelist.json")
+    ops_path = os.path.join(data_dir, "ops.json")
+    compose_path = os.path.join(path, "docker-compose.yml")
+    
+    # Check whitelist_enabled and legacy fallback values from docker-compose.yml
+    whitelist_enabled = False
+    legacy_whitelist_names = []
+    legacy_op_names = []
+    if os.path.exists(compose_path):
+        try:
+            with open(compose_path, "r") as f:
+                config = yaml.safe_load(f)
+            services = config.get("services", {})
+            if services:
+                first_service = list(services.keys())[0]
+                env = services[first_service].get("environment", {})
+                env_dict = {}
+                if isinstance(env, list):
+                    for item in env:
+                        if "=" in item:
+                            k, v = item.split("=", 1)
+                            env_dict[k] = v
+                elif isinstance(env, dict):
+                    env_dict = env
+                whitelist_enabled = env_dict.get("ENABLE_WHITELIST", "").lower() == "true"
+                legacy_wl_str = env_dict.get("WHITELIST", "")
+                legacy_whitelist_names = [n.strip() for n in legacy_wl_str.split(",") if n.strip()]
+                legacy_ops_str = env_dict.get("OPS", "")
+                legacy_op_names = [n.strip() for n in legacy_ops_str.split(",") if n.strip()]
+        except Exception as e:
+            print(f"Error reading docker-compose.yml for user config: {e}")
+            
+    users = {}
+    
+    # 1. Primary source of truth: users.json
+    if os.path.exists(users_file):
+        try:
+            with open(users_file, "r") as f:
+                saved_users = json.load(f)
+                if isinstance(saved_users, list):
+                    for u in saved_users:
+                        if isinstance(u, dict) and "name" in u:
+                            users[u["name"].lower()] = {
+                                "name": u["name"],
+                                "uuid": u.get("uuid"),
+                                "level": u.get("level", 0),
+                                "is_op": u.get("is_op", False),
+                                "whitelisted": u.get("whitelisted", True),
+                                "active": u.get("active", True)
+                            }
+        except Exception as e:
+            print(f"Error reading users.json: {e}")
+            
+    # 2. Secondary source: construct from ops.json & whitelist.json if users.json absent
+    if not users:
+        if os.path.exists(ops_path):
+            try:
+                with open(ops_path, "r") as f:
+                    ops_data = json.load(f)
+                    if isinstance(ops_data, list):
+                        for entry in ops_data:
+                            if isinstance(entry, dict) and "name" in entry:
+                                name = entry["name"]
+                                users[name.lower()] = {
+                                    "name": name,
+                                    "uuid": entry.get("uuid"),
+                                    "level": entry.get("level", 4),
+                                    "is_op": True,
+                                    "whitelisted": False,
+                                    "active": True
+                                }
+            except Exception as e:
+                print(f"Error reading ops.json: {e}")
+                
+        if os.path.exists(whitelist_path):
+            try:
+                with open(whitelist_path, "r") as f:
+                    wl_data = json.load(f)
+                    if isinstance(wl_data, list):
+                        for entry in wl_data:
+                            if isinstance(entry, dict) and "name" in entry:
+                                name = entry["name"]
+                                key = name.lower()
+                                if key in users:
+                                    users[key]["whitelisted"] = True
+                                    if entry.get("uuid") and not users[key]["uuid"]:
+                                        users[key]["uuid"] = entry["uuid"]
+                                else:
+                                    users[key] = {
+                                        "name": name,
+                                        "uuid": entry.get("uuid"),
+                                        "level": 0,
+                                        "is_op": False,
+                                        "whitelisted": True,
+                                        "active": True
+                                    }
+            except Exception as e:
+                print(f"Error reading whitelist.json: {e}")
+                
+    # 3. Data Migration / Backward Compatibility:
+    # If legacy WHITELIST environment variables exist in docker-compose.yml, migrate them into users schema
+    migrated_any = False
+    for name in legacy_whitelist_names:
+        key = name.lower()
+        if key not in users:
+            users[key] = {
+                "name": name,
+                "uuid": None,
+                "level": 0,
+                "is_op": False,
+                "whitelisted": True,
+                "active": True
+            }
+            migrated_any = True
+        else:
+            if not users[key]["whitelisted"]:
+                users[key]["whitelisted"] = True
+                migrated_any = True
+
+    for name in legacy_op_names:
+        key = name.lower()
+        if key not in users:
+            users[key] = {
+                "name": name,
+                "uuid": None,
+                "level": 4,
+                "is_op": True,
+                "whitelisted": False,
+                "active": True
+            }
+            migrated_any = True
+
+    user_list = list(users.values())
+    
+    # Persist migrated schema so future requests and active user access are guaranteed
+    if (not os.path.exists(users_file) or migrated_any) and user_list:
+        try:
+            with open(users_file, "w") as f:
+                json.dump(user_list, f, indent=2)
+            if not os.path.exists(whitelist_path):
+                wl_to_write = [{"uuid": u["uuid"] or "", "name": u["name"]} for u in user_list if u.get("whitelisted") and u.get("active")]
+                with open(whitelist_path, "w") as f:
+                    json.dump(wl_to_write, f, indent=2)
+        except Exception as e:
+            print(f"Error persisting users.json after migration: {e}")
+            
+    return user_list, whitelist_enabled
+
+
+def check_instance_user_access(instance_id: str, username: str) -> Dict[str, Any]:
+    """Single source of truth access evaluation based exclusively on User Management schema."""
+    users, wl_enabled = get_instance_users_internal(instance_id)
+    user_match = None
+    for u in users:
+        if u.get("name", "").lower() == username.lower():
+            user_match = u
+            break
+            
+    is_active = user_match.get("active", True) if user_match else True
+    is_whitelisted = user_match.get("whitelisted", False) if user_match else False
+    is_op = user_match.get("is_op", False) if user_match else False
+    
+    # Deactivated users in User Management are rejected regardless
+    if user_match and not is_active:
+        return {
+            "permitted": False,
+            "username": username,
+            "whitelist_enabled": wl_enabled,
+            "whitelisted": is_whitelisted,
+            "active": False,
+            "is_op": is_op,
+            "reason": "User is deactivated in User Management"
+        }
+        
+    if wl_enabled:
+        permitted = bool(user_match and is_whitelisted and is_active)
+        return {
+            "permitted": permitted,
+            "username": username,
+            "whitelist_enabled": True,
+            "whitelisted": is_whitelisted,
+            "active": is_active,
+            "is_op": is_op,
+            "reason": "User is explicitly whitelisted" if permitted else "Whitelist gating active: user is not whitelisted"
+        }
+    else:
+        return {
+            "permitted": True,
+            "username": username,
+            "whitelist_enabled": False,
+            "whitelisted": is_whitelisted,
+            "active": is_active,
+            "is_op": is_op,
+            "reason": "Standard user access rules apply without whitelist gating"
+        }
+
+
+@app.get("/api/instances/{instance_id}/users")
+def get_instance_users(instance_id: str, response: Response = None):
+    users, wl_enabled = get_instance_users_internal(instance_id)
+    if response:
+        response.headers["X-Whitelist-Enabled"] = "true" if wl_enabled else "false"
+    return users
+
+
+def format_uuid(raw_uuid: str) -> str:
+    if len(raw_uuid) == 32:
+        return f"{raw_uuid[:8]}-{raw_uuid[8:12]}-{raw_uuid[12:16]}-{raw_uuid[16:20]}-{raw_uuid[20:]}"
+    return raw_uuid
+
+def get_minecraft_uuid(username: str) -> str:
+    import urllib.request
+    import urllib.parse
+    import hashlib
+    import json
+    
+    url = f"https://api.mojang.com/users/profiles/minecraft/{urllib.parse.quote(username, safe='')}"
+    try:
+        req = urllib.request.Request(
+            url, 
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        )
+        with urllib.request.urlopen(req, timeout=3) as response:
+            if response.status == 200:
+                data = json.loads(response.read().decode())
+                raw_id = data.get("id")
+                if raw_id:
+                    return format_uuid(raw_id)
+    except Exception as e:
+        print(f"Error fetching UUID from Mojang API: {e}")
+        
+    # Fallback to offline UUID generation (MD5-based offline UUID)
+    # Minecraft's offline-mode UUID scheme, not a security use of MD5
+    hash_bytes = hashlib.md5(f"OfflinePlayer:{username}".encode('utf-8'), usedforsecurity=False).digest()
+    hash_list = list(hash_bytes)
+    hash_list[6] = (hash_list[6] & 0x0f) | 0x30  # Version 3 UUID
+    hash_list[8] = (hash_list[8] & 0x3f) | 0x80  # Variant 1
+    hex_str = ''.join(f'{b:02x}' for b in hash_list)
+    return f"{hex_str[:8]}-{hex_str[8:12]}-{hex_str[12:16]}-{hex_str[16:20]}-{hex_str[20:]}"
+
+
+@app.put("/api/instances/{instance_id}/users")
+def update_instance_users(
+    instance_id: str, 
+    payload: Union[UpdateUsersPayload, List[WhitelistUser]] = Body(...),
+    whitelist_enabled: Optional[bool] = None,
+    response: Response = None
+):
+    if isinstance(payload, UpdateUsersPayload):
+        users = payload.users
+        wl_enabled = payload.whitelist_enabled if payload.whitelist_enabled is not None else whitelist_enabled
+    else:
+        users = payload
+        wl_enabled = whitelist_enabled
+
+    path = get_instance_path(instance_id)
+    if bedrock.is_bedrock(read_compose_env(path).get("TYPE")):
+        return update_bedrock_users(path, users, wl_enabled, response)
+    data_dir = os.path.join(path, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    users_file = os.path.join(data_dir, "users.json")
     whitelist_path = os.path.join(data_dir, "whitelist.json")
     ops_path = os.path.join(data_dir, "ops.json")
     
-    users = {}
-    
-    # 1. Check ops.json
+    # Read existing ops to know who was previously opped
+    old_ops = set()
     if os.path.exists(ops_path):
         try:
             with open(ops_path, "r") as f:
-                ops_data = json.load(f)
-                if isinstance(ops_data, list):
-                    for entry in ops_data:
+                ops_data_old = json.load(f)
+                if isinstance(ops_data_old, list):
+                    for entry in ops_data_old:
                         if isinstance(entry, dict) and "name" in entry:
-                            name = entry["name"]
-                            uuid = entry.get("uuid")
-                            level = entry.get("level", 4)
-                            users[name.lower()] = {
-                                "name": name,
-                                "uuid": uuid,
-                                "level": level,
-                                "is_op": True,
-                                "whitelisted": False # Default to false, check whitelist.json next
-                            }
+                            old_ops.add(entry["name"].lower())
         except Exception as e:
-            print(f"Error reading ops.json: {e}")
+            print(f"Error reading existing ops.json: {e}")
             
-    # 2. Check whitelist.json
-    if os.path.exists(whitelist_path):
-        try:
-            with open(whitelist_path, "r") as f:
-                wl_data = json.load(f)
-                if isinstance(wl_data, list):
-                    for entry in wl_data:
-                        if isinstance(entry, dict) and "name" in entry:
-                            name = entry["name"]
-                            uuid = entry.get("uuid")
-                            key = name.lower()
-                            if key in users:
-                                users[key]["whitelisted"] = True
-                                if uuid and not users[key]["uuid"]:
-                                    users[key]["uuid"] = uuid
-                            else:
-                                users[key] = {
-                                    "name": name,
-                                    "uuid": uuid,
-                                    "level": 0,
-                                    "is_op": False,
-                                    "whitelisted": True
-                                }
-        except Exception as e:
-            print(f"Error reading whitelist.json: {e}")
-            
-    # 3. If both files don't exist or are empty, fallback to environment in docker-compose.yml
-    if not users:
-        compose_path = os.path.join(path, "docker-compose.yml")
-        if os.path.exists(compose_path):
-            try:
-                with open(compose_path, "r") as f:
-                    config = yaml.safe_load(f)
-                services = config.get("services", {})
-                if services:
-                    first_service_name = list(services.keys())[0]
-                    service = services[first_service_name]
-                    env = service.get("environment", {})
-                    
-                    # Convert list to dict if needed
-                    env_dict = {}
-                    if isinstance(env, list):
-                        for item in env:
-                            if "=" in item:
-                                k, v = item.split("=", 1)
-                                env_dict[k] = v
-                    elif isinstance(env, dict):
-                        env_dict = env
-                        
-                    whitelist_str = env_dict.get("WHITELIST", "")
-                    ops_str = env_dict.get("OPS", "")
-                    
-                    wl_names = [n.strip() for n in whitelist_str.split(",") if n.strip()]
-                    op_names = [n.strip() for n in ops_str.split(",") if n.strip()]
-                    
-                    for name in wl_names:
-                        users[name.lower()] = {
-                            "name": name,
-                            "uuid": None,
-                            "level": 0,
-                            "is_op": False,
-                            "whitelisted": True
-                        }
-                    for name in op_names:
-                        key = name.lower()
-                        if key in users:
-                            users[key]["is_op"] = True
-                            users[key]["level"] = 4
-                        else:
-                            users[key] = {
-                                "name": name,
-                                "uuid": None,
-                                "level": 4,
-                                "is_op": True,
-                                "whitelisted": False
-                            }
-            except Exception as e:
-                print(f"Error reading fallback environment from docker-compose.yml: {e}")
-                
-    # Return as list
-    return list(users.values())
-
-@app.put("/api/instances/{instance_id}/users")
-def update_instance_users(instance_id: str, users: List[WhitelistUser]):
-    path = get_instance_path(instance_id)
-    
-    data_dir = os.path.join(path, "data")
-    os.makedirs(data_dir, exist_ok=True)
-    whitelist_path = os.path.join(data_dir, "whitelist.json")
-    ops_path = os.path.join(data_dir, "ops.json")
-    
     whitelist_data = []
     ops_data = []
+    full_users_data = []
     
     whitelist_names = []
     ops_names = []
@@ -657,18 +1102,32 @@ def update_instance_users(instance_id: str, users: List[WhitelistUser]):
         level = u.level
         is_op = u.is_op
         whitelisted = u.whitelisted
+        active = u.active
         
         if not name:
             continue
             
-        if whitelisted:
+        # Minecraft silently drops whitelist/ops entries whose UUID lacks dashes
+        uuid = format_uuid(uuid) if uuid else get_minecraft_uuid(name)
+            
+        full_users_data.append({
+            "name": name,
+            "uuid": uuid,
+            "level": level,
+            "is_op": is_op,
+            "whitelisted": whitelisted,
+            "active": active
+        })
+            
+        # Only active users are written to access files
+        if active and whitelisted:
             whitelist_data.append({
                 "uuid": uuid or "",
                 "name": name
             })
             whitelist_names.append(name)
             
-        if is_op or level > 0:
+        if active and (is_op or level > 0):
             ops_data.append({
                 "uuid": uuid or "",
                 "name": name,
@@ -677,13 +1136,21 @@ def update_instance_users(instance_id: str, users: List[WhitelistUser]):
             })
             ops_names.append(name)
             
-    # Write files
+    # Write users.json (Single source of truth)
+    try:
+        with open(users_file, "w") as f:
+            json.dump(full_users_data, f, indent=2)
+    except Exception as e:
+        print(f"Error writing users.json: {e}")
+
+    # Write whitelist.json
     try:
         with open(whitelist_path, "w") as f:
             json.dump(whitelist_data, f, indent=2)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write whitelist.json: {str(e)}")
         
+    # Write ops.json
     try:
         with open(ops_path, "w") as f:
             json.dump(ops_data, f, indent=2)
@@ -702,13 +1169,18 @@ def update_instance_users(instance_id: str, users: List[WhitelistUser]):
                 service = services[first_service_name]
                 env = service.get("environment", {})
                 
-                wl_str = ",".join(whitelist_names)
+                # The server image turns the whitelist on whenever WHITELIST is non-empty, even
+                # with ENABLE_WHITELIST=false, so leave it empty while the whitelist is off.
+                # whitelist.json and users.json still hold the names.
+                wl_str = "" if wl_enabled is False else ",".join(whitelist_names)
                 ops_str = ",".join(ops_names)
+                wl_val = "true" if wl_enabled else "false"
                 
                 if isinstance(env, list):
                     new_env = []
                     found_wl = False
                     found_ops = False
+                    found_enable = False
                     for item in env:
                         if item.startswith("WHITELIST="):
                             new_env.append(f"WHITELIST={wl_str}")
@@ -716,16 +1188,23 @@ def update_instance_users(instance_id: str, users: List[WhitelistUser]):
                         elif item.startswith("OPS="):
                             new_env.append(f"OPS={ops_str}")
                             found_ops = True
+                        elif item.startswith("ENABLE_WHITELIST=") and wl_enabled is not None:
+                            new_env.append(f"ENABLE_WHITELIST={wl_val}")
+                            found_enable = True
                         else:
                             new_env.append(item)
                     if not found_wl:
                         new_env.append(f"WHITELIST={wl_str}")
                     if not found_ops:
                         new_env.append(f"OPS={ops_str}")
+                    if not found_enable and wl_enabled is not None:
+                        new_env.append(f"ENABLE_WHITELIST={wl_val}")
                     service["environment"] = new_env
                 elif isinstance(env, dict):
                     env["WHITELIST"] = wl_str
                     env["OPS"] = ops_str
+                    if wl_enabled is not None:
+                        env["ENABLE_WHITELIST"] = wl_val
                     service["environment"] = env
                     
             with open(compose_path, "w") as f:
@@ -733,23 +1212,151 @@ def update_instance_users(instance_id: str, users: List[WhitelistUser]):
         except Exception as e:
             print(f"Error syncing environment variables to docker-compose.yml: {e}")
             
-    # If container is running, execute command to reload whitelist
+    # If container is running, execute commands to sync whitelist and ops
     is_running = False
-    if docker_client:
+    client = get_docker_client()
+    if client:
         try:
             c_name = f"isopod_{instance_id}"
-            c = docker_client.containers.get(c_name)
+            c = client.containers.get(c_name)
             is_running = c.status == "running"
         except: pass
         
     if is_running:
-        cmd = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", "whitelist reload"]
-        try:
-            subprocess.run(cmd, cwd=path, capture_output=True, text=True, timeout=5, env=compose_env())
-        except Exception as e:
-            print(f"RCON whitelist reload failed: {e}")
+        # Toggle whitelist mode in live server if changed
+        if wl_enabled is not None:
+            cmd_toggle = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", f"whitelist {'on' if wl_enabled else 'off'}"]
+            try:
+                subprocess.run(cmd_toggle, cwd=path, capture_output=True, text=True, timeout=5)
+            except Exception as e:
+                print(f"RCON whitelist toggle failed: {e}")
+                
+        # 1. Reload Whitelist. Skipped while the whitelist is off: with enforce-whitelist set,
+        # vanilla's reload kicks everyone missing from whitelist.json even when it isn't in use.
+        if wl_enabled is not False:
+            cmd_wl = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", "whitelist reload"]
+            try:
+                subprocess.run(cmd_wl, cwd=path, capture_output=True, text=True, timeout=5)
+            except Exception as e:
+                print(f"RCON whitelist reload failed: {e}")
             
-    return {"message": "Users updated successfully"}
+        # 2. Deop players who are no longer ops
+        new_ops_lower = {n.lower() for n in ops_names}
+        for name in old_ops:
+            if name not in new_ops_lower:
+                cmd_deop = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", f"deop {name}"]
+                try:
+                    subprocess.run(cmd_deop, cwd=path, capture_output=True, text=True, timeout=5)
+                except Exception as e:
+                    print(f"RCON deop failed for {name}: {e}")
+                    
+        # 3. Op players who are now ops
+        for name in ops_names:
+            cmd_op = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", f"op {name}"]
+            try:
+                subprocess.run(cmd_op, cwd=path, capture_output=True, text=True, timeout=5)
+            except Exception as e:
+                print(f"RCON op failed for {name}: {e}")
+            
+    if response and wl_enabled is not None:
+        response.headers["X-Whitelist-Enabled"] = "true" if wl_enabled else "false"
+
+    return {"message": "Users updated successfully", "whitelist_enabled": wl_enabled}
+
+
+def update_bedrock_users(path: str, users: List[WhitelistUser], wl_enabled: Optional[bool], response: Optional[Response]):
+    """Save a Bedrock server's allowlist and operators. bedrock_users explains where each copy goes."""
+    data_dir = os.path.join(path, "data")
+    env = read_compose_env(path)
+    old_users, old_enabled = get_bedrock_users(path, env)
+    enabled = old_enabled if wl_enabled is None else wl_enabled
+    try:
+        new_users = bedrock_users.normalize([u.model_dump() for u in users], old_users)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        with open(os.path.join(data_dir, "users.json"), "w") as f:
+            json.dump(new_users, f, indent=2)
+        bedrock_users.write_access_files(data_dir, new_users, old_users)
+    except OSError as e:
+        print(f"Error writing Bedrock access files: {e}")
+        raise HTTPException(status_code=500, detail="Couldn't save the allowlist files.")
+
+    env_updates = bedrock_users.access_env(new_users, enabled, env, old_users)
+    set_compose_env(path, env_updates)
+
+    # Players who aren't online can't be opped live; OPS applies to them on the next start
+    commands = bedrock_users.live_commands(old_users, old_enabled, new_users, enabled)
+    if commands and is_instance_running(path):
+        for command in commands:
+            ok, output = bedrock.send_command(path, command)
+            if not ok:
+                print(f"Bedrock command '{command}' failed: {output}")
+
+    if response:
+        response.headers["X-Whitelist-Enabled"] = "true" if enabled else "false"
+    return {"message": "Users updated successfully", "whitelist_enabled": enabled, "environment": env_updates}
+
+
+# ==========================================
+# Legacy Access Control Whitelist Deprecated Endpoints
+# ==========================================
+@app.get("/api/instances/{instance_id}/whitelist")
+@app.get("/api/instances/{instance_id}/access-control/whitelist")
+def get_legacy_whitelist(instance_id: str, response: Response):
+    response.headers["Deprecation"] = "true"
+    response.headers["X-Deprecated"] = "This endpoint is deprecated. Use /api/instances/{instance_id}/users instead."
+    users, _ = get_instance_users_internal(instance_id)
+    return [u for u in users if u.get("whitelisted", True) and u.get("active", True)]
+
+
+@app.put("/api/instances/{instance_id}/whitelist")
+@app.post("/api/instances/{instance_id}/whitelist")
+def update_legacy_whitelist(instance_id: str, legacy_users: List[Union[str, dict]], response: Response):
+    response.headers["Deprecation"] = "true"
+    response.headers["X-Deprecated"] = "This endpoint is deprecated. Use /api/instances/{instance_id}/users instead."
+    current_users, _ = get_instance_users_internal(instance_id)
+    current_map = {u["name"].lower(): u for u in current_users}
+    for item in legacy_users:
+        name = item if isinstance(item, str) else item.get("name")
+        if not name:
+            continue
+        key = name.lower()
+        if key in current_map:
+            current_map[key]["whitelisted"] = True
+            current_map[key]["active"] = True
+        else:
+            current_map[key] = {
+                "name": name,
+                "uuid": None if isinstance(item, str) else item.get("uuid"),
+                "level": 0,
+                "is_op": False,
+                "whitelisted": True,
+                "active": True
+            }
+    user_models = [WhitelistUser(**u) for u in current_map.values()]
+    update_instance_users(instance_id, user_models)
+    return {"message": "Legacy whitelist migrated and updated in User Management", "users": list(current_map.values())}
+
+
+@app.delete("/api/instances/{instance_id}/whitelist/{user_name}")
+def delete_legacy_whitelist_user(instance_id: str, user_name: str, response: Response):
+    response.headers["Deprecation"] = "true"
+    response.headers["X-Deprecated"] = "This endpoint is deprecated. Use /api/instances/{instance_id}/users instead."
+    current_users, _ = get_instance_users_internal(instance_id)
+    updated = []
+    for u in current_users:
+        if u["name"].lower() == user_name.lower():
+            u["whitelisted"] = False
+        updated.append(WhitelistUser(**u))
+    update_instance_users(instance_id, updated)
+    return {"message": f"User {user_name} unwhitelisted in User Management"}
+
+
+@app.get("/api/instances/{instance_id}/access/check")
+def check_access_endpoint(instance_id: str, username: str):
+    return check_instance_user_access(instance_id, username)
 
 @app.post("/api/instances/{instance_id}/icon")
 async def upload_icon(instance_id: str, file: UploadFile = File(...)):
@@ -804,26 +1411,49 @@ def get_icon(instance_id: str):
         return FileResponse(icon_path)
     raise HTTPException(status_code=404, detail="Icon not found")
 
+DEFAULT_SETTINGS = {
+    "language": "English",
+    "theme": "Dark",
+    "defaultPort": "25565",
+    "defaultLoader": "VANILLA",
+    "defaultMemory": "1G",
+    "autoRefresh": True,
+    "showSnapshots": False,
+    "defaultWhitelistEnabled": False,
+    "defaultWhitelistUsers": [],
+    "dockerSocket": "/var/run/docker.sock",
+    "backupsPath": ""
+}
+
+def get_backup_root() -> Optional[str]:
+    """Global backup folder from settings; empty means backups stay inside each instance."""
+    root = (get_settings().get("backupsPath") or "").strip()
+    return root if root and os.path.isabs(root) else None
+
+backups.set_backup_root_provider(get_backup_root)
+
+@app.get("/api/health")
+def health():
+    """Cheap liveness check the dashboard polls to notice a lost connection."""
+    return {"ok": True}
+
 @app.get("/api/settings")
 def get_settings():
     settings_path = os.path.join(SERVERS_DIR, "isopod_settings.json")
     if os.path.exists(settings_path):
-        with open(settings_path, "r") as f:
-            return json.load(f)
-    return {
-        "language": "English",
-        "theme": "Dark",
-        "defaultPort": "25565",
-        "defaultLoader": "VANILLA",
-        "defaultMemory": "1G",
-        "autoRefresh": True,
-        "showSnapshots": False,
-        "defaultWhitelistEnabled": False,
-        "defaultWhitelistUsers": []
-    }
+        try:
+            with open(settings_path, "r") as f:
+                saved = json.load(f)
+                return {**DEFAULT_SETTINGS, **saved}
+        except Exception:
+            return DEFAULT_SETTINGS.copy()
+    return DEFAULT_SETTINGS.copy()
 
 @app.put("/api/settings")
 def update_settings(new_settings: Dict[str, Any]):
+    backups_path = (new_settings.get("backupsPath") or "").strip()
+    if backups_path and not os.path.isabs(backups_path):
+        raise HTTPException(status_code=400, detail="Backup folder must be an absolute path.")
     settings_path = os.path.join(SERVERS_DIR, "isopod_settings.json")
     os.makedirs(SERVERS_DIR, exist_ok=True)
     with open(settings_path, "w") as f:
@@ -866,168 +1496,149 @@ async def get_mc_versions():
         cached_versions = {"time": now, "data": data}
         return data
 
-cached_compat_loaders = {} # { mc_version: {"time": timestamp, "loaders": list} }
-
-@app.get("/api/meta/compatible-loaders/{mc_version}")
-async def get_compatible_loaders(mc_version: str):
-    """Return list of loader IDs compatible with the given Minecraft version."""
-    now = time.time()
-    if mc_version in cached_compat_loaders:
-        entry = cached_compat_loaders[mc_version]
-        if now - entry["time"] < 3600: # 1 hour cache
-            return {"compatible": entry["loaders"]}
-
-    compatible = ["VANILLA"]
-    
-    # Check Fabric
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            res = await client.get("https://meta.fabricmc.net/v2/versions/game")
-            if res.status_code == 200:
-                fabric_versions = [v["version"] for v in res.json()]
-                if mc_version in fabric_versions:
-                    compatible.append("FABRIC")
-    except Exception as e:
-        print(f"Error checking Fabric compatibility: {e}")
-        compatible.append("FABRIC") # Fallback to true
-
-    # Check Quilt
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            res = await client.get("https://meta.quiltmc.org/v3/versions/game")
-            if res.status_code == 200:
-                quilt_versions = [v["version"] for v in res.json()]
-                if mc_version in quilt_versions:
-                    compatible.append("QUILT")
-    except Exception as e:
-        print(f"Error checking Quilt compatibility: {e}")
-
-    # Check Paper
-    try:
-        async with httpx.AsyncClient(headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Isopod/1.0"}, timeout=5.0) as client:
-            res = await client.get("https://fill.papermc.io/v3/projects/paper")
-            if res.status_code == 200:
-                data = res.json()
-                paper_versions = []
-                for g in data.get("versions", {}).values():
-                    paper_versions.extend(g)
-                if mc_version in paper_versions:
-                    compatible.append("PAPER")
-    except Exception as e:
-        print(f"Error checking Paper compatibility: {e}")
-
-    # Check NeoForge
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            res = await client.get("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml")
-            if res.status_code == 200:
-                import xml.etree.ElementTree as ET
-                root = ET.fromstring(res.text)
-                versions = [v.text for v in root.findall(".//version") if v.text]
-                prefix = mc_version
-                if mc_version.startswith("1."):
-                    parts = mc_version.split(".")
-                    if len(parts) >= 3:
-                        prefix = f"{parts[1]}.{parts[2]}"
-                    elif len(parts) == 2:
-                        prefix = f"{parts[1]}.0"
-                    else:
-                        prefix = parts[1]
-                neoforge_compatible = [v for v in versions if v.startswith(f"{prefix}.")]
-                if neoforge_compatible:
-                    compatible.append("NEOFORGE")
-    except Exception as e:
-        print(f"Error checking NeoForge compatibility: {e}")
-
-    # Check Forge
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            res = await client.get("https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml")
-            if res.status_code == 200:
-                import xml.etree.ElementTree as ET
-                root = ET.fromstring(res.text)
-                versions = [v.text for v in root.findall(".//version") if v.text]
-                forge_compatible = [v for v in versions if v.startswith(f"{mc_version}-")]
-                if forge_compatible:
-                    compatible.append("FORGE")
-    except Exception as e:
-        print(f"Error checking Forge compatibility: {e}")
-
-    cached_compat_loaders[mc_version] = {"time": now, "loaders": compatible}
-    return {"compatible": compatible}
-
 @app.get("/api/meta/loaders/{loader}")
-async def get_loader_versions(loader: str, mc_version: Optional[str] = None):
-    """Fetch available versions for a specific mod loader since the beginning."""
+async def get_loader_versions(loader: str, mc_version: Optional[str] = None, game_version: Optional[str] = None):
+    """Fetch available versions for a specific mod loader, optionally filtered by MC version."""
     loader = loader.lower()
-    print(f"DEBUG: Fetching ALL {loader} versions")
+    mc_version = url_segment(mc_version or game_version, "Minecraft version")
+    print(f"DEBUG: Fetching {loader} versions for MC={mc_version}")
+    headers = {"User-Agent": "Isopod-Server-Manager/1.0 (https://github.com/Isopod-Project/Isopod)"}
     try:
-        async with httpx.AsyncClient(headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Isopod/1.0"}, timeout=15.0) as client:
+        async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=10.0) as client:
             if loader == "fabric":
-                url = "https://meta.fabricmc.net/v2/versions/loader"
+                url = f"https://meta.fabricmc.net/v2/versions/loader"
+                if mc_version and mc_version != "latest":
+                    url = f"https://meta.fabricmc.net/v2/versions/loader/{mc_version}"
+                print(f"DEBUG: Fetching Fabric from {url}")
                 res = await client.get(url)
-                print(f"DEBUG: Fabric response status={res.status_code}")
                 data = res.json()
-                return [{"id": v["version"], "stable": v["stable"]} for v in data]
+                if mc_version and mc_version != "latest":
+                    return [{"id": v["loader"]["version"], "stable": v["loader"]["stable"]} for v in data]
+                else:
+                    return [{"id": v["version"], "stable": v["stable"]} for v in data]
 
             elif loader == "quilt":
-                url = "https://meta.quiltmc.org/v3/versions/loader"
-                res = await client.get(url)
-                print(f"DEBUG: Quilt response status={res.status_code}")
-                data = res.json()
-                return [{"id": v["version"], "stable": v["version"].count('-') == 0} for v in data]
-
-            elif loader == "neoforge":
-                 url = "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
-                 res = await client.get(url)
-                 import xml.etree.ElementTree as ET
-                 root = ET.fromstring(res.text)
-                 versions = [v.text for v in root.findall(".//version") if v.text]
-                 if mc_version:
-                     prefix = mc_version
-                     if mc_version.startswith("1."):
-                         parts = mc_version.split(".")
-                         if len(parts) >= 3:
-                             prefix = f"{parts[1]}.{parts[2]}"
-                         elif len(parts) == 2:
-                             prefix = f"{parts[1]}.0"
-                         else:
-                             prefix = parts[1]
-                     versions = [v for v in versions if v.startswith(f"{prefix}.")]
-                 return [{"id": v, "stable": "-beta" not in v} for v in reversed(versions)]
+                url = f"https://meta.quiltmc.org/v3/versions/loader"
+                if mc_version and mc_version != "latest":
+                    url = f"https://meta.quiltmc.org/v3/versions/loader/{mc_version}"
+                print(f"DEBUG: Fetching Quilt from {url}")
+                try:
+                    res = await client.get(url)
+                    if res.is_success:
+                        data = res.json()
+                        if mc_version and mc_version != "latest":
+                            return [{"id": v["loader"]["version"], "stable": "-" not in v["loader"]["version"]} for v in data]
+                        else:
+                            return [{"id": v["version"], "stable": "-" not in v["version"]} for v in data]
+                except Exception as qe:
+                    print(f"DEBUG: Quilt meta fetch failed ({qe}), trying Prism meta fallback")
+                # Fallback to Prism Launcher meta
+                try:
+                    prism_res = await client.get("https://meta.prismlauncher.org/v1/org.quiltmc.quilt-loader/index.json")
+                    if prism_res.is_success:
+                        pdata = prism_res.json()
+                        return [{"id": v["version"], "stable": v.get("type") == "release"} for v in pdata.get("versions", [])]
+                except Exception:
+                    pass
+                return []
 
             elif loader == "forge":
-                 url = "https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml"
-                 res = await client.get(url)
-                 import xml.etree.ElementTree as ET
-                 root = ET.fromstring(res.text)
-                 versions = [v.text for v in root.findall(".//version") if v.text]
-                 if mc_version:
-                     versions = [v for v in versions if v.startswith(f"{mc_version}-")]
-                 return [{"id": v, "stable": True} for v in reversed(versions)]
+                # Primary source: Prism Launcher meta (reliable, pre-filtered with Minecraft version dependencies)
+                try:
+                    res = await client.get("https://meta.prismlauncher.org/v1/net.minecraftforge/index.json")
+                    if res.is_success:
+                        data = res.json()
+                        versions = data.get("versions", [])
+                        if mc_version and mc_version != "latest":
+                            matching = [
+                                {"id": v["version"], "stable": v.get("recommended", False)}
+                                for v in versions
+                                if any(req.get("equals") == mc_version for req in v.get("requires", []))
+                            ]
+                            if matching:
+                                return matching
+                        else:
+                            return [{"id": v["version"], "stable": v.get("recommended", False)} for v in versions[:100]]
+                except Exception as fe:
+                    print(f"DEBUG: Prism meta fetch for Forge failed ({fe}), trying BMCLAPI fallback")
 
-            elif loader == "paper":
-                 if mc_version:
-                     url = f"https://fill.papermc.io/v3/projects/paper/versions/{mc_version}/builds"
-                     res = await client.get(url)
-                     if res.status_code == 200:
-                         builds = res.json()
-                         return [{"id": str(b["id"]), "stable": b.get("channel") == "STABLE"} for b in builds]
-                 # Fallback / list all Paper MC versions if no specific mc_version is requested
-                 url = "https://fill.papermc.io/v3/projects/paper"
-                 res = await client.get(url)
-                 if res.status_code == 200:
-                     data = res.json()
-                     versions = []
-                     for g in data.get("versions", {}).values():
-                         versions.extend(g)
-                     return [{"id": v, "stable": True} for v in versions]
-                 return []
+                # Fallback: BMCLAPI
+                url = f"https://bmclapi2.bangbang93.com/forge/minecraft/{mc_version}" if mc_version and mc_version != "latest" else "https://bmclapi2.bangbang93.com/forge/promotions"
+                res = await client.get(url)
+                if res.is_success:
+                    data = res.json()
+                    if mc_version and mc_version != "latest" and isinstance(data, list):
+                        return [{"id": v["version"], "stable": v.get("type") == "recommended"} for v in reversed(data)]
+                    elif isinstance(data, dict):
+                        promos = data.get("promos", {})
+                        return [{"id": v, "name": k, "stable": "recommended" in k} for k, v in promos.items()]
+                return []
 
-            # TODO: Add Spigot loader support later when an official public API for Spigot builds is integrated.
-            # Removed from active loader list for now since Spigot requires custom build tools (BuildTools).
-            # elif loader == "spigot":
-            #     return [{"id": "latest", "stable": True}]
+            elif loader == "neoforge":
+                # Primary source: Prism Launcher meta
+                try:
+                    res = await client.get("https://meta.prismlauncher.org/v1/net.neoforged/index.json")
+                    if res.is_success:
+                        data = res.json()
+                        versions = data.get("versions", [])
+                        if mc_version and mc_version != "latest":
+                            matching = [
+                                {"id": v["version"], "stable": v.get("recommended", False) or v.get("type") == "release"}
+                                for v in versions
+                                if any(req.get("equals") == mc_version for req in v.get("requires", []))
+                            ]
+                            if matching:
+                                return matching
+                        else:
+                            return [{"id": v["version"], "stable": v.get("type") == "release"} for v in versions[:100]]
+                except Exception as ne:
+                    print(f"DEBUG: Prism meta fetch for NeoForge failed ({ne}), trying BMCLAPI fallback")
+
+                # Fallback: BMCLAPI
+                url = f"https://bmclapi2.bangbang93.com/neoforge/list/{mc_version}" if mc_version and mc_version != "latest" else "https://bmclapi2.bangbang93.com/neoforge/list"
+                res = await client.get(url)
+                if res.is_success:
+                    data = res.json()
+                    if isinstance(data, list):
+                        return [{"id": v.get("version", v.get("rawVersion")), "stable": True} for v in reversed(data)]
+                return []
+
+            elif loader in ("paper", "folia"):
+                target_ver = mc_version
+                if not target_ver or target_ver == "latest":
+                    # The project lists its versions newest first
+                    try:
+                        p_res = await client.get(f"https://fill.papermc.io/v3/projects/{loader}")
+                        if p_res.is_success:
+                            all_vers = [v for v_list in p_res.json().get("versions", {}).values() for v in v_list]
+                            if all_vers:
+                                target_ver = all_vers[0]
+                    except Exception:
+                        target_ver = "1.20.1"
+
+                url = f"https://fill.papermc.io/v3/projects/{loader}/versions/{target_ver}/builds"
+                print(f"DEBUG: Fetching {loader} from {url}")
+                res = await client.get(url)
+                if res.is_success:
+                    builds_data = res.json()
+                    if isinstance(builds_data, list):
+                        return [{"id": str(b["id"]), "stable": b.get("channel", "STABLE") == "STABLE"} for b in builds_data]
+                # Folia only has builds for some versions; offering "latest" would fail at start
+                return [] if loader == "folia" else [{"id": "latest", "stable": True}]
+
+            elif loader == "purpur":
+                target_ver = mc_version
+                if not target_ver or target_ver == "latest":
+                    p_res = await client.get("https://api.purpurmc.org/v2/purpur")
+                    if not p_res.is_success:
+                        return []
+                    target_ver = p_res.json().get("metadata", {}).get("current")
+                res = await client.get(f"https://api.purpurmc.org/v2/purpur/{target_ver}")
+                if res.is_success:
+                    builds = res.json().get("builds", {}).get("all", [])
+                    # Oldest first in the API; newest first here like the other loaders
+                    return [{"id": str(b), "stable": True} for b in reversed(builds)]
+                return []
 
     except Exception as e:
         print(f"DEBUG: Error fetching {loader} versions: {e}")
@@ -1109,6 +1720,7 @@ def is_client_only_mod(filename: str) -> bool:
 
 @app.get("/api/mods/modrinth/{project_id}/versions")
 async def get_modrinth_project_versions(project_id: str):
+    project_id = url_segment(project_id, "project ID")
     url = f"https://api.modrinth.com/v2/project/{project_id}/version"
     try:
         async with httpx.AsyncClient() as client:
@@ -1131,38 +1743,38 @@ async def get_modrinth_project_versions(project_id: str):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Modrinth API error: {str(e)}")
 
-@app.get("/api/mods/curseforge/{project_id}/versions")
-async def get_curseforge_project_versions(project_id: str):
-    url = f"{CF_API_BASE}/mods/{project_id}/files"
-    try:
-        async with get_cf_client() as client:
-            res = await client.get(url)
-            if res.status_code == 200:
-                files = res.json().get("data", [])
-                results = []
-                for f in files:
-                    game_versions = []
-                    loaders = []
-                    for ver in f.get("gameVersions", []):
-                        ver_lower = ver.lower()
-                        if ver_lower in ["fabric", "forge", "quilt", "neoforge"]:
-                            loaders.append(ver_lower)
-                        elif ver and ver[0].isdigit():
-                            game_versions.append(ver)
-                    
-                    results.append({
-                        "id": str(f["id"]),
-                        "version_number": f.get("displayName", f.get("fileName", "Unknown")),
-                        "name": f.get("displayName", f.get("fileName", "Unknown")),
-                        "game_versions": game_versions,
-                        "loaders": loaders,
-                        "version_type": "release" if f.get("releaseType") == 1 else ("beta" if f.get("releaseType") == 2 else "alpha")
-                    })
-                return results
-            else:
-                raise HTTPException(status_code=res.status_code, detail="Failed to fetch CurseForge versions")
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"CurseForge API error: {str(e)}")
+
+MODPACK_SERVER_TYPES = {"modrinth", "auto_curseforge", "curseforge", "ftba"}
+
+# Plugin server TYPEs -> the Modrinth loader categories whose plugins they can run.
+# Purpur is a Paper fork and runs Paper/Spigot/Bukkit plugins; Folia only runs plugins built for it.
+PLUGIN_SERVER_LOADERS = {
+    "PAPER": ["paper", "spigot", "bukkit"],
+    "PURPUR": ["purpur", "paper", "spigot", "bukkit"],
+    "FOLIA": ["folia"],
+}
+
+# Server TYPE -> the itzg variable that pins its loader version or build (Folia's has no underscore).
+LOADER_VERSION_ENV = {
+    "FABRIC": "FABRIC_LOADER_VERSION",
+    "FORGE": "FORGE_VERSION",
+    "NEOFORGE": "NEOFORGE_VERSION",
+    "QUILT": "QUILT_LOADER_VERSION",
+    "PAPER": "PAPER_BUILD",
+    "PURPUR": "PURPUR_BUILD",
+    "FOLIA": "FOLIABUILD",
+}
+
+def is_plugin_server(server_type: Optional[str]) -> bool:
+    return (server_type or "").upper() in PLUGIN_SERVER_LOADERS
+
+# modrinth.index.json dependency keys -> itzg TYPE loader names
+MRPACK_LOADER_DEPENDENCIES = {
+    "neoforge": "NEOFORGE",
+    "forge": "FORGE",
+    "fabric-loader": "FABRIC",
+    "quilt-loader": "QUILT",
+}
 
 @app.get("/api/mods/search/modrinth")
 async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None, class_type: str = "mod", only_server_side: bool = True):
@@ -1170,10 +1782,18 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
     q = None if q == "undefined" or not q else q
     mc_version = None if mc_version == "undefined" or not mc_version else mc_version
     loader = None if loader == "undefined" or not loader else loader
-    
+    # Modpack server types (e.g. TYPE=MODRINTH) aren't Modrinth loader categories and would match 0 hits
+    if loader and loader.lower() in MODPACK_SERVER_TYPES:
+        loader = None
+
     # If query is empty, we browse via facets
     query_str = q if q else ""
         
+    # Plugin servers run plugins, not mods
+    plugin_loaders = PLUGIN_SERVER_LOADERS.get(loader.upper()) if loader and class_type == "mod" else None
+    if plugin_loaders:
+        class_type = "plugin"
+
     facets = [
         [f"project_type:{class_type}"],
     ]
@@ -1181,7 +1801,9 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
         facets.append(["server_side:required", "server_side:optional"])
     if mc_version:
         facets.append([f"versions:{mc_version}"])
-    if loader:
+    if plugin_loaders:
+        facets.append([f"categories:{c}" for c in plugin_loaders])
+    elif loader:
         facets.append([f"categories:{loader.lower()}"])
         
     url = "https://api.modrinth.com/v2/search"
@@ -1197,122 +1819,58 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
         
     results = []
     for item in data.get("hits", []):
-        results.append({
+        meta_dict = {
             "id": item["slug"], # Using slug as ID for itzg/minecraft-server
             "name": item["title"],
             "summary": item["description"],
             "icon_url": item.get("icon_url"),
             "author": item.get("author", "Unknown"),
             "downloads": item.get("downloads", 0),
-            "url": f"https://modrinth.com/mod/{item['slug']}",
-            "categories": item.get("categories", [])
-        })
+            "url": f"https://modrinth.com/{'plugin' if plugin_loaders else 'mod'}/{item['slug']}",
+            "categories": item.get("categories", []),
+            "provider": "modrinth"
+        }
+        mod_metadata_cache[item["slug"].lower()] = meta_dict
+        if "project_id" in item:
+            mod_metadata_cache[item["project_id"].lower()] = meta_dict
+        mod_metadata_cache[item["title"].lower()] = meta_dict
+        results.append(meta_dict)
     return results
 
-@app.get("/api/mods/search/curseforge")
-async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None, class_type: str = "mod"):
-    # Handle "undefined" literals from frontend
-    q = None if q == "undefined" or not q else q
-    mc_version = None if mc_version == "undefined" or not mc_version else mc_version
-    loader = None if loader == "undefined" or not loader else loader
-    
-    # Using '6' for mods, '4471' for modpacks, '12' for resource packs
-    class_id = 6
-    if class_type == "modpack":
-        class_id = 4471
-    elif class_type == "resourcepack":
-        class_id = 12
-    
-    # If query is empty, we browse via parameters
-    query_str = q if q else ""
-        
-    # Using a known public proxy for CurseForge searches
-    # itzg/minecraft-server uses the CurseForge ID (int)
-    url = f"{CF_API_BASE}/mods/search"
-    
-    mod_loader_type = 0 # Any
-    if loader:
-        l = loader.lower()
-        if "forge" in l: mod_loader_type = 1
-        elif "cauldron" in l: mod_loader_type = 2
-        elif "liteLoader" in l: mod_loader_type = 3
-        elif "fabric" in l: mod_loader_type = 4
-        elif "quilt" in l: mod_loader_type = 5
-        
-    params = {
-        "gameId": 432, # Minecraft
-        "searchFilter": q,
-        "classId": class_id, 
-        "excludeCategoryIds": "4764" if class_id == 6 else None, # Client Side only for mods
-        "sortField": 2, # Popularity
-        "sortOrder": "desc",
-        "pageSize": 50
-    }
-    if mc_version:
-        params["gameVersion"] = mc_version
-    if mod_loader_type > 0 and class_id != 12: # resource packs have no loader
-        params["modLoaderType"] = mod_loader_type
-    params = {k: v for k, v in params.items() if v is not None}
-
-    # Note: ATLauncher, Feed The Beast (FTB), and Technic modpack endpoints
-    # can be added here in the future once dedicated API integrations are implemented.
-
-    try:
-        if not os.getenv("CURSEFORGE_API_KEY", "").strip():
-            raise HTTPException(status_code=503, detail="CURSEFORGE_API_KEY is not set")
-        async with get_cf_client() as client:
-            res = await client.get(url, params=params)
-        if res.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"CurseForge API returned {res.status_code}: {res.text[:200]}")
-        data = res.json()
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"CurseForge API error: {str(e)}")
-        
-    results = []
-    try:
-        # CurseForge API is notoriously flaky with its data structure
-        mod_list = data.get("data", [])
-        if not isinstance(mod_list, list):
-            mod_list = []
-            
-        for item in mod_list:
-            authors = item.get("authors", [])
-            author_name = authors[0].get("name", "Unknown") if authors and len(authors) > 0 else "Unknown"
-            
-            logo = item.get("logo", {})
-            icon_url = logo.get("thumbnailUrl") if logo else None
-            
-            results.append({
-                "id": str(item.get("id", "")),
-                "name": item.get("name", "Unknown Modpack"),
-                "summary": item.get("summary", ""),
-                "icon_url": icon_url,
-                "author": author_name,
-                "downloads": int(item.get("downloadCount", 0)) if item.get("downloadCount") is not None else 0,
-                "url": item.get("links", {}).get("websiteUrl", "") if item.get("links") else "",
-                "categories": [c.get("name", "").lower() for c in item.get("categories", [])] if item.get("categories") else []
-            })
-    except Exception as e:
-        print(f"DEBUG: Error parsing CurseForge data: {e}")
-        
-    return results
 
 def generate_slug(text: str) -> str:
     slug = text.lower()
     slug = re.sub(r'[^a-z0-9]+', '-', slug)
     return slug.strip('-')
 
+ICON_URL_RE = re.compile(r"https://(?:cdn\.modrinth\.com|media\.forgecdn\.net)/[A-Za-z0-9._~%/+-]+")
+
 @app.post("/api/instances")
 async def create_instance(req: CreateInstanceRequest):
     slug = generate_slug(req.name)
-    path = os.path.join(SERVERS_DIR, slug)
+    path = instance_dir(slug)
+    if path is None:
+        raise HTTPException(status_code=400, detail="Instance name needs at least one letter or number")
     if os.path.exists(path):
         raise HTTPException(status_code=400, detail="Instance with similar name already exists")
         
     os.makedirs(path, exist_ok=True)
-    
+
+    # Check default whitelist settings if not passed in request
+    settings = get_settings()
+    w_enabled = req.whitelist_enabled if req.whitelist_enabled is not None else settings.get("defaultWhitelistEnabled", False)
+    w_users = req.whitelist_users if req.whitelist_users is not None else settings.get("defaultWhitelistUsers", [])
+
+    if bedrock.is_bedrock(req.template):
+        service = bedrock.compose_service(
+            slug, req.name, req.port, req.version, req.seed, req.level_type,
+            req.difficulty, req.gamemode, bool(w_enabled), w_users or [],
+        )
+        with open(os.path.join(path, "docker-compose.yml"), "w") as f:
+            yaml.dump({"services": {"mc": service}}, f, default_flow_style=False)
+        save_instance_meta(path, {"group": req.group or "No group"})
+        return {"id": slug, "message": "Instance created"}
+
     # Generate the docker-compose template using itzg/minecraft-server
     compose_content = {
         "services": {
@@ -1333,7 +1891,8 @@ async def create_instance(req: CreateInstanceRequest):
                     f"DIFFICULTY={req.difficulty or 'easy'}",
                     f"MODE={req.gamemode or 'survival'}",
                     f"GENERATE_STRUCTURES={'true' if req.generate_structures else 'false'}",
-                    "JVM_OPTS=--add-opens java.base/sun.misc=ALL-UNNAMED"
+                    "JVM_OPTS=--add-opens java.base/sun.misc=ALL-UNNAMED",
+                    "MODRINTH_ALLOWED_VERSION_TYPE=alpha"
                 ],
                 "volumes": ["./data:/data"],
                 "dns": ["8.8.8.8", "1.1.1.1"],
@@ -1342,22 +1901,18 @@ async def create_instance(req: CreateInstanceRequest):
         }
     }
     
-    # Add modpack/loader if present
     env = compose_content["services"]["mc"]["environment"]
+    if w_enabled:
+        env.append("ENABLE_WHITELIST=true")
+        if w_users:
+            env.append(f"WHITELIST={','.join(w_users)}")
+    elif w_users:
+        env.append("ENABLE_WHITELIST=false")
+        env.append(f"WHITELIST={','.join(w_users)}")
+
     template = req.template.upper()
     if req.loader_version and req.loader_version != "latest":
-        if template == "FABRIC":
-            env.append(f"FABRIC_LOADER_VERSION={req.loader_version}")
-        elif template == "FORGE":
-            env.append(f"FORGE_VERSION={req.loader_version}")
-        elif template == "NEOFORGE":
-            env.append(f"NEOFORGE_VERSION={req.loader_version}")
-        elif template == "QUILT":
-            env.append(f"QUILT_LOADER_VERSION={req.loader_version}")
-        elif template == "PAPER":
-            env.append(f"PAPER_BUILD={req.loader_version}")
-        else:
-            env.append(f"LOADER_VERSION={req.loader_version}")
+        env.append(f"{LOADER_VERSION_ENV.get(template, 'LOADER_VERSION')}={req.loader_version}")
 
     mc_version = None
 
@@ -1366,12 +1921,14 @@ async def create_instance(req: CreateInstanceRequest):
         try:
             async with httpx.AsyncClient() as client:
                 vdata = None
-                if req.modpack_version:
-                    res = await client.get(f"https://api.modrinth.com/v2/version/{req.modpack_version}")
+                modpack_version = url_segment(req.modpack_version, "modpack version")
+                if modpack_version:
+                    res = await client.get(f"https://api.modrinth.com/v2/version/{modpack_version}")
                     if res.status_code == 200:
                         vdata = res.json()
                 else:
-                    res = await client.get(f"https://api.modrinth.com/v2/project/{req.modrinth_id}/version")
+                    modrinth_id = url_segment(req.modrinth_id, "modpack ID")
+                    res = await client.get(f"https://api.modrinth.com/v2/project/{modrinth_id}/version")
                     if res.status_code == 200:
                         versions = res.json()
                         if versions:
@@ -1397,6 +1954,12 @@ async def create_instance(req: CreateInstanceRequest):
                             with zipfile.ZipFile(io.BytesIO(mrpack_res.content)) as z:
                                 if "modrinth.index.json" in z.namelist():
                                     index_data = json.loads(z.read("modrinth.index.json").decode("utf-8"))
+                                    # Record the pack's underlying mod loader so mod searches can filter by it
+                                    pack_deps = index_data.get("dependencies", {})
+                                    for dep_key, loader_type in MRPACK_LOADER_DEPENDENCIES.items():
+                                        if dep_key in pack_deps:
+                                            env.append(f"ISOPOD_MODPACK_LOADER={loader_type}")
+                                            break
                                     excludes = []
                                     for f in index_data.get("files", []):
                                         env_cfg = f.get("env", {})
@@ -1409,6 +1972,12 @@ async def create_instance(req: CreateInstanceRequest):
                                         exclude_str = ",".join(excludes)
                                         env.append(f"MODRINTH_EXCLUDE_FILES={exclude_str}")
                                         env.append("MODRINTH_FORCE_SYNCHRONIZE=true")
+
+                                    # Save the pack's mod list now so the Mods tab can show it before first start
+                                    try:
+                                        await modpacks.save_from_index(client, path, req.modrinth_id, vdata["id"], index_data)
+                                    except Exception as e:
+                                        print(f"Error saving modpack mod list: {e}")
         except Exception as e:
             print(f"Error fetching Modrinth version details: {e}")
 
@@ -1421,73 +1990,6 @@ async def create_instance(req: CreateInstanceRequest):
         if req.modpack_version:
             env.append(f"MODRINTH_VERSION={req.modpack_version}")
 
-    if req.cf_id:
-        file_id = None
-        cf_slug = req.cf_id
-        # If curseforge, req.modpack_version is the file ID
-        try:
-            async with get_cf_client() as client:
-                # itzg's CF_SLUG needs the slug, but the frontend sends the numeric project ID
-                if str(req.cf_id).isdigit():
-                    res = await client.get(f"{CF_API_BASE}/mods/{req.cf_id}")
-                    if res.status_code == 200:
-                        cf_slug = res.json().get("data", {}).get("slug") or cf_slug
-                    else:
-                        raise HTTPException(status_code=502, detail=f"CurseForge API returned {res.status_code} while resolving modpack {req.cf_id}")
-                if req.modpack_version:
-                    file_id = req.modpack_version
-                else:
-                    res = await client.get(f"{CF_API_BASE}/mods/{req.cf_id}")
-                    if res.status_code == 200:
-                        data = res.json().get("data", {})
-                        latest_files = data.get("latestFiles", [])
-                        if latest_files:
-                            file_id = str(latest_files[0]["id"])
-                            req.modpack_version = file_id
-                            for ver in latest_files[0].get("gameVersions", []):
-                                if ver and ver[0].isdigit():
-                                    mc_version = ver
-                                    break
-                
-                if file_id and not mc_version:
-                    res = await client.get(f"{CF_API_BASE}/mods/{req.cf_id}/files/{file_id}")
-                    if res.status_code == 200:
-                        fdata = res.json().get("data", {})
-                        for ver in fdata.get("gameVersions", []):
-                             if ver and ver[0].isdigit():
-                                 mc_version = ver
-                                 break
-        except HTTPException:
-            shutil.rmtree(path, ignore_errors=True)
-            raise
-        except Exception as e:
-            print(f"Error fetching CurseForge version details: {e}")
-
-        # Replace TYPE=... with TYPE=AUTO_CURSEFORGE for CurseForge modpack
-        for i, val in enumerate(env):
-            if val.startswith("TYPE="):
-                env[i] = "TYPE=AUTO_CURSEFORGE"
-                break
-        env.append(f"CF_SLUG={cf_slug}")
-        env.append("CF_API_KEY=${CF_API_KEY}")
-        if req.modpack_version:
-            env.append(f"CF_FILE_ID={req.modpack_version}")
-        
-        # Exclude common client-only mods from CurseForge downloads
-        cf_excludes = [
-            "sodium", "rubidium", "embeddium", "iris-shaders", "oculus", "modmenu", "continuity",
-            "entityculling", "immediatelyfast", "dynamic-fps", "e4mc", "controlify",
-            "reeses-sodium-options", "sodium-extra", "bettergrassify", "cubes-without-borders",
-            "animatica", "skyboxify", "puzzle", "presence-footsteps", "sound-physics-remastered",
-            "borderlessfullscreen", "language-reload", "morechathistory", "mainmenucredits",
-            "crashassistant", "better-mount-hud", "cape-provider", "zoomify", "debugify",
-            "fastquit", "no-chat-reports", "optigui", "litematica", "minihud", "tweakeroo",
-            "lambdynamiclights", "bobby", "distant-horizons", "fancymenu", "konkrete",
-            "controlling", "searchables", "custom-skin-loader", "fabrishot", "perspectivemod",
-            "chunk-fade", "shulbox-tooltip", "itemphysics-lite", "ambience", "visuality",
-            "skinlayers-3d", "wavesurfer", "legendary-tooltips"
-        ]
-        env.append(f"CF_EXCLUDE_MODS={','.join(cf_excludes)}")
 
     # Set correct java version and Minecraft version based on resolved version
     if mc_version:
@@ -1501,18 +2003,36 @@ async def create_instance(req: CreateInstanceRequest):
     with open(os.path.join(path, "docker-compose.yml"), "w") as f:
         yaml.dump(compose_content, f, default_flow_style=False)
     
+    # Pre-initialize users.json and whitelist.json if whitelist users are provided
+    if w_users:
+        data_dir = os.path.join(path, "data")
+        os.makedirs(data_dir, exist_ok=True)
+        users_path = os.path.join(data_dir, "users.json")
+        wl_path = os.path.join(data_dir, "whitelist.json")
+        try:
+            users_data = [{"name": u, "uuid": "", "level": 0, "is_op": False, "whitelisted": True, "active": True} for u in w_users]
+            with open(users_path, "w") as uf:
+                json.dump(users_data, uf, indent=2)
+            wl_data = [{"name": u, "uuid": ""} for u in w_users]
+            with open(wl_path, "w") as wf:
+                json.dump(wl_data, wf, indent=2)
+        except Exception as e:
+            print(f"Error initializing users.json and whitelist.json: {e}")
+
     # Save metadata
     save_instance_meta(path, {"group": req.group or "No group"})
 
-    # Download Icon if provided
-    if req.icon_url:
+    # Download Icon if provided. Only from the mod sites' image CDNs, so a request can't
+    # point the server at an internal address.
+    icon_url = req.icon_url or ""
+    if ICON_URL_RE.fullmatch(icon_url):
         try:
             from PIL import Image
             import io
-            print(f"DEBUG: Attempting to download icon from {req.icon_url}")
+            print(f"DEBUG: Attempting to download icon from {icon_url}")
             # Use headers to avoid being blocked by CDNs
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
-            res = httpx.get(req.icon_url, headers=headers, timeout=15.0, follow_redirects=True)
+            res = httpx.get(icon_url, headers=headers, timeout=15.0, follow_redirects=False)
             if res.status_code == 200:
                 print(f"DEBUG: Got response: {len(res.content)} bytes, Content-Type: {res.headers.get('Content-Type')}")
                 img = Image.open(io.BytesIO(res.content))
@@ -1542,16 +2062,17 @@ def delete_instance(instance_id: str):
     path = get_instance_path(instance_id)
     # Safely stop and remove containers and volumes before purging
     # Use --volumes to ensure bind mounts or volumes are handled, --remove-orphans for completeness
-    subprocess.run(["docker", "compose", "down", "-v", "--remove-orphans", "--timeout", "5"], cwd=path, capture_output=True, env=compose_env())
+    subprocess.run(["docker", "compose", "down", "-v", "--remove-orphans", "--timeout", "5"], cwd=path, capture_output=True)
     
     # Direct fallback: Try to remove by name in case compose lost track
-    if docker_client:
+    client = get_docker_client()
+    if client:
         try:
             # The naming convention is isopod_{slug} 
             # Note: rename_instance also updates this, but instance_id is always the current slug.
             c_name = f"isopod_{instance_id}"
             try:
-                c = docker_client.containers.get(c_name)
+                c = client.containers.get(c_name)
                 c.remove(force=True)
             except: pass
         except: pass
@@ -1576,16 +2097,27 @@ def delete_instance(instance_id: str):
 def rename_instance(instance_id: str, req: RenameInstanceRequest):
     old_path = get_instance_path(instance_id)
     new_slug = generate_slug(req.name)
-    new_path = os.path.join(SERVERS_DIR, new_slug)
-    
+    new_path = instance_dir(new_slug)
+    if new_path is None:
+        raise HTTPException(status_code=400, detail="Instance name needs at least one letter or number")
     if os.path.exists(new_path):
         raise HTTPException(status_code=400, detail="Instance with that name already exists")
 
     # Rename the directory
+    old_backups = backups.backups_dir(old_path)
     try:
         os.rename(old_path, new_path)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Failed to rename instance folder: {e}")
+        raise HTTPException(status_code=500, detail="Couldn't rename the instance folder.")
+
+    # Backups kept in a global folder are keyed by instance id, so move them along
+    new_backups = backups.backups_dir(new_path)
+    if not old_backups.startswith(old_path + os.sep) and os.path.isdir(old_backups) and not os.path.exists(new_backups):
+        try:
+            shutil.move(old_backups, new_backups)
+        except Exception as e:
+            print(f"Failed to move backups for renamed instance: {e}")
     
     # Update docker-compose.yml
     compose_path = os.path.join(new_path, "docker-compose.yml")
@@ -1605,12 +2137,13 @@ def rename_instance(instance_id: str, req: RenameInstanceRequest):
                 env = service.get("environment", [])
                 if isinstance(env, list):
                     for i, item in enumerate(env):
-                        if item.startswith("MOTD="):
-                            env[i] = f"MOTD={req.name} Hosted by Isopod"
-                            break
+                        for key in ("MOTD", "SERVER_NAME"):
+                            if item.startswith(f"{key}="):
+                                env[i] = f"{key}={req.name} Hosted by Isopod"
                 elif isinstance(env, dict):
-                    if "MOTD" in env:
-                        env["MOTD"] = f"{req.name} Hosted by Isopod"
+                    for key in ("MOTD", "SERVER_NAME"):
+                        if key in env:
+                            env[key] = f"{req.name} Hosted by Isopod"
             
             with open(compose_path, "w") as f:
                 yaml.dump(config, f, default_flow_style=False)
@@ -1621,6 +2154,19 @@ def rename_instance(instance_id: str, req: RenameInstanceRequest):
             
     return {"id": new_slug, "message": "Instance renamed"}
 
+def sync_bedrock_port_env(service: dict) -> None:
+    """After ports move, point ISOPOD_BEDROCK_PORT at the cross-play port's new host side."""
+    port = bedrock.bedrock_port(service)
+    env = service.get("environment")
+    if port is None or not env:
+        return
+    if isinstance(env, list):
+        for i, item in enumerate(env):
+            if str(item).startswith(f"{bedrock.BEDROCK_PORT_ENV}="):
+                env[i] = f"{bedrock.BEDROCK_PORT_ENV}={port}"
+    elif bedrock.BEDROCK_PORT_ENV in env:
+        env[bedrock.BEDROCK_PORT_ENV] = str(port)
+
 @app.post("/api/instances/{instance_id}/duplicate")
 def duplicate_instance(instance_id: str, req: DuplicateInstanceRequest):
     old_path = get_instance_path(instance_id)
@@ -1629,20 +2175,14 @@ def duplicate_instance(instance_id: str, req: DuplicateInstanceRequest):
     original_display_name = instance_id.replace('-', ' ').title()
     new_display_name = req.name or f"Copy of {original_display_name}"
     
-    new_slug = generate_slug(new_display_name)
-    base_slug = new_slug
-    counter = 1
-    while os.path.exists(os.path.join(SERVERS_DIR, new_slug)):
-        new_slug = f"{base_slug}-{counter}"
-        counter += 1
-        
-    new_path = os.path.join(SERVERS_DIR, new_slug)
+    new_slug, new_path = new_instance_dir(new_display_name)
     
     # Clone the entire directory
     try:
-        shutil.copytree(old_path, new_path)
+        shutil.copytree(old_path, new_path, ignore=shutil.ignore_patterns(backups.BACKUPS_DIR_NAME))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to copy directory: {str(e)}")
+        print(f"Failed to copy instance folder: {e}")
+        raise HTTPException(status_code=500, detail="Couldn't copy the instance folder.")
         
     # Update docker-compose.yml to avoid conflicts
     compose_path = os.path.join(new_path, "docker-compose.yml")
@@ -1672,28 +2212,21 @@ def duplicate_instance(instance_id: str, req: DuplicateInstanceRequest):
                 service = services[service_name]
                 service["container_name"] = f"isopod_{new_slug}"
                 
-                # Update ports
-                if "ports" in service:
-                    try:
-                        p = service["ports"][0] or "25565:25565"
-                        current_port = int(str(p).split(':')[0])
-                        new_port = current_port
-                        # Try to find a new free port
-                        while new_port in used_ports or new_port < 1024:
-                            new_port += 1
-                        service["ports"] = [f"{new_port}:25565"]
-                    except: pass
-                
+                # Move every published port (game port, cross-play UDP port) to a free one
+                bedrock.reassign_ports(service, used_ports)
+                sync_bedrock_port_env(service)
+
                 # Update MOTD in environment
                 env = service.get("environment", [])
                 if isinstance(env, list):
                     for i, item in enumerate(env):
-                        if item.startswith("MOTD="):
-                            env[i] = f"MOTD={new_display_name} Hosted by Isopod"
-                            break
+                        for key in ("MOTD", "SERVER_NAME"):
+                            if item.startswith(f"{key}="):
+                                env[i] = f"{key}={new_display_name} Hosted by Isopod"
                 elif isinstance(env, dict):
-                    if "MOTD" in env:
-                        env["MOTD"] = f"{new_display_name} Hosted by Isopod"
+                    for key in ("MOTD", "SERVER_NAME"):
+                        if key in env:
+                            env[key] = f"{new_display_name} Hosted by Isopod"
             
             with open(compose_path, "w") as f:
                 yaml.dump(config, f, default_flow_style=False)
@@ -1729,7 +2262,10 @@ def export_instance(
                     parts = rel_path.split(os.sep)
                     include = False
                     
-                    if len(parts) == 1:
+                    if parts[0] == backups.BACKUPS_DIR_NAME:
+                        # Stored backups would bloat the export; they stay with the original instance.
+                        include = False
+                    elif len(parts) == 1:
                         # Root files like docker-compose.yml, icon.png, metadata.json
                         if configs:
                             include = True
@@ -1786,23 +2322,15 @@ async def import_instance(
     seed: Optional[str] = Form(None),
     level_type: Optional[str] = Form(None),
     generate_structures: Optional[str] = Form(None),
-    memory: Optional[str] = Form(None)
+    memory: Optional[str] = Form(None),
+    group: Optional[str] = Form(None)
 ):
     if not file.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="Only .zip files are supported")
         
     # Generate a unique slug for the new instance
     base_name = name if name else file.filename.rsplit('.', 1)[0]
-    new_slug = generate_slug(base_name)
-    
-    # Avoid collisions
-    base_slug = new_slug
-    counter = 1
-    while os.path.exists(os.path.join(SERVERS_DIR, new_slug)):
-        new_slug = f"{base_slug}-{counter}"
-        counter += 1
-        
-    target_path = os.path.join(SERVERS_DIR, new_slug)
+    new_slug, target_path = new_instance_dir(base_name)
     os.makedirs(target_path, exist_ok=True)
     
     # Save the file temporarily
@@ -1824,13 +2352,15 @@ async def import_instance(
 
         temp_extract_dir = os.path.join(target_path, "temp_extract")
         os.makedirs(temp_extract_dir, exist_ok=True)
+        extract_root = os.path.realpath(temp_extract_dir)
         
         with zipfile.ZipFile(tmp_path, 'r') as zipf:
             for member in zipf.infolist():
-                filename_normalized = member.filename.replace('\\', '/')
-                if filename_normalized.startswith('/') or '..' in filename_normalized:
+                filename_normalized = member.filename.replace('\\', '/').lstrip('/')
+                target_file = os.path.realpath(os.path.join(extract_root, filename_normalized))
+                # Skip entries that would land outside the extract folder (zip slip)
+                if not target_file.startswith(extract_root + os.sep):
                     continue
-                target_file = os.path.join(temp_extract_dir, filename_normalized)
                 if member.is_dir():
                     os.makedirs(target_file, exist_ok=True)
                 else:
@@ -1893,15 +2423,8 @@ async def import_instance(
                         service = services[service_name]
                         service["container_name"] = f"isopod_{new_slug}"
                         
-                        if "ports" in service:
-                            try:
-                                p = service["ports"][0] or "25565:25565"
-                                current_port = int(str(p).split(':')[0])
-                                new_port = port_val if port_val else current_port
-                                while new_port in used_ports or new_port < 1024:
-                                    new_port += 1
-                                service["ports"] = [f"{new_port}:25565"]
-                            except: pass
+                        bedrock.reassign_ports(service, used_ports, port_val)
+                        sync_bedrock_port_env(service)
 
                         # Update other properties if provided
                         env = service.get("environment", [])
@@ -1991,7 +2514,11 @@ async def import_instance(
                 yaml.dump(compose_content, f, default_flow_style=False)
                 
             save_instance_meta(target_path, {"group": "No group"})
-            
+
+        # Server exports bring their own meta; an explicit group from the import form wins
+        if group and group != "No group":
+            save_instance_meta(target_path, {"group": group})
+
         return {"id": new_slug, "message": "Instance imported successfully"}
     except Exception as e:
         shutil.rmtree(target_path, ignore_errors=True)
@@ -2010,42 +2537,380 @@ def get_instance_logs(instance_id: str, tail: int = 200):
             ["docker", "compose", "logs", f"--tail={tail}"],
             cwd=path,
             capture_output=True,
-            text=True,
-            env=compose_env()
+            text=True
         )
         return {"logs": result.stdout + result.stderr}
     except Exception as e:
-        return {"logs": f"Error fetching logs: {str(e)}"}
+        print(f"Failed to fetch logs for {instance_id}: {e}")
+        return {"logs": "Couldn't fetch the server logs."}
 
 @app.post("/api/instances/{instance_id}/command")
 def execute_command(instance_id: str, req: CommandRequest):
     """Execute a command on the 'mc' service of the instance using docker compose exec."""
     path = get_instance_path(instance_id)
+    if bedrock.is_bedrock(read_compose_env(path).get("TYPE")):
+        # Bedrock has no RCON; the command's output shows up in the server log
+        ok, output = bedrock.send_command(path, req.command)
+        return {"output": output, "success": ok}
     # Using 'docker compose exec mc rcon-cli [command]'
     # rcon-cli is the built-in helper in itzg/minecraft-server
     cmd = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", req.command]
     try:
         # Check if running
-        result = subprocess.run(cmd, cwd=path, capture_output=True, text=True, timeout=10, env=compose_env())
+        result = subprocess.run(cmd, cwd=path, capture_output=True, text=True, timeout=10)
         return {
             "output": result.stdout + result.stderr,
             "success": result.returncode == 0
         }
     except Exception as e:
-        return {"output": f"Execution error: {str(e)}", "success": False}
+        print(f"Failed to run command on {instance_id}: {e}")
+        return {"output": "Couldn't run the command on the server.", "success": False}
+
+class PlayerActionRequest(BaseModel):
+    action: str
+    reason: Optional[str] = None
+    message: Optional[str] = None
+    target: Optional[str] = None
+
+@app.get("/api/instances/{instance_id}/players")
+def get_online_players(instance_id: str):
+    """Who is online right now, from RCON `list`. Only meaningful while the server is Online."""
+    path = get_instance_path(instance_id)
+    if bedrock.is_bedrock(read_compose_env(path).get("TYPE")):
+        # Bedrock has no RCON to ask, so the player list isn't available
+        return {"available": False, "online": 0, "max": 0, "players": []}
+    return players.online_players(instance_id, path)
+
+@app.get("/api/instances/{instance_id}/bans")
+def get_banned_players(instance_id: str):
+    """Banned players, read from banned-players.json. Works whether or not the server is running."""
+    return players.read_bans(os.path.join(get_instance_path(instance_id), "data"))
+
+@app.post("/api/instances/{instance_id}/players/{name}/action")
+def player_action(instance_id: str, name: str, req: PlayerActionRequest):
+    """Kick, ban, unban, op/deop, whitelist, message or teleport one player.
+
+    Op and whitelist changes go through User Management so they survive a restart (the
+    access files are rebuilt from users.json); the rest are plain RCON commands.
+    """
+    path = get_instance_path(instance_id)
+    if req.action not in players.ACTIONS:
+        raise HTTPException(status_code=400, detail=f"Unknown action: {req.action}")
+    if not players.is_valid_name(name):
+        raise HTTPException(status_code=400, detail="Invalid player name")
+
+    if req.action in ("op", "deop", "whitelist_add", "whitelist_remove"):
+        users, wl_enabled = get_instance_users_internal(instance_id)
+        user = next((u for u in users if u.get("name", "").lower() == name.lower()), None)
+        if user is None:
+            user = {"name": name, "uuid": None, "level": 0, "is_op": False, "whitelisted": False, "active": True}
+            users.append(user)
+        if req.action in ("op", "deop"):
+            user["is_op"] = req.action == "op"
+            user["level"] = 4 if req.action == "op" else 0
+        else:
+            user["whitelisted"] = req.action == "whitelist_add"
+        # Pass the whitelist setting through: with it unset, the WHITELIST env var written here
+        # makes the server image turn whitelist enforcement on at the next restart.
+        update_instance_users(instance_id, [WhitelistUser(**u) for u in users], whitelist_enabled=wl_enabled)
+        return {"message": f"{name}: {req.action.replace('_', ' ')} saved"}
+
+    if not is_instance_running(path):
+        if req.action != "pardon":
+            raise HTTPException(status_code=409, detail="Start the server first; this action runs on the live server.")
+        # Stopped: edit the ban list directly so a player can be unbanned without a restart
+        if not players.remove_ban(os.path.join(path, "data"), name):
+            raise HTTPException(status_code=400, detail=f"{name} isn't banned")
+        return {"message": f"Unbanned {name}"}
+
+    try:
+        command = players.build_command(req.action, name, req.reason or "", req.message or "", req.target or "")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    ok, output = players.rcon(path, command)
+    players.forget(instance_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail=output or "RCON command failed")
+    return {"message": output or "Done", "command": command}
+
+def is_instance_running(path: str) -> bool:
+    result = subprocess.run(
+        ["docker", "compose", "ps", "--status", "running", "-q"],
+        cwd=path, capture_output=True, text=True, timeout=10
+    )
+    return bool(result.stdout.strip())
+
+@app.get("/api/instances/{instance_id}/backups")
+def get_backups(instance_id: str):
+    path = get_instance_path(instance_id)
+    return {
+        "settings": backups.get_settings(get_instance_meta(path)),
+        "backups": backups.list_backups(path),
+        "snapshots": backups.list_snapshots(path),
+        "pending_snapshot": get_instance_meta(path).get("pending_snapshot"),
+        "worlds": backups.find_world_dirs(path),
+        "location": backups.backups_dir(path),
+    }
+
+@app.put("/api/instances/{instance_id}/backups/settings")
+def update_backup_settings(instance_id: str, req: BackupSettingsRequest):
+    path = get_instance_path(instance_id)
+    try:
+        settings = backups.validate_settings(req.enabled, req.interval_hours, req.keep, req.snapshot_keep)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    save_instance_meta(path, {"backups": settings})
+    if settings["snapshot_keep"]:
+        backups.prune_snapshots(path, settings["snapshot_keep"])
+    return settings
+
+@app.post("/api/instances/{instance_id}/backups")
+async def create_backup(instance_id: str):
+    path = get_instance_path(instance_id)
+    try:
+        backup = await asyncio.to_thread(backups.create_backup, path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    backups.prune_backups(path, backups.get_settings(get_instance_meta(path))["keep"])
+    return backup
+
+@app.get("/api/instances/{instance_id}/backups/{name}")
+def download_backup(instance_id: str, name: str):
+    path = get_instance_path(instance_id)
+    try:
+        file_path = backups.backup_file_path(path, name)
+    except (ValueError, FileNotFoundError):
+        raise HTTPException(status_code=404, detail="Backup not found")
+    return FileResponse(file_path, media_type="application/zip", filename=f"{instance_id}-{name}")
+
+@app.delete("/api/instances/{instance_id}/backups/{name}")
+def delete_backup(instance_id: str, name: str):
+    path = get_instance_path(instance_id)
+    try:
+        os.remove(backups.backup_file_path(path, name))
+    except (ValueError, FileNotFoundError):
+        raise HTTPException(status_code=404, detail="Backup not found")
+    clear_pending_snapshot(path, name)
+    return {"deleted": name}
+
+@app.delete("/api/instances/{instance_id}/snapshots/pending")
+def dismiss_pending_snapshot(instance_id: str):
+    path = get_instance_path(instance_id)
+    clear_pending_snapshot(path)
+    return {"dismissed": True}
+
+@app.post("/api/instances/{instance_id}/backups/{name}/restore")
+async def restore_backup(instance_id: str, name: str):
+    path = get_instance_path(instance_id)
+    if is_instance_running(path):
+        raise HTTPException(status_code=409, detail="Stop the server before restoring a backup.")
+    try:
+        worlds = await asyncio.to_thread(backups.restore_backup, path, name)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Backup not found")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    clear_pending_snapshot(path, name)
+    return {"restored": worlds}
+
+# Compose settings that change what the server runs. Changing any of them takes a snapshot first.
+UPDATE_ENV_KEYS = {
+    "VERSION": "Minecraft version",
+    "TYPE": "server type",
+    "FABRIC_LOADER_VERSION": "Fabric loader version",
+    "FORGE_VERSION": "Forge version",
+    "NEOFORGE_VERSION": "NeoForge version",
+    "QUILT_LOADER_VERSION": "Quilt loader version",
+    "PAPER_BUILD": "Paper build",
+    "PURPUR_BUILD": "Purpur build",
+    "FOLIABUILD": "Folia build",
+    "LOADER_VERSION": "loader version",
+    "MODRINTH_MODPACK": "modpack",
+    "MODRINTH_VERSION": "modpack version",
+    "MODRINTH_PROJECTS": "mods",
+    "MODRINTH_DISABLED": "mods",
+    "ISOPOD_CROSSPLAY": "Bedrock cross-play",
+}
+UPDATE_ENV_PREFIXES = ("CF_",)
+
+def env_as_dict(env) -> dict:
+    if isinstance(env, dict):
+        return {k: "" if v is None else str(v) for k, v in env.items()}
+    result = {}
+    for item in env or []:
+        if "=" in str(item):
+            k, v = str(item).split("=", 1)
+            result[k] = v
+    return result
+
+def describe_update(old_env: dict, new_env: dict) -> Optional[str]:
+    """Describe the update-relevant changes between two compose environments, or None if there are none."""
+    new_env = env_as_dict(new_env)
+    keys = set(UPDATE_ENV_KEYS) | {k for k in set(old_env) | set(new_env) if k.startswith(UPDATE_ENV_PREFIXES)}
+    changed = sorted(k for k in keys if (old_env.get(k) or "") != (new_env.get(k) or ""))
+    if not changed:
+        return None
+    for key in ("VERSION", "TYPE"):
+        if key in changed and old_env.get(key) and new_env.get(key):
+            return f"Before changing {UPDATE_ENV_KEYS[key]} {old_env[key]} \u2192 {new_env[key]}"
+    labels = []
+    for key in changed:
+        label = UPDATE_ENV_KEYS.get(key, "CurseForge settings")
+        if label not in labels:
+            labels.append(label)
+    return "Before changing " + ", ".join(labels)
+
+def take_pre_update_snapshot(path: str, reason: str) -> Optional[dict]:
+    """Snapshot the instance before an update, unless snapshots are off or one was just taken."""
+    keep = backups.get_settings(get_instance_meta(path))["snapshot_keep"]
+    if keep <= 0:
+        return None
+    snapshot = backups.recent_snapshot(path)
+    if not snapshot:
+        try:
+            snapshot = backups.create_snapshot(path, reason)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Couldn't take a snapshot before the change, so nothing was changed: {e}. "
+                       "To skip snapshots, set Snapshots to keep to 0 in the Backups tab.",
+            )
+        backups.prune_snapshots(path, keep)
+    # 'changed' is when this change happened; the offer stays until the server starts fine after it.
+    save_instance_meta(path, {"pending_snapshot": {
+        "name": snapshot["name"], "reason": snapshot.get("reason") or reason, "changed": time.time(),
+    }})
+    return snapshot
+
+def clear_pending_snapshot(path: str, name: Optional[str] = None) -> None:
+    pending = get_instance_meta(path).get("pending_snapshot")
+    if pending and (name is None or pending.get("name") == name):
+        save_instance_meta(path, {"pending_snapshot": None})
+
+def _container_started_at(container) -> float:
+    return _docker_time((container.attrs.get("State") or {}).get("StartedAt"))
+
+def current_pending_snapshot(path: str, containers, is_ready: bool) -> Optional[dict]:
+    """The snapshot to offer for rollback. Cleared once the server has started fine after the change."""
+    pending = get_instance_meta(path).get("pending_snapshot")
+    if not pending:
+        return None
+    try:
+        backups.backup_file_path(path, pending.get("name", ""))
+    except (ValueError, FileNotFoundError):
+        clear_pending_snapshot(path)
+        return None
+    if is_ready and any(_container_started_at(c) > pending.get("changed", 0) for c in containers):
+        clear_pending_snapshot(path)
+        return None
+    return pending
+
+def _docker_time(value: Optional[str]) -> float:
+    try:
+        return datetime.strptime((value or "")[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return 0
+
+def current_crash_state(path: str, containers, is_running: bool) -> Optional[dict]:
+    """What the dashboard should say about crashes: crashed, restarting, halted, recovered, or nothing."""
+    meta = get_instance_meta(path)
+    last = meta.get("last_crash")
+    halted = meta.get("crash_loop_halted")
+    if is_running:
+        return {"state": "recovered", **last} if last else None
+    if halted:
+        return {"state": "halted", **(last or {}), "count": halted.get("count")}
+    for c in containers:
+        state = c.attrs.get("State") or {}
+        if state.get("Restarting") and last:
+            return {"state": "restarting", **last}
+        # Covers crashes the watchdog missed, e.g. while Isopod was down
+        if state.get("Status") == "exited" and (state.get("ExitCode") or state.get("OOMKilled")):
+            finished = _docker_time(state.get("FinishedAt"))
+            if finished > (meta.get("manual_stop_at") or 0):
+                return {
+                    "state": "crashed",
+                    "time": finished,
+                    "exit_code": state.get("ExitCode"),
+                    "oom_killed": bool(state.get("OOMKilled")),
+                }
+    return None
+
+@app.delete("/api/instances/{instance_id}/crash")
+def dismiss_crash(instance_id: str):
+    path = get_instance_path(instance_id)
+    save_instance_meta(path, {"last_crash": None, "crash_loop_halted": None})
+    return {"dismissed": True}
+
+@app.get("/api/instances/{instance_id}/crash-report")
+def get_crash_report(instance_id: str):
+    path = get_instance_path(instance_id)
+    mods_dir = get_instance_mods_dir(instance_id)
+    mod_files = [e.name for e in os.scandir(mods_dir) if e.is_file()] if os.path.isdir(mods_dir) else []
+    report = crashes.latest_crash_report(path, mod_files)
+    # Out-of-memory kills, port conflicts and the like leave no report; the log tail shows those
+    log_tail = ""
+    try:
+        result = subprocess.run(
+            ["docker", "compose", "logs", "--no-log-prefix", "--tail=80", "mc"],
+            cwd=path, capture_output=True, text=True, timeout=10,
+        )
+        log_tail = result.stdout
+    except Exception as e:
+        print(f"Error reading logs for crash report: {e}")
+    return {"report": report, "log_tail": log_tail}
+
+def _instance_path_for_project(project: str) -> Optional[str]:
+    """Compose project names are the instance folder name, lowercased."""
+    if not os.path.isdir(SERVERS_DIR):
+        return None
+    for entry in os.scandir(SERVERS_DIR):
+        if entry.is_dir() and entry.name.lower() == project.lower() and os.path.exists(os.path.join(entry.path, "docker-compose.yml")):
+            return entry.path
+    return None
+
+def _instance_restart_policy(path: str) -> str:
+    try:
+        with open(os.path.join(path, "docker-compose.yml"), "r") as f:
+            services = (yaml.safe_load(f) or {}).get("services") or {}
+        service = services.get("mc") or (list(services.values())[0] if services else {})
+        return crashes.policy_from_compose(service.get("restart"))
+    except Exception:
+        return crashes.DEFAULT_RESTART_POLICY
+
+def _halt_crash_loop(path: str) -> None:
+    result = subprocess.run(["docker", "compose", "stop"], cwd=path, capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        print(f"[watchdog] Failed to stop {os.path.basename(path)}: {result.stderr.strip()}")
+
+crash_watchdog = crashes.CrashWatchdog(
+    resolve_instance=_instance_path_for_project,
+    save_meta=save_instance_meta,
+    get_policy=_instance_restart_policy,
+    halt=_halt_crash_loop,
+)
+
+async def backup_schedule_loop():
+    """Background task that runs due scheduled backups once a minute."""
+    while True:
+        try:
+            await asyncio.to_thread(backups.run_due_backups, SERVERS_DIR, get_instance_meta)
+        except Exception as e:
+            print(f"Backup scheduler error: {e}")
+        await asyncio.sleep(60)
 
 @app.get("/api/mods/metadata")
 async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = "", modrinth_modpack: str = "", cf_modpack: str = ""):
-    """Fetch metadata for multiple mods from Modrinth and CurseForge."""
+    """Fetch metadata for multiple mods from Modrinth."""
     results = []
     
     m_ids = [i.strip() for i in modrinth_ids.split(",") if i.strip()]
-    c_ids = [i.strip() for i in cf_ids.split(",") if i.strip()]
     
     async with httpx.AsyncClient() as client:
         # If modrinth_modpack is specified, fetch its dependencies (constituent mods)
         if modrinth_modpack:
             try:
+                modrinth_modpack = url_segment(modrinth_modpack, "modpack ID")
                 res = await client.get(f"https://api.modrinth.com/v2/project/{modrinth_modpack}/version")
                 if res.status_code == 200:
                     versions = res.json()
@@ -2058,25 +2923,6 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = "", modrinth_m
                                 m_ids.append(p_id)
             except Exception as e:
                 print(f"Error resolving Modrinth modpack dependencies: {e}")
-
-        # If cf_modpack is specified, fetch its dependencies (constituent mods)
-        if cf_modpack:
-            try:
-                async with get_cf_client() as cf_client:
-                    res = await cf_client.get(f"{CF_API_BASE}/mods/{cf_modpack}")
-                    if res.status_code == 200:
-                        data = res.json().get("data", {})
-                        latest_files = data.get("latestFiles", [])
-                        if latest_files:
-                            deps = latest_files[0].get("dependencies", [])
-                            for d in deps:
-                                # 1 = Embedded, 3 = Required
-                                if d.get("relationType") in (1, 3):
-                                    p_id = str(d.get("modId"))
-                                    if p_id and p_id not in c_ids:
-                                        c_ids.append(p_id)
-            except Exception as e:
-                print(f"Error resolving CurseForge modpack dependencies: {e}")
 
         # Modrinth bulk lookup
         if m_ids:
@@ -2118,47 +2964,6 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = "", modrinth_m
                 else:
                     results.append({"id": mid, "name": mid, "provider": "modrinth", "unknown": True, "requested_id": mid})
 
-        # CurseForge lookup
-        if c_ids:
-            for cid in c_ids:
-                if cid in mod_metadata_cache:
-                    meta = mod_metadata_cache[cid]
-                    if meta.get("is_client_only"):
-                        continue
-                    meta_copy = meta.copy()
-                    meta_copy["requested_id"] = cid
-                    results.append(meta_copy)
-                    continue
-                try:
-                    async with get_cf_client() as cf_client:
-                        res = await cf_client.get(f"{CF_API_BASE}/mods/{cid}")
-                        if res.status_code == 200:
-                            item = res.json()["data"]
-                            latest_file = item.get("latestFiles", [{}])[0]
-                            categories = item.get("categories", [])
-                            is_client_only = any(c.get("id") == 4764 for c in categories)
-                            meta = {
-                                "id": str(item["id"]),
-                                "name": item["name"],
-                                "summary": item["summary"],
-                                "icon_url": item.get("logo", {}).get("thumbnailUrl"),
-                                "author": item.get("authors", [{}])[0].get("name", "Unknown"),
-                                "downloads": int(item.get("downloadCount", 0)),
-                                "url": item.get("links", {}).get("websiteUrl", ""),
-                                "provider": "curseforge",
-                                "mc_versions": latest_file.get("gameVersions", [])[:3],
-                                "latest_version": latest_file.get("displayName", "Unknown"),
-                                "is_client_only": is_client_only
-                            }
-                            mod_metadata_cache[cid] = meta
-                            if is_client_only:
-                                continue
-                            meta_copy = meta.copy()
-                            meta_copy["requested_id"] = cid
-                            results.append(meta_copy)
-                except:
-                    results.append({"id": cid, "name": cid, "provider": "curseforge", "unknown": True, "requested_id": cid})
-
     return results
 
 @app.post("/api/mods/check-compatibility")
@@ -2169,7 +2974,6 @@ async def check_mod_compatibility(req: Dict[str, Any]):
     target_mc = req.get("mc_version")
     target_loader = (req.get("loader") or "VANILLA").upper()
     m_ids = req.get("modrinth_ids", [])
-    c_ids = req.get("cf_ids", [])
     
     results = {
         "compatible": [],
@@ -2180,8 +2984,9 @@ async def check_mod_compatibility(req: Dict[str, Any]):
         # Modrinth Compatibility Check
         for mid in m_ids:
             try:
-                loaders_param = json.dumps([target_loader.lower()])
+                loaders_param = json.dumps(PLUGIN_SERVER_LOADERS.get(target_loader, [target_loader.lower()]))
                 versions_param = json.dumps([target_mc])
+                mid = url_segment(str(mid), "mod ID")
                 url = f"https://api.modrinth.com/v2/project/{mid}/version"
                 res = await client.get(url, params={"loaders": loaders_param, "game_versions": versions_param})
                 
@@ -2192,37 +2997,6 @@ async def check_mod_compatibility(req: Dict[str, Any]):
             except:
                 results["incompatible"].append({"id": mid, "provider": "modrinth"})
 
-        # CurseForge Compatibility Check
-        mod_loader_type = 0
-        if "FORGE" in target_loader: mod_loader_type = 1
-        elif "FABRIC" in target_loader: mod_loader_type = 4
-        elif "QUILT" in target_loader: mod_loader_type = 5
-        elif "NEOFORGE" in target_loader: mod_loader_type = 6
-
-        for cid in c_ids:
-            try:
-                async with get_cf_client() as cf_client:
-                    # Use project lookup to see latest files
-                    res = await cf_client.get(f"{CF_API_BASE}/mods/{cid}")
-                    if res.status_code == 200:
-                        data = res.json()["data"]
-                        found = False
-                        for file in data.get("latestFiles", []):
-                            game_versions = file.get("gameVersions", [])
-                            if target_mc in game_versions:
-                                # if modLoaderType filter is applied, must match
-                                if mod_loader_type == 0 or mod_loader_type in file.get("modLoaderTypes", []):
-                                    found = True
-                                    break
-                        if found:
-                            results["compatible"].append({"id": cid, "provider": "curseforge"})
-                        else:
-                            results["incompatible"].append({"id": cid, "provider": "curseforge"})
-                    else:
-                        results["incompatible"].append({"id": cid, "provider": "curseforge"})
-            except:
-                results["incompatible"].append({"id": cid, "provider": "curseforge"})
-
     return results
 
 @app.get("/api/mods/dependencies")
@@ -2231,6 +3005,7 @@ async def get_mod_dependencies(provider: str, project_id: str):
     if provider == "modrinth":
         try:
             async with httpx.AsyncClient() as client:
+                project_id = url_segment(project_id, "project ID")
                 res = await client.get(f"https://api.modrinth.com/v2/project/{project_id}/version")
                 if res.status_code == 200:
                     versions = res.json()
@@ -2247,26 +3022,753 @@ async def get_mod_dependencies(provider: str, project_id: str):
                         return dep_ids # Fallback
         except Exception as e:
             print(f"Modrinth dependency error: {e}")
-    elif provider == "curseforge":
-        try:
-            async with get_cf_client() as client:
-                # CurseForge dependency lookup requires hitting the mod details
-                res = await client.get(f"{CF_API_BASE}/mods/{project_id}")
-                if res.status_code == 200:
-                    data = res.json()["data"]
-                    # CF dependencies are objects in 'latestFiles'
-                    # We use the first file for simplicity
-                    latest_files = data.get("latestFiles", [])
-                    if latest_files:
-                        return [str(d["modId"]) for d in latest_files[0].get("dependencies", []) if d.get("relationType") == 3] # 3 = Required
-        except Exception as e:
-            print(f"CurseForge dependency error: {e}")
     return []
 
 @app.get("/api/mods/conflicts")
 async def get_mod_conflicts(provider: str, project_id: str, current_mods: str = ""):
     """Check for obvious loader/engine conflicts."""
     return {"conflicts": []}
+
+
+# ==========================================
+# Instance Mods Management (Prism Launcher Style)
+# ==========================================
+
+def set_compose_env(instance_path: str, values: dict) -> None:
+    """Set variables on the mc service in docker-compose.yml, keeping its list or mapping form."""
+    compose_path = os.path.join(instance_path, "docker-compose.yml")
+    with open(compose_path, "r") as f:
+        cdata = yaml.safe_load(f) or {}
+    services = cdata.get("services") or {}
+    if not services:
+        return
+    service = services.get("mc") or list(services.values())[0]
+    env = service.get("environment") or []
+    if isinstance(env, dict):
+        env.update(values)
+    else:
+        env = [item for item in env if str(item).split("=", 1)[0] not in values]
+        env += [f"{k}={v}" for k, v in values.items()]
+    service["environment"] = env
+    with open(compose_path, "w") as f:
+        yaml.dump(cdata, f, default_flow_style=False)
+
+def read_compose_env(instance_path: str) -> dict:
+    """The mc service's environment from docker-compose.yml, as a dict ({} if unreadable)."""
+    try:
+        with open(os.path.join(instance_path, "docker-compose.yml"), "r") as f:
+            cdata = yaml.safe_load(f) or {}
+        services = cdata.get("services") or {}
+        service = services.get("mc") or (list(services.values())[0] if services else {})
+        return env_as_dict(service.get("environment"))
+    except Exception:
+        return {}
+
+def get_instance_mods_dir(instance_id: str) -> str:
+    base = get_instance_path(instance_id)
+    if is_plugin_server(read_compose_env(base).get("TYPE")):
+        plugins_dir = os.path.join(base, "data", "plugins")
+        os.makedirs(plugins_dir, exist_ok=True)
+        return plugins_dir
+    # Check data/mods first (standard Docker mount)
+    data_mods = os.path.join(base, "data", "mods")
+    if os.path.exists(data_mods):
+        return data_mods
+    # Fallback to base/mods
+    plain_mods = os.path.join(base, "mods")
+    if os.path.exists(plain_mods):
+        return plain_mods
+    # Default to data/mods
+    os.makedirs(data_mods, exist_ok=True)
+    return data_mods
+
+
+def parse_mod_jar_metadata(jar_path: str) -> dict:
+    import base64
+    meta = {
+        "id": None,
+        "name": None,
+        "version": None,
+        "summary": None,
+        "url": None,
+        "icon_url": None,
+    }
+    icon_file = None
+    try:
+        with zipfile.ZipFile(jar_path, 'r') as z:
+            names = set(z.namelist())
+            if "fabric.mod.json" in names:
+                data = json.loads(z.read("fabric.mod.json").decode('utf-8', errors='ignore'))
+                meta["id"] = data.get("id")
+                meta["name"] = data.get("name") or data.get("id")
+                meta["version"] = str(data.get("version", ""))
+                meta["summary"] = data.get("description")
+                contact = data.get("contact", {})
+                meta["url"] = contact.get("homepage") or contact.get("sources")
+                icon_field = data.get("icon")
+                if isinstance(icon_field, str):
+                    icon_file = icon_field
+                elif isinstance(icon_field, dict):
+                    icon_file = icon_field.get("128") or icon_field.get("64") or next(iter(icon_field.values()), None)
+            elif "quilt.mod.json" in names:
+                data = json.loads(z.read("quilt.mod.json").decode('utf-8', errors='ignore'))
+                q_meta = data.get("quilt_loader", {}).get("metadata", {})
+                meta["id"] = data.get("quilt_loader", {}).get("id")
+                meta["name"] = q_meta.get("name") or meta["id"]
+                meta["version"] = str(data.get("quilt_loader", {}).get("version", ""))
+                meta["summary"] = q_meta.get("description")
+                icon_field = q_meta.get("icon")
+                if isinstance(icon_field, str):
+                    icon_file = icon_field
+                elif isinstance(icon_field, dict):
+                    icon_file = icon_field.get("128") or icon_field.get("64") or next(iter(icon_field.values()), None)
+            elif "META-INF/mods.toml" in names:
+                content = z.read("META-INF/mods.toml").decode('utf-8', errors='ignore')
+                import re
+                m_id = re.search(r'modId\s*=\s*["\']([^"\']+)["\']', content)
+                m_name = re.search(r'displayName\s*=\s*["\']([^"\']+)["\']', content)
+                m_ver = re.search(r'version\s*=\s*["\']([^"\']+)["\']', content)
+                m_desc = re.search(r'description\s*=\s*["\']([^"\']+)["\']', content)
+                m_logo = re.search(r'logoFile\s*=\s*["\']([^"\']+)["\']', content)
+                if m_id: meta["id"] = m_id.group(1)
+                if m_name: meta["name"] = m_name.group(1)
+                if m_ver: meta["version"] = m_ver.group(1)
+                if m_desc: meta["summary"] = m_desc.group(1)
+                if m_logo: icon_file = m_logo.group(1)
+            elif "mcmod.info" in names:
+                data = json.loads(z.read("mcmod.info").decode('utf-8', errors='ignore'))
+                if isinstance(data, list) and data:
+                    item = data[0]
+                    meta["id"] = item.get("modid")
+                    meta["name"] = item.get("name") or item.get("modid")
+                    meta["version"] = str(item.get("version", ""))
+                    meta["summary"] = item.get("description")
+                    meta["url"] = item.get("url")
+                    if item.get("logoFile"):
+                        icon_file = item.get("logoFile")
+
+            if not icon_file:
+                for candidate in ["icon.png", "logo.png", "pack.png"]:
+                    if candidate in names:
+                        icon_file = candidate
+                        break
+                if not icon_file:
+                    for n in names:
+                        if n.endswith("/icon.png") or n.endswith("/logo.png"):
+                            icon_file = n
+                            break
+
+            if icon_file and icon_file in names:
+                try:
+                    img_bytes = z.read(icon_file)
+                    ext = "png"
+                    if icon_file.lower().endswith(".jpg") or icon_file.lower().endswith(".jpeg"):
+                        ext = "jpeg"
+                    elif icon_file.lower().endswith(".webp"):
+                        ext = "webp"
+                    meta["icon_url"] = f"data:image/{ext};base64,{base64.b64encode(img_bytes).decode('ascii')}"
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    filename = os.path.basename(jar_path)
+    clean_name = filename
+    if clean_name.endswith(".disabled"):
+        clean_name = clean_name[:-9]
+    if clean_name.endswith(".jar"):
+        clean_name = clean_name[:-4]
+
+    import re
+    if not meta["name"]:
+        # "Some-Mod_1.2.3" -> name "Some Mod", version "1.2.3": split at the first - or _ before a version
+        split = re.search(r"[-_](?=[vV]?\d)", clean_name[1:])
+        prefix = clean_name[:split.start() + 1] if split else ""
+        if prefix and re.fullmatch(r"[A-Za-z0-9_\s+-]+", prefix):
+            meta["name"] = prefix.replace("-", " ").replace("_", " ").title()
+            if not meta["version"]:
+                meta["version"] = clean_name[len(prefix) + 1:]
+        else:
+            meta["name"] = clean_name.replace("-", " ").replace("_", " ").title()
+    else:
+        # Strip trailing version suffixes from mod name
+        meta["name"] = re.sub(r'[-_vV]?\d+(\.\d+)+.*$', '', meta["name"]).strip()
+        meta["name"] = re.sub(r'[-_]\d+.*$', '', meta["name"]).strip()
+        if not meta["name"]:
+            meta["name"] = clean_name.replace("-", " ").replace("_", " ").title()
+
+    if not meta["id"]:
+        meta["id"] = clean_name.lower().replace(" ", "-")
+
+    return meta
+
+
+@app.get("/api/instances/{instance_id}/mods")
+async def list_instance_mods(instance_id: str):
+    """List all mods installed in an instance with enable/disable state and file metadata."""
+    from datetime import datetime
+    mods = []
+    seen_ids = set()
+    mods_dir = get_instance_mods_dir(instance_id)
+
+    # 1. Physical mod files on disk
+    if os.path.exists(mods_dir):
+        for entry in os.scandir(mods_dir):
+            if not entry.is_file():
+                continue
+            fname = entry.name
+            is_enabled = False
+            if fname.lower().endswith(".jar"):
+                is_enabled = True
+            elif fname.lower().endswith(".jar.disabled"):
+                is_enabled = False
+            else:
+                continue
+
+            try:
+                st = entry.stat()
+                mtime_str = datetime.fromtimestamp(st.st_mtime).strftime("%m/%d/%y %H:%M")
+                jar_meta = parse_mod_jar_metadata(entry.path)
+
+                mod_id = jar_meta["id"] or fname
+                seen_ids.add(mod_id.lower())
+                seen_ids.add(fname.lower())
+
+                clean_stem = fname.replace(".disabled", "").replace(".jar", "").lower()
+                cached = mod_metadata_cache.get(mod_id.lower()) or mod_metadata_cache.get(clean_stem)
+                icon_url = jar_meta.get("icon_url") or (cached.get("icon_url") if cached else None)
+                url = jar_meta.get("url") or (cached.get("url") if cached else None)
+                summary = jar_meta.get("summary") or (cached.get("summary") if cached else None)
+
+                import re
+                mod_display_name = (cached.get("name") if cached else None) or jar_meta["name"] or fname
+                mod_display_name = re.sub(r'[-_vV]?\d+(\.\d+)+.*$', '', mod_display_name).strip()
+                mod_display_name = re.sub(r'[-_]\d+.*$', '', mod_display_name).strip()
+                if not mod_display_name:
+                    mod_display_name = jar_meta["name"] or fname
+
+                version_str = jar_meta.get("version")
+                if not version_str or version_str == "-":
+                    vm = re.search(r'[-_vV](\d+(\.\d+).*)$', clean_stem)
+                    if vm:
+                        version_str = vm.group(1)
+                    elif cached and cached.get("latest_version"):
+                        version_str = cached.get("latest_version")
+                    else:
+                        version_str = "-"
+
+                mods.append({
+                    "filename": fname,
+                    "id": mod_id,
+                    "name": mod_display_name,
+                    "version": version_str,
+                    "enabled": is_enabled,
+                    "size": st.st_size,
+                    "modified": st.st_mtime,
+                    "modified_str": mtime_str,
+                    "icon_url": icon_url,
+                    "summary": summary,
+                    "url": url,
+                    "provider": cached.get("provider", "local") if cached else "local",
+                    "source": "file"
+                })
+            except Exception as e:
+                print(f"Error reading mod file {fname}: {e}")
+
+    # 2. Correlate with docker-compose.yml environment mods (Modrinth)
+    try:
+        base_path = get_instance_path(instance_id)
+        compose_path = os.path.join(base_path, "docker-compose.yml")
+        if os.path.exists(compose_path):
+            with open(compose_path, 'r') as f:
+                cdata = yaml.safe_load(f) or {}
+            env = cdata.get("services", {}).get("mc", {}).get("environment", {})
+            env_dict = {}
+            if isinstance(env, list):
+                for item in env:
+                    if "=" in item:
+                        k, v = item.split("=", 1)
+                        env_dict[k] = v
+            elif isinstance(env, dict):
+                env_dict = env
+
+            # Modrinth projects
+            m_enabled = [x.strip() for x in env_dict.get("MODRINTH_PROJECTS", "").split(",") if x.strip()]
+            m_disabled = [x.strip() for x in env_dict.get("MODRINTH_DISABLED", "").split(",") if x.strip()]
+            for mid in m_enabled + m_disabled:
+                if mid.lower() not in seen_ids:
+                    seen_ids.add(mid.lower())
+                    cached = mod_metadata_cache.get(mid.lower())
+                    name = cached.get("name", mid) if cached else mid
+                    version = cached.get("latest_version", "-") if cached else "-"
+                    icon_url = cached.get("icon_url") if cached else None
+                    url = cached.get("url", f"https://modrinth.com/mod/{mid}") if cached else f"https://modrinth.com/mod/{mid}"
+                    summary = cached.get("summary") if cached else None
+                    is_en = mid in m_enabled
+                    mods.append({
+                        "filename": f"{mid}.jar" if is_en else f"{mid}.jar.disabled",
+                        "id": mid,
+                        "name": name,
+                        "version": version,
+                        "enabled": is_en,
+                        "size": 0,
+                        "modified": 0,
+                        "modified_str": "Configured",
+                        "icon_url": icon_url,
+                        "summary": summary,
+                        "url": url,
+                        "provider": "modrinth",
+                        "source": "env"
+                    })
+
+        # 3. Mods bundled in a Modrinth modpack that itzg hasn't downloaded yet (before first start)
+        modpack = env_dict.get("MODRINTH_MODPACK", "").strip()
+        if modpack and "/" not in modpack:
+            excluded = {x.strip().lower() for x in env_dict.get("MODRINTH_EXCLUDE_FILES", "").split(",") if x.strip()}
+            pack_version = env_dict.get("MODRINTH_VERSION") or None
+            pack_mods = await modpacks.get_mods(base_path, modpack, pack_version)
+            # Once installed, a pack mod missing from disk was skipped by itzg (e.g. its built-in
+            # client-only exclusions) and won't appear; only list the ones the user excluded.
+            installed = modpacks.is_installed(os.path.join(base_path, "data"), pack_version)
+            for pm in pack_mods:
+                if pm.get("removed"):
+                    continue
+                fname = pm["filename"]
+                mod_id = pm.get("slug") or pm.get("project_id") or fname
+                if {fname.lower(), f"{fname}.disabled".lower(), mod_id.lower()} & seen_ids:
+                    continue
+                is_en = fname.lower() not in excluded
+                if installed and is_en:
+                    continue
+                seen_ids.add(fname.lower())
+                mods.append({
+                    "filename": fname if is_en else f"{fname}.disabled",
+                    "id": mod_id,
+                    "name": pm.get("name") or fname,
+                    "version": pm.get("version_number") or "-",
+                    "enabled": is_en,
+                    "size": 0,
+                    "modified": 0,
+                    "modified_str": "Installs on start",
+                    "icon_url": pm.get("icon_url"),
+                    "summary": pm.get("summary"),
+                    "url": f"https://modrinth.com/mod/{mod_id}" if pm.get("project_id") else None,
+                    "provider": "modrinth" if pm.get("project_id") else "local",
+                    "source": "modpack"
+                })
+
+    except Exception as e:
+        print(f"Error checking compose env mods: {e}")
+
+    mods.sort(key=lambda x: x["name"].lower())
+    return mods
+
+
+def set_modpack_mod_excluded(instance_id: str, filename: Optional[str], excluded: bool) -> bool:
+    """Exclude (or re-include) a not-yet-downloaded modpack mod via MODRINTH_EXCLUDE_FILES.
+
+    Returns False if the file isn't one of the instance's modpack mods.
+    """
+    if not filename:
+        return False
+    base_path = get_instance_path(instance_id)
+    fname = filename[:-len(".disabled")] if filename.endswith(".disabled") else filename
+    if fname not in modpacks.saved_filenames(base_path):
+        return False
+
+    compose_path = os.path.join(base_path, "docker-compose.yml")
+    with open(compose_path, 'r') as f:
+        cdata = yaml.safe_load(f) or {}
+    service = cdata.get("services", {}).get("mc", {})
+    env = service.get("environment") or []
+    env_map = dict(item.split("=", 1) for item in env if "=" in item) if isinstance(env, list) else dict(env)
+
+    items = [x.strip() for x in env_map.get("MODRINTH_EXCLUDE_FILES", "").split(",") if x.strip()]
+    items = [x for x in items if x.lower() != fname.lower()]
+    if excluded:
+        items.append(fname)
+    env_map["MODRINTH_EXCLUDE_FILES"] = ",".join(items)
+    env_map["MODRINTH_FORCE_SYNCHRONIZE"] = "true"
+
+    service["environment"] = [f"{k}={v}" for k, v in env_map.items()] if isinstance(env, list) else env_map
+    with open(compose_path, 'w') as f:
+        yaml.dump(cdata, f, default_flow_style=False, sort_keys=False)
+    return True
+
+
+def mod_file_path(mods_dir: str, filename: str) -> Optional[str]:
+    """The path of a file directly inside mods_dir, or None if filename points anywhere else."""
+    root = os.path.realpath(mods_dir)
+    path = os.path.realpath(os.path.join(root, filename))
+    if not path.startswith(root + os.sep) or os.path.dirname(path) != root:
+        return None
+    return path
+
+
+class ToggleModRequest(BaseModel):
+    filename: Optional[str] = None
+    mod_id: Optional[str] = None
+    enabled: bool
+
+
+@app.post("/api/instances/{instance_id}/mods/toggle")
+def toggle_instance_mod(instance_id: str, req: ToggleModRequest):
+    """Toggle a mod between enabled (.jar) and disabled (.jar.disabled) state."""
+    mods_dir = get_instance_mods_dir(instance_id)
+    take_pre_update_snapshot(get_instance_path(instance_id), "Before changing mods")
+    target_file = None
+    new_filename = None
+
+    # Check disk file
+    if req.filename:
+        full_path = mod_file_path(mods_dir, req.filename)
+        if full_path and os.path.exists(full_path):
+            target_file = full_path
+
+    # If filename didn't match directly, try by mod_id or stem
+    if not target_file and os.path.exists(mods_dir):
+        for entry in os.scandir(mods_dir):
+            stem = entry.name.replace(".disabled", "").replace(".jar", "")
+            if req.filename and stem.lower() in req.filename.lower():
+                target_file = entry.path
+                break
+            if req.mod_id and stem.lower() == req.mod_id.lower():
+                target_file = entry.path
+                break
+
+    if target_file:
+        cur_name = os.path.basename(target_file)
+        if req.enabled:
+            # Enabling: remove .disabled
+            if cur_name.endswith(".disabled"):
+                new_name = cur_name[:-9]
+                dest = os.path.join(mods_dir, new_name)
+                os.rename(target_file, dest)
+                new_filename = new_name
+            else:
+                new_filename = cur_name
+        else:
+            # Disabling: add .disabled
+            if not cur_name.endswith(".disabled"):
+                new_name = cur_name + ".disabled"
+                dest = os.path.join(mods_dir, new_name)
+                os.rename(target_file, dest)
+                new_filename = new_name
+            else:
+                new_filename = cur_name
+
+    # A modpack mod that itzg hasn't downloaded yet is toggled through the pack's exclude list
+    if not target_file:
+        try:
+            if set_modpack_mod_excluded(instance_id, req.filename, not req.enabled):
+                new_filename = req.filename.replace(".disabled", "") + ("" if req.enabled else ".disabled")
+        except Exception as e:
+            print(f"Error updating modpack excludes for mod toggle: {e}")
+
+    # Also update compose environment variables if tracked there
+    try:
+        base_path = get_instance_path(instance_id)
+        compose_path = os.path.join(base_path, "docker-compose.yml")
+        if os.path.exists(compose_path):
+            with open(compose_path, 'r') as f:
+                cdata = yaml.safe_load(f) or {}
+            service = cdata.get("services", {}).get("mc", {})
+            env = service.get("environment")
+
+            # Helper to update comma lists in env
+            def move_in_env(enabled_key, disabled_key, target_id):
+                nonlocal env
+                is_list = isinstance(env, list)
+                env_map = {}
+                if is_list:
+                    for item in env:
+                        if "=" in item:
+                            k, v = item.split("=", 1)
+                            env_map[k] = v
+                elif isinstance(env, dict):
+                    env_map = env
+
+                en_list = [x.strip() for x in env_map.get(enabled_key, "").split(",") if x.strip()]
+                dis_list = [x.strip() for x in env_map.get(disabled_key, "").split(",") if x.strip()]
+
+                matched = None
+                for candidate in en_list + dis_list:
+                    if candidate.lower() == target_id.lower():
+                        matched = candidate
+                        break
+
+                if matched:
+                    if req.enabled:
+                        dis_list = [x for x in dis_list if x != matched]
+                        if matched not in en_list:
+                            en_list.append(matched)
+                    else:
+                        en_list = [x for x in en_list if x != matched]
+                        if matched not in dis_list:
+                            dis_list.append(matched)
+
+                    env_map[enabled_key] = ",".join(en_list)
+                    env_map[disabled_key] = ",".join(dis_list)
+
+                    if is_list:
+                        new_env_list = []
+                        for k, v in env_map.items():
+                            new_env_list.append(f"{k}={v}")
+                        service["environment"] = new_env_list
+                    else:
+                        service["environment"] = env_map
+
+            target_identifier = req.mod_id or (req.filename.replace(".disabled", "").replace(".jar", "") if req.filename else "")
+            if target_identifier:
+                move_in_env("MODRINTH_PROJECTS", "MODRINTH_DISABLED", target_identifier)
+
+            with open(compose_path, 'w') as f:
+                yaml.dump(cdata, f, default_flow_style=False, sort_keys=False)
+    except Exception as e:
+        print(f"Error updating compose for mod toggle: {e}")
+
+    return {"message": "Mod state updated successfully", "filename": new_filename, "enabled": req.enabled}
+
+
+class DeleteModRequest(BaseModel):
+    filename: Optional[str] = None
+    mod_id: Optional[str] = None
+
+
+@app.post("/api/instances/{instance_id}/mods/delete")
+@app.delete("/api/instances/{instance_id}/mods")
+def delete_instance_mod(instance_id: str, req: DeleteModRequest):
+    """Delete a mod file from an instance and remove it from compose configuration."""
+    mods_dir = get_instance_mods_dir(instance_id)
+    take_pre_update_snapshot(get_instance_path(instance_id), "Before changing mods")
+    deleted = False
+
+    # Check file
+    if req.filename:
+        for fname in [req.filename, req.filename + ".disabled", req.filename.replace(".disabled", "")]:
+            p = mod_file_path(mods_dir, fname)
+            if p and os.path.isfile(p):
+                os.remove(p)
+                deleted = True
+                break
+
+    if not deleted and req.mod_id and os.path.exists(mods_dir):
+        for entry in os.scandir(mods_dir):
+            stem = entry.name.replace(".disabled", "").replace(".jar", "")
+            if stem.lower() == req.mod_id.lower():
+                os.remove(entry.path)
+                deleted = True
+                break
+
+    # A modpack mod that itzg hasn't downloaded yet is removed by excluding it from the pack
+    if not deleted:
+        try:
+            if set_modpack_mod_excluded(instance_id, req.filename, True):
+                modpacks.mark_removed(get_instance_path(instance_id), req.filename.replace(".disabled", ""))
+                deleted = True
+        except Exception as e:
+            print(f"Error updating modpack excludes for mod delete: {e}")
+
+    # Remove from docker-compose.yml
+    try:
+        base_path = get_instance_path(instance_id)
+        compose_path = os.path.join(base_path, "docker-compose.yml")
+        if os.path.exists(compose_path):
+            with open(compose_path, 'r') as f:
+                cdata = yaml.safe_load(f) or {}
+            service = cdata.get("services", {}).get("mc", {})
+            env = service.get("environment")
+
+            is_list = isinstance(env, list)
+            env_map = {}
+            if is_list:
+                for item in env:
+                    if "=" in item:
+                        k, v = item.split("=", 1)
+                        env_map[k] = v
+            elif isinstance(env, dict):
+                env_map = env
+
+            target = (req.mod_id or req.filename or "").replace(".disabled", "").replace(".jar", "").lower()
+
+            for key in ["MODRINTH_PROJECTS", "MODRINTH_DISABLED"]:
+                if key in env_map:
+                    items = [x.strip() for x in env_map[key].split(",") if x.strip()]
+                    items = [x for x in items if x.lower() != target]
+                    env_map[key] = ",".join(items)
+
+            if is_list:
+                new_env = [f"{k}={v}" for k, v in env_map.items()]
+                service["environment"] = new_env
+            else:
+                service["environment"] = env_map
+
+            with open(compose_path, 'w') as f:
+                yaml.dump(cdata, f, default_flow_style=False, sort_keys=False)
+            deleted = True
+    except Exception as e:
+        print(f"Error removing mod from compose: {e}")
+
+    return {"message": "Mod deleted successfully", "deleted": deleted}
+
+
+@app.post("/api/instances/{instance_id}/mods/upload")
+async def upload_instance_mod(instance_id: str, file: UploadFile = File(...)):
+    """Upload a custom mod jar or zip to the instance mods directory."""
+    if not file.filename.lower().endswith((".jar", ".zip", ".disabled")):
+        raise HTTPException(status_code=400, detail="Only .jar or .zip mod files are allowed")
+
+    mods_dir = get_instance_mods_dir(instance_id)
+    await asyncio.to_thread(take_pre_update_snapshot, get_instance_path(instance_id), "Before changing mods")
+    dest_path = os.path.join(mods_dir, file.filename)
+
+    with open(dest_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    meta = parse_mod_jar_metadata(dest_path)
+    return {
+        "message": f"Mod {file.filename} uploaded successfully",
+        "filename": file.filename,
+        "name": meta["name"],
+        "version": meta["version"]
+    }
+
+
+async def sync_instance_mods_to_disk(instance_id: str, env: Optional[dict] = None):
+    """
+    Download missing configured mod jar files for an instance directly into data/mods/ 
+    so they exist immediately when configured/saved rather than waiting for server boot.
+    Returns the mod ids it downloaded and the ones it could not.
+    """
+    path = get_instance_path(instance_id)
+    mods_dir = get_instance_mods_dir(instance_id)
+    os.makedirs(mods_dir, exist_ok=True)
+
+    if env is None:
+        compose_path = os.path.join(path, "docker-compose.yml")
+        if not os.path.exists(compose_path):
+            return {"downloaded": [], "failed": []}
+        with open(compose_path, "r") as f:
+            cdata = yaml.safe_load(f) or {}
+        env_raw = cdata.get("services", {}).get("mc", {}).get("environment", {})
+        env = {}
+        if isinstance(env_raw, list):
+            for item in env_raw:
+                if "=" in item:
+                    k, v = item.split("=", 1)
+                    env[k] = v
+        elif isinstance(env_raw, dict):
+            env = env_raw
+
+    mc_version = env.get("VERSION", "").strip()
+    raw_loader = env.get("TYPE", "VANILLA").strip().lower()
+    if is_plugin_server(raw_loader):
+        mod_loaders = PLUGIN_SERVER_LOADERS[raw_loader.upper()]
+    elif raw_loader == "fabric":
+        mod_loaders = ["fabric", "quilt"]
+    elif raw_loader == "quilt":
+        mod_loaders = ["quilt", "fabric"]
+    elif raw_loader == "neoforge":
+        mod_loaders = ["neoforge", "forge"]
+    elif raw_loader == "forge":
+        mod_loaders = ["forge"]
+    else:
+        mod_loaders = [raw_loader] if raw_loader != "vanilla" else []
+
+    # Collect existing mod files and parsed stems on disk
+    existing_stems = set()
+    existing_ids = set()
+    if os.path.exists(mods_dir):
+        for entry in os.scandir(mods_dir):
+            if entry.is_file() and (entry.name.lower().endswith(".jar") or entry.name.lower().endswith(".jar.disabled")):
+                stem = entry.name.lower().replace(".disabled", "").replace(".jar", "")
+                existing_stems.add(stem)
+                try:
+                    meta = parse_mod_jar_metadata(entry.path)
+                    if meta.get("id"):
+                        existing_ids.add(meta["id"].lower())
+                except:
+                    pass
+
+    def is_mod_on_disk(mid: str) -> bool:
+        clean = mid.lower().strip()
+        clean_no_hyphen = clean.replace("-", "").replace("_", "")
+        if clean in existing_ids:
+            return True
+        for stem in existing_stems:
+            stem_no_hyphen = stem.replace("-", "").replace("_", "")
+            if clean == stem or clean_no_hyphen == stem_no_hyphen or clean in stem or stem in clean:
+                return True
+        return False
+
+    m_enabled = [x.strip() for x in env.get("MODRINTH_PROJECTS", "").split(",") if x.strip()]
+    m_disabled = [x.strip() for x in env.get("MODRINTH_DISABLED", "").split(",") if x.strip()]
+    downloaded, failed = [], []
+
+    async with httpx.AsyncClient(timeout=45.0, follow_redirects=True) as client:
+        # 1. Modrinth
+        for mid in m_enabled + m_disabled:
+            if is_mod_on_disk(mid):
+                continue
+            is_disabled = mid in m_disabled
+            try:
+                versions = []
+                params = {}
+                if mod_loaders:
+                    params["loaders"] = json.dumps(mod_loaders)
+                if mc_version:
+                    params["game_versions"] = json.dumps([mc_version])
+
+                res = await client.get(f"https://api.modrinth.com/v2/project/{mid}/version", params=params)
+                if res.status_code == 200:
+                    versions = res.json()
+
+                if not versions and mod_loaders:
+                    res_fb = await client.get(f"https://api.modrinth.com/v2/project/{mid}/version", params={"loaders": json.dumps(mod_loaders)})
+                    if res_fb.status_code == 200:
+                        versions = res_fb.json()
+
+                if not versions:
+                    res_fb = await client.get(f"https://api.modrinth.com/v2/project/{mid}/version")
+                    if res_fb.status_code == 200:
+                        versions = res_fb.json()
+
+                if versions and isinstance(versions, list) and len(versions) > 0:
+                    chosen = versions[0]
+                    files = chosen.get("files", [])
+                    primary = next((f for f in files if f.get("primary")), files[0] if files else None)
+                    if primary and primary.get("url"):
+                        target_fname = primary.get("filename") or f"{mid}.jar"
+                        if is_disabled and not target_fname.endswith(".disabled"):
+                            target_fname += ".disabled"
+                        dest_path = os.path.join(mods_dir, target_fname)
+                        async with client.stream("GET", primary["url"]) as dl_res:
+                            if dl_res.status_code == 200:
+                                with open(dest_path, "wb") as f_out:
+                                    async for chunk in dl_res.aiter_bytes():
+                                        f_out.write(chunk)
+                                existing_stems.add(target_fname.lower().replace(".disabled", "").replace(".jar", ""))
+                                existing_ids.add(mid.lower())
+                                downloaded.append(mid)
+                                print(f"Synced Modrinth mod {mid} -> {target_fname} ({os.path.getsize(dest_path)} bytes)")
+                                continue
+                failed.append(mid)
+            except Exception as e:
+                failed.append(mid)
+                print(f"Error syncing Modrinth mod {mid}: {e}")
+
+    return {"downloaded": downloaded, "failed": failed}
+
+
+
+@app.post("/api/instances/{instance_id}/mods/sync")
+async def sync_instance_mods(instance_id: str):
+    """Explicitly synchronize missing mods to data/mods on disk."""
+    try:
+        result = await sync_instance_mods_to_disk(instance_id)
+        return {"message": "Mods synchronized successfully", **result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/files")
@@ -2370,17 +3872,326 @@ def get_file_content(instance_id: str, path: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class FileCreateRequest(BaseModel):
+    path: str = "."
+    name: str
+    is_dir: bool = False
+
+class FileRenameRequest(BaseModel):
+    path: str
+    new_name: str
+
+class FileMoveCopyRequest(BaseModel):
+    source_paths: List[str]
+    destination_dir: str = "."
+    collision_strategy: str = "fail"  # "fail", "overwrite", "rename_new"
+
+class FileDeleteRequest(BaseModel):
+    paths: List[str]
+
+def get_safe_target_path(base_path: str, rel_path: str) -> str:
+    base = os.path.realpath(base_path)
+    clean_rel = rel_path.lstrip("/\\")
+    target = os.path.realpath(os.path.join(base, clean_rel))
+    if target == base:
+        return base
+    if not target.startswith(base + os.sep):
+        raise HTTPException(status_code=403, detail="Access denied: Path traversal detected")
+    return target
+
+def get_unique_name(target_dir: str, name: str) -> str:
+    base_name, ext = os.path.splitext(name)
+    counter = 1
+    new_name = name
+    while os.path.exists(os.path.join(target_dir, new_name)):
+        if ext:
+            new_name = f"{base_name} ({counter}){ext}"
+        else:
+            new_name = f"{base_name} ({counter})"
+        counter += 1
+    return new_name
+
+def cleanup_temp_file(path: str):
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+def core_create_file_or_dir(base_path: str, req: FileCreateRequest):
+    target_dir = get_safe_target_path(base_path, req.path)
+    if not os.path.exists(target_dir):
+        os.makedirs(target_dir, exist_ok=True)
+    target = get_safe_target_path(target_dir, req.name)
+    if os.path.exists(target):
+        raise HTTPException(status_code=409, detail="An item with that name already exists")
+    if req.is_dir:
+        os.makedirs(target, exist_ok=True)
+    else:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, 'w', encoding='utf-8') as f:
+            pass
+    return {"success": True, "name": req.name, "is_dir": req.is_dir}
+
+def core_rename_file_or_dir(base_path: str, req: FileRenameRequest):
+    src = get_safe_target_path(base_path, req.path)
+    if not os.path.exists(src):
+        raise HTTPException(status_code=404, detail="Item not found")
+    parent_dir = os.path.dirname(src)
+    dst = get_safe_target_path(parent_dir, req.new_name)
+    if os.path.exists(dst):
+        raise HTTPException(status_code=409, detail="An item with that name already exists")
+    os.rename(src, dst)
+    return {"success": True, "name": req.new_name}
+
+def core_move_files(base_path: str, req: FileMoveCopyRequest):
+    dst_dir = get_safe_target_path(base_path, req.destination_dir)
+    if not os.path.isdir(dst_dir):
+        raise HTTPException(status_code=400, detail="Destination must be a directory")
+    
+    if req.collision_strategy == "fail":
+        conflicts = [
+            os.path.basename(p.rstrip("/\\"))
+            for p in req.source_paths
+            if os.path.exists(get_safe_target_path(dst_dir, os.path.basename(p.rstrip("/\\"))))
+        ]
+        if conflicts:
+            raise HTTPException(status_code=409, detail=f"Conflicts detected: {', '.join(conflicts)}")
+
+    moved = []
+    for p in req.source_paths:
+        src = get_safe_target_path(base_path, p)
+        if not os.path.exists(src):
+            continue
+        if os.path.isdir(src) and (dst_dir == src or dst_dir.startswith(src + os.sep)):
+            continue
+        name = os.path.basename(src)
+        final_name = name
+        target = os.path.join(dst_dir, final_name)
+        if os.path.exists(target):
+            if req.collision_strategy == "rename_new":
+                final_name = get_unique_name(dst_dir, name)
+                target = os.path.join(dst_dir, final_name)
+            elif req.collision_strategy == "overwrite":
+                if os.path.isdir(target):
+                    shutil.rmtree(target)
+                else:
+                    os.remove(target)
+        shutil.move(src, target)
+        moved.append(final_name)
+    return {"success": True, "moved": moved}
+
+def core_copy_files(base_path: str, req: FileMoveCopyRequest):
+    dst_dir = get_safe_target_path(base_path, req.destination_dir)
+    if not os.path.isdir(dst_dir):
+        raise HTTPException(status_code=400, detail="Destination must be a directory")
+
+    if req.collision_strategy == "fail":
+        conflicts = [
+            os.path.basename(p.rstrip("/\\"))
+            for p in req.source_paths
+            if os.path.exists(get_safe_target_path(dst_dir, os.path.basename(p.rstrip("/\\"))))
+        ]
+        if conflicts:
+            raise HTTPException(status_code=409, detail=f"Conflicts detected: {', '.join(conflicts)}")
+
+    copied = []
+    for p in req.source_paths:
+        src = get_safe_target_path(base_path, p)
+        if not os.path.exists(src):
+            continue
+        name = os.path.basename(src)
+        final_name = name
+        target = os.path.join(dst_dir, final_name)
+        if os.path.exists(target):
+            if req.collision_strategy == "rename_new":
+                final_name = get_unique_name(dst_dir, name)
+                target = os.path.join(dst_dir, final_name)
+            elif req.collision_strategy == "overwrite":
+                if os.path.isdir(target):
+                    shutil.rmtree(target)
+                else:
+                    os.remove(target)
+        if os.path.isdir(src):
+            shutil.copytree(src, target)
+        else:
+            shutil.copy2(src, target)
+        copied.append(final_name)
+    return {"success": True, "copied": copied}
+
+def core_delete_files(base_path: str, req: FileDeleteRequest):
+    deleted = []
+    for p in req.paths:
+        target = get_safe_target_path(base_path, p)
+        if os.path.isdir(target):
+            shutil.rmtree(target)
+            deleted.append(p)
+        elif os.path.isfile(target):
+            os.remove(target)
+            deleted.append(p)
+    return {"success": True, "deleted": deleted}
+
+def core_upload_files(base_path: str, files: List[UploadFile], path: str = ".", collision_strategy: str = "overwrite"):
+    dst_dir = get_safe_target_path(base_path, path)
+    os.makedirs(dst_dir, exist_ok=True)
+    uploaded = []
+    for f in files:
+        filename = os.path.basename(f.filename or "uploaded_file")
+        if collision_strategy == "rename_new" and os.path.exists(os.path.join(dst_dir, filename)):
+            filename = get_unique_name(dst_dir, filename)
+        target = os.path.join(dst_dir, filename)
+        with open(target, "wb") as out:
+            shutil.copyfileobj(f.file, out)
+        uploaded.append(filename)
+    return {"success": True, "uploaded": uploaded}
+
+def core_download_files(base_path: str, background_tasks: BackgroundTasks, path: str = ".", paths: Optional[str] = None):
+    if paths:
+        path_list = [p.strip() for p in paths.split(",") if p.strip()]
+        if not path_list:
+            raise HTTPException(status_code=400, detail="No paths specified")
+        
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        tmp.close()
+        with zipfile.ZipFile(tmp.name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for p in path_list:
+                item_target = get_safe_target_path(base_path, p)
+                if not os.path.exists(item_target):
+                    continue
+                if os.path.isfile(item_target):
+                    zipf.write(item_target, arcname=os.path.basename(item_target))
+                elif os.path.isdir(item_target):
+                    base_dir_name = os.path.basename(item_target.rstrip("/\\"))
+                    for root, _, flist in os.walk(item_target):
+                        for f in flist:
+                            full_f = os.path.join(root, f)
+                            rel_f = os.path.relpath(full_f, os.path.dirname(item_target))
+                            zipf.write(full_f, arcname=rel_f)
+        background_tasks.add_task(cleanup_temp_file, tmp.name)
+        return FileResponse(tmp.name, media_type="application/zip", filename="archive.zip")
+
+    target = get_safe_target_path(base_path, path)
+    if not os.path.exists(target):
+        raise HTTPException(status_code=404, detail="File or folder not found")
+    
+    if os.path.isfile(target):
+        return FileResponse(target, filename=os.path.basename(target))
+    
+    # Directory download as zip
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    tmp.close()
+    folder_name = os.path.basename(target.rstrip("/\\")) or "folder"
+    with zipfile.ZipFile(tmp.name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, _, flist in os.walk(target):
+            for f in flist:
+                full_f = os.path.join(root, f)
+                rel_f = os.path.relpath(full_f, target)
+                zipf.write(full_f, arcname=rel_f)
+    background_tasks.add_task(cleanup_temp_file, tmp.name)
+    return FileResponse(tmp.name, media_type="application/zip", filename=f"{folder_name}.zip")
+
+# Instance file operations
+@app.post("/api/instances/{instance_id}/files/create")
+def instance_create_file(instance_id: str, req: FileCreateRequest):
+    base_path = get_instance_path(instance_id)
+    return core_create_file_or_dir(base_path, req)
+
+@app.post("/api/instances/{instance_id}/files/rename")
+def instance_rename_file(instance_id: str, req: FileRenameRequest):
+    base_path = get_instance_path(instance_id)
+    return core_rename_file_or_dir(base_path, req)
+
+@app.post("/api/instances/{instance_id}/files/move")
+def instance_move_files(instance_id: str, req: FileMoveCopyRequest):
+    base_path = get_instance_path(instance_id)
+    return core_move_files(base_path, req)
+
+@app.post("/api/instances/{instance_id}/files/copy")
+def instance_copy_files(instance_id: str, req: FileMoveCopyRequest):
+    base_path = get_instance_path(instance_id)
+    return core_copy_files(base_path, req)
+
+@app.post("/api/instances/{instance_id}/files/delete")
+def instance_delete_files(instance_id: str, req: FileDeleteRequest):
+    base_path = get_instance_path(instance_id)
+    return core_delete_files(base_path, req)
+
+@app.post("/api/instances/{instance_id}/files/upload")
+def instance_upload_files(
+    instance_id: str,
+    files: List[UploadFile] = File(...),
+    path: str = Form("."),
+    collision_strategy: str = Form("overwrite")
+):
+    base_path = get_instance_path(instance_id)
+    return core_upload_files(base_path, files, path, collision_strategy)
+
+@app.get("/api/instances/{instance_id}/files/download")
+def instance_download_files(
+    instance_id: str,
+    background_tasks: BackgroundTasks,
+    path: str = ".",
+    paths: Optional[str] = None
+):
+    base_path = get_instance_path(instance_id)
+    return core_download_files(base_path, background_tasks, path, paths)
+
+# Global file operations
+@app.post("/api/files/create")
+def global_create_file(req: FileCreateRequest):
+    base_path = os.path.abspath(SERVERS_DIR)
+    return core_create_file_or_dir(base_path, req)
+
+@app.post("/api/files/rename")
+def global_rename_file(req: FileRenameRequest):
+    base_path = os.path.abspath(SERVERS_DIR)
+    return core_rename_file_or_dir(base_path, req)
+
+@app.post("/api/files/move")
+def global_move_files(req: FileMoveCopyRequest):
+    base_path = os.path.abspath(SERVERS_DIR)
+    return core_move_files(base_path, req)
+
+@app.post("/api/files/copy")
+def global_copy_files(req: FileMoveCopyRequest):
+    base_path = os.path.abspath(SERVERS_DIR)
+    return core_copy_files(base_path, req)
+
+@app.post("/api/files/delete")
+def global_delete_files(req: FileDeleteRequest):
+    base_path = os.path.abspath(SERVERS_DIR)
+    return core_delete_files(base_path, req)
+
+@app.post("/api/files/upload")
+def global_upload_files(
+    files: List[UploadFile] = File(...),
+    path: str = Form("."),
+    collision_strategy: str = Form("overwrite")
+):
+    base_path = os.path.abspath(SERVERS_DIR)
+    return core_upload_files(base_path, files, path, collision_strategy)
+
+@app.get("/api/files/download")
+def global_download_files(
+    background_tasks: BackgroundTasks,
+    path: str = ".",
+    paths: Optional[str] = None
+):
+    base_path = os.path.abspath(SERVERS_DIR)
+    return core_download_files(base_path, background_tasks, path, paths)
+
 @app.get("/api/system/info", response_model=SystemInfo)
 def get_system_info():
     return {
-        "version": ISOPOD_VERSION,
+        "version": get_current_version(),
         "is_docker": os.path.exists("/.dockerenv")
     }
 
 async def get_latest_release():
     """Fetches the latest release info from GitHub API."""
+    curr_v = get_current_version()
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
             headers = {"Accept": "application/vnd.github.v3+json"}
             res = await client.get(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", headers=headers, timeout=10)
             
@@ -2388,11 +4199,19 @@ async def get_latest_release():
                 data = res.json()
                 latest_v = data.get("tag_name", "Unknown")
                 return {
-                    "current_version": ISOPOD_VERSION,
+                    "current_version": curr_v,
                     "latest_version": latest_v,
-                    "has_update": latest_v != ISOPOD_VERSION,
+                    "has_update": latest_v != curr_v,
                     "release_notes": data.get("body", "No release notes available."),
                     "published_at": data.get("published_at")
+                }
+            elif res.status_code == 404:
+                return {
+                    "current_version": curr_v,
+                    "latest_version": curr_v,
+                    "has_update": False,
+                    "release_notes": "You are running the latest version of Isopod.",
+                    "published_at": None
                 }
             return None
     except Exception as e:
@@ -2413,6 +4232,8 @@ async def update_check_loop():
 async def startup_event():
     # Start the periodic update check in the background
     asyncio.create_task(update_check_loop())
+    asyncio.create_task(backup_schedule_loop())
+    threading.Thread(target=crash_watchdog.run, args=(get_docker_client,), daemon=True, name="crash-watchdog").start()
 
 @app.get("/api/system/check-updates", response_model=UpdateInfo)
 async def check_updates(force: bool = False):
@@ -2427,13 +4248,13 @@ async def check_updates(force: bool = False):
             cached_update_info = info
             return info
         else:
-             # Fallback if GitHub is down but we want to return something valid
-             return {
-                "current_version": ISOPOD_VERSION,
-                "latest_version": ISOPOD_VERSION,
+            curr_v = get_current_version()
+            return {
+                "current_version": curr_v,
+                "latest_version": curr_v,
                 "has_update": False,
-                "release_notes": "Could not connect to the update server."
-             }
+                "release_notes": "Could not connect to update service."
+            }
     
     return cached_update_info
 
@@ -2441,46 +4262,106 @@ async def check_updates(force: bool = False):
 async def perform_update():
     """
     Attempts to update the launcher by pulling the latest code/images 
-    and restarting the container via the mounted Docker socket.
+    and rebuilding/restarting the container via the mounted Docker socket.
     """
-    if not os.path.exists("/var/run/docker.sock"):
-        raise HTTPException(status_code=500, detail="Docker socket not found. Cannot perform self-update.")
+    global cached_update_info
 
-    # In a real environment, we'd trigger a background process to pull and restart
-    # Since this container will be killed when restarted, we need to run it in a way that continues
-    
-    # Example command to update if using compose:
-    # docker compose -f isopod-compose.yml pull && docker compose -f isopod-compose.yml up -d
-    
-    # For now, we'll provide a response and then attempt to trigger a restart
-    # We'll use a small delay so the response reaches the client
-    
+    # Fetch latest release to persist target version
+    info = await get_latest_release()
+    if info and info.get("latest_version") and info.get("latest_version") != "Unknown":
+        set_current_version(info["latest_version"])
+
+    cached_update_info = None  # Immediately clear cached update info
+
     async def trigger_restart():
         await asyncio.sleep(2)
-        # We try to determine the compose file name.
         compose_file = "isopod-compose.yml" if os.path.exists("isopod-compose.yml") else "docker-compose.yml"
         
-        # Pull (if possible) and up -d
-        # If built from source, this only works if 'git pull' happened, which we haven't implemented yet.
-        # But if the user uses a pre-built image, 'pull' is exactly what they need.
+        has_build = False
+        if os.path.exists(compose_file):
+            try:
+                with open(compose_file, "r", encoding="utf-8") as cf:
+                    content = cf.read()
+                    if "build:" in content or "build :" in content:
+                        has_build = True
+            except Exception:
+                pass
+
         try:
-            # If we are in a git repository, pull the latest code first
             if os.path.exists(".git"):
                 print("Git repository detected. Pulling latest code...")
-                subprocess.run(["git", "pull"], check=True, timeout=30)
+                try:
+                    subprocess.run(["git", "pull"], check=False, timeout=30)
+                except Exception as ge:
+                    print(f"Git pull warning: {ge}")
 
-            # We run this in the background using subprocess.Popen to avoid being killed immediately
-            subprocess.Popen(
-                ["docker", "compose", "-f", compose_file, "up", "-d", "--pull", "always"],
-                start_new_session=True
-            )
+            if os.path.exists(compose_file):
+                if has_build:
+                    cmd = ["docker", "compose", "-f", compose_file, "up", "-d", "--build"]
+                else:
+                    cmd = ["docker", "compose", "-f", compose_file, "up", "-d", "--pull", "always"]
+
+                print(f"Executing update sequence: {' '.join(cmd)}")
+                subprocess.Popen(cmd, start_new_session=True)
+            elif os.path.exists("/.dockerenv"):
+                print("Running inside container. Exiting process to trigger Docker container restart...")
+                os._exit(0)
         except Exception as e:
             print(f"Self-update trigger failed: {e}")
 
-
     asyncio.create_task(trigger_restart())
     
-    return {"message": "Update sequence initiated. The application will restart automatically. Please refresh the page in a few moments."}
+    return {
+        "status": "initiated",
+        "message": "Update sequence initiated. The container will rebuild and restart."
+    }
+
+@app.get("/api/system/logs/export")
+def export_system_logs():
+    """
+    Exports application diagnostics and system logs for troubleshooting.
+    """
+    settings = get_settings()
+    client = get_docker_client()
+    docker_status = "Available" if client else "Unavailable"
+    
+    instances = []
+    if os.path.exists(SERVERS_DIR):
+        for item in os.listdir(SERVERS_DIR):
+            item_path = os.path.join(SERVERS_DIR, item)
+            if os.path.isdir(item_path) and os.path.exists(os.path.join(item_path, "docker-compose.yml")):
+                instances.append(item)
+
+    report_lines = [
+        "==================================================",
+        "              ISOPOD APPLICATION LOGS              ",
+        "==================================================",
+        f"Export Timestamp : {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}",
+        f"Isopod Version   : {ISOPOD_VERSION}",
+        f"Docker Client    : {docker_status}",
+        f"Docker Socket    : {settings.get('dockerSocket', '/var/run/docker.sock')}",
+        f"Managed Instances: {len(instances)} ({', '.join(instances) if instances else 'None'})",
+        "",
+        "--- [Application Settings] ---",
+        json.dumps(settings, indent=2),
+        "",
+        "--- [System Environment] ---",
+        f"Operating System : {os.name}",
+        f"Working Dir      : {os.getcwd()}",
+        f"Servers Dir      : {SERVERS_DIR}",
+        "",
+        "--- [Diagnostics Summary] ---",
+        f"Update Cache     : {json.dumps(cached_update_info) if cached_update_info else 'Not populated'}",
+        "==================================================",
+        "End of Diagnostics Log",
+        "=================================================="
+    ]
+    log_content = "\n".join(report_lines)
+    return Response(
+        content=log_content,
+        media_type="text/plain",
+        headers={"Content-Disposition": "attachment; filename=isopod_application_logs.txt"}
+    )
 
 # Mount the compiled frontend to be served statically
 

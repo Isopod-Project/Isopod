@@ -108,6 +108,66 @@ This is a common issue when cloning the repository on **Windows**. Windows uses 
 3. In the bottom-right corner of the window, you will see `CRLF`. Click it and change it to `LF`.
 4. Save the file and restart the container.
 
+### RAM usage always shows 0
+Isopod runs servers on its own Docker daemon inside the container (DinD). On cgroup v2 hosts, `docker/entrypoint.sh` and `docker/dev-entrypoint.sh` move the container's processes into a child cgroup and enable every controller before starting `dockerd`, the same as the official `docker:dind` image. Without that step `dockerd` falls back to a threaded cgroup that only supports CPU stats, so memory reads as 0 (`docker exec isopod docker stats` shows `0B / 0B`).
+
+**The Fix**: Rebuild the image and recreate the container. The setting can't be changed on a container that's already running.
+
+---
+
+## 🔌 Resource Usage API
+`GET /api/resources` returns live usage for every running instance plus totals, read from Docker container stats (`backend/resource_usage.py`):
+```json
+{
+  "instances": { "my-server": { "cpu_percent": 3.1, "memory_used": 2368000000, "memory_allocated": 2147483648 } },
+  "total": { "cpu_percent": 3.1, "memory_used": 2368000000, "memory_allocated": 2147483648, "host_memory": 16295006208, "host_cpus": 32 }
+}
+```
+- `cpu_percent` is a share of the whole host (100 = every core busy), not per-core like `docker stats`.
+- `memory_used` excludes reclaimable page cache, matching `docker stats`.
+- `memory_allocated` is the instance's `MEMORY` setting (the Java heap) in bytes, or `null` if unset.
+- Only running instances appear in `instances`. Each call takes about a second because Docker samples CPU twice.
+
+---
+
+## 📱 Bedrock Support
+`backend/bedrock.py` holds everything Bedrock-specific; `frontend/src/lib/bedrock.ts` and `frontend/src/components/Bedrock.tsx` mirror it in the dashboard.
+
+**Bedrock servers.** `POST /api/instances` with `"template": "bedrock"` writes a compose service on `itzg/minecraft-bedrock-server` instead of `itzg/minecraft-server`:
+- The port maps to `19132/udp`, and `TYPE=BEDROCK` stays in the environment so the rest of the backend can tell Bedrock instances apart (the image itself ignores it).
+- World settings use the Bedrock image's names: `LEVEL_SEED`, `GAMEMODE`, `LEVEL_TYPE` (`DEFAULT`/`FLAT`/`LEGACY`), and `ALLOW_LIST`/`ALLOW_LIST_USERS` for the whitelist. `VERSION` is `LATEST`, `PREVIEW`, or an exact release.
+- There's no RCON. `POST /api/instances/{id}/command` runs the image's `send-command` helper, which needs `stdin_open` and `tty` on the service; its output only reaches the log. `GET /players` always returns `available: false`.
+- User Management uses the same `/users` endpoints, handled by `backend/bedrock_users.py`. `users.json` is the source of truth. A save mirrors it to `ALLOW_LIST`/`ALLOW_LIST_USERS`/`OPS` (the entrypoint rebuilds `allowlist.json` and `permissions.json` from them on every start), to those two files directly (the entrypoint leaves a file alone when its variable is empty), and to `allowlist add/remove`, `allowlist on/off`, and `op`/`deop` on a running server. `ALLOW_LIST_USERS` stays empty while the allowlist is off, because the entrypoint turns the allowlist on whenever it has names. Operators are stored by XUID, which is taken from `allowlist.json` (BDS fills it in when an allowlisted player joins) or looked up from mcprofile.io, falling back to the gamertag in `OPS`. Gamertags can't contain commas, colons, or quotes.
+- The server is **Online** once the log prints `Server started.`.
+- Worlds live in `data/worlds/<level name>/`, so `backups.find_world_dirs` reports `worlds`. While the server runs, backups send `save hold`, wait a few seconds, and `save resume` afterwards.
+
+**Cross-play.** Java servers keep two settings in their environment: `ISOPOD_CROSSPLAY` (`true`/`false`) and `ISOPOD_BEDROCK_PORT`. On `PUT /api/instances/{id}/config`, `bedrock.apply_crossplay` turns them into real settings:
+- Adds Geyser and Floodgate download URLs from `download.geysermc.org` to `PLUGINS` (Paper, Purpur) or `MODS` (Fabric, NeoForge), and `fabric-api` to `MODRINTH_PROJECTS` on Fabric.
+- Publishes `<ISOPOD_BEDROCK_PORT>:19132/udp`.
+- Turning it off removes those URLs, the port, and any `geyser*`/`floodgate*` jars in `plugins/` or `mods/`. Nothing happens unless cross-play is on or was on before the save, so a hand-installed Geyser is left alone.
+- Other server types get a 400.
+
+Duplicating or importing an instance moves every published port, the Bedrock UDP one included, to a free host port.
+
+`GET /api/instances/{id}/status` also returns `type` (the `TYPE` setting) and `bedrock_port`: the UDP port Bedrock players join on, or `null` if they can't.
+
+The Isopod container publishes UDP `19132-19152` for these ports next to TCP `25565-25585`.
+
+---
+
+## 🔒 Cross-origin requests
+
+The backend serves the frontend, so the browser only talks to the API from the same origin and the backend allows no cross-origin access by default (`backend/security.py`):
+
+- No CORS headers are sent unless `ISOPOD_CORS_ORIGINS` is set.
+- `POST`/`PUT`/`PATCH`/`DELETE` requests and WebSocket upgrades are rejected with `403` when their `Origin` header doesn't match the `Host` they were sent to. CORS alone doesn't stop a foreign page from sending a simple form `POST` or opening a WebSocket. Requests without an `Origin` header (curl, scripts) aren't affected.
+
+For the Vite dev server, `npm run dev` proxies `/api` to `http://localhost:8000` (change it with `VITE_API_PROXY`), so the frontend stays same-origin and needs no extra setting. To call the API from another origin, such as a reverse proxy that rewrites the `Host` header or a separately hosted frontend, list the origins comma-separated:
+
+```env
+ISOPOD_CORS_ORIGINS=http://localhost:5173,https://isopod.example.com
+```
+
 ---
 
 ## 🛠️ Tech Stack

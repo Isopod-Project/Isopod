@@ -17,8 +17,11 @@ services:
       - /DATA/AppData/isopod/servers:/DATA/AppData/isopod/servers
     environment:
       - SERVERS_DIR=/DATA/AppData/isopod/servers
-      - GITHUB_REPO=Tacoz234/Isopod
+      - GITHUB_REPO=Isopod-Project/Isopod
       - DEBUG=true
+      # Extra origins allowed to call the API cross-origin (comma-separated). The Vite dev
+      # server proxies /api, so it doesn't need an entry here.
+      - ISOPOD_CORS_ORIGINS=${ISOPOD_CORS_ORIGINS:-}
     # This command starts BOTH the backend and the frontend dev server
     # We use '&' to run them in parallel
     command: >
