@@ -14,7 +14,7 @@ const HELP_TOPICS = {
    "new-custom": "dashboard-guide/create-instance",
    "new-import": "dashboard-guide/import-modpacks",
    "new-modrinth": "dashboard-guide/import-modpacks",
-   "new-curseforge": "dashboard-guide/import-modpacks",
+   "new-curseforge": "dashboard-guide/curseforge-modpacks",
 
    // Instance editor tabs (keys match editTab)
    logs: "console-rcon/log-controls",
