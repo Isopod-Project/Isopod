@@ -3235,7 +3235,8 @@ export default function App() {
                            <div className={`w-full p-3 rounded flex flex-col gap-2 border ${selectedStatus.crash.state === "recovered" ? "bg-amber-500/5 border-amber-500/30" : "bg-red-500/5 border-red-500/30"}`}>
                               <div className={`flex items-start gap-2 text-xs ${selectedStatus.crash.state === "recovered" ? "text-amber-300" : "text-red-300"}`}>
                                  <Skull className="w-4 h-4 shrink-0 mt-px" />
-                                 <span>{crashSummary(selectedStatus.crash)}</span>
+                                 <span className="flex-1">{crashSummary(selectedStatus.crash)}</span>
+                                 <HelpButton topic="crash" iconClassName="w-3.5 h-3.5" />
                               </div>
                               <div className="flex gap-1.5">
                                  <button
@@ -3263,10 +3264,11 @@ export default function App() {
                            <div className="w-full bg-sky-500/5 border border-sky-500/30 p-3 rounded flex flex-col gap-2">
                               <div className="flex items-start gap-2 text-xs text-sky-300">
                                  <History className="w-4 h-4 shrink-0 mt-px" />
-                                 <span>
+                                 <span className="flex-1">
                                     A snapshot was taken {selectedStatus.pending_snapshot.reason.replace(/^Before/, "before")}.
                                     {" "}If the update causes problems, you can roll back.
                                  </span>
+                                 <HelpButton topic="snapshot" iconClassName="w-3.5 h-3.5" />
                               </div>
                               <div className="flex gap-1.5">
                                  <button
@@ -4222,7 +4224,7 @@ export default function App() {
                         </div>
                      </div>
                      <div className="flex items-center gap-2">
-                        <HelpButton topic={editTab} className="p-1.5 hover:bg-[#3A3A3A] rounded-full text-neutral-400" iconClassName="w-5 h-5" />
+                        <HelpButton topic={editingBedrock ? `bedrock-${editTab}` : editTab} className="p-1.5 hover:bg-[#3A3A3A] rounded-full text-neutral-400" iconClassName="w-5 h-5" />
                         <button onClick={closeEditModal} className="p-1 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition" title="Close">
                            <X className="w-6 h-6" />
                         </button>
