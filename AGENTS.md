@@ -8,6 +8,10 @@ GitHub Issues via `gh` CLI. Linked with Isopod-Project GitHub Project #1. See [i
 - **Branch Strategy**: Always create and check out a dedicated branch named after the issue number (`git checkout -b <number>`) whenever an issue is created or requested for work. Never implement directly on `main`.
 - **Branch Cleanup**: After a branch is merged into `main` and pushed, delete it locally and on GitHub using the [cleanup-merged-branches](file:///c:/Coding/Isopod/.agent/skills/cleanup-merged-branches/SKILL.md) skill.
 
+### Wiki
+
+Every issue that changes something users can see or configure updates the website wiki in the same piece of work. Small bug fixes and internal changes are exempt. See [wiki.md](docs/agents/wiki.md) for the rule, the article layout, and how help-button links work.
+
 ### Domain docs
 
 Single-context documentation layout. See [domain.md](file:///c:/Coding/Isopod/docs/agents/domain.md).
