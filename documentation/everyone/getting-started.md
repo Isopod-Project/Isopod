@@ -42,6 +42,7 @@ Server folders and worlds are stored in `data/servers` inside your clone. Docker
 
 ## 🦀 Features at a Glance
 - **Instance Creation**: Quickly spin up new Minecraft servers. Pick a **Group** in the Add Instance window (or **+ New Group...**) to file the new server under it; right-click a server and choose **Move to Folder** to change it later.
+- **Modpacks**: Create a server from a **Modrinth** or **CurseForge** modpack. CurseForge needs a free API key, see [CurseForge Modpacks](#-curseforge-modpacks).
 - **Mod Management**: Search and install mods directly from Modrinth. Mods install as soon as you click **Add**.
 - **Desktop-Grade File Explorer**: Right-click context menus, drag-and-drop file moves & direct OS uploads, breadcrumb navigation, inline renaming/creation, multi-select, and conflict resolution.
 - **Live Console**: Watch your server logs in real-time.
@@ -65,6 +66,36 @@ Pick a server type when you add an instance, or change it later in the Edit wind
   - **Paper** runs Paper, Spigot, and Bukkit plugins.
   - **Purpur** is a Paper fork with extra gameplay and config options. It runs the same plugins as Paper, plus Purpur-only ones.
   - **Folia** runs each region of the world on its own thread, for large servers on machines with many CPU cores. Most Paper plugins don't work on Folia, so the plugin search only shows plugins marked Folia-compatible. Folia only exists for some Minecraft versions (1.19.4 and newer), and all its builds are experimental; Isopod warns you if the version you picked has no Folia build.
+
+## 🔥 CurseForge Modpacks
+Isopod can create a server from any CurseForge modpack. CurseForge only serves its API to apps with a key, so you set one up once.
+
+**1. Get a key.** Sign in at [console.curseforge.com](https://console.curseforge.com) and create an API key. It's free.
+
+**2. Give it to Isopod.** Add it to the `.env` file in the root of your clone. Put it in single quotes, because keys contain `$` characters:
+```env
+CURSEFORGE_API_KEY='your-key-here'
+```
+On macOS, add it to the same `.env` that holds `COMPOSE_FILE`. On CasaOS, add `CURSEFORGE_API_KEY` under **Environment Variables** instead. If you paste it into the compose YAML, write every `$` as `$$`.
+
+**3. Restart Isopod** so it picks the key up:
+```bash
+docker compose -f isopod-compose.yml up -d
+```
+
+**Create a server.**
+1. Large packs need several GB of RAM, and new servers get **Default RAM Allocation** from Isopod's **Settings** (1G unless you changed it). Raise it before you create the server.
+2. Click **Add Instance** and open the **CurseForge** tab.
+3. Search for a pack and click it. The newest release is selected for you, or pick another version from the list.
+4. Name the server and continue, then start it. The first start downloads the pack and all of its mods, so it can take several minutes. Follow it in the **Logs** tab.
+
+The Minecraft version, loader, and Java version all come from the pack. Isopod skips well-known client-only mods (shaders, minimaps, menu mods, and similar) so they don't crash the server.
+
+**Good to know**
+- CurseForge support covers **modpacks**. The **Mods** tab still searches Modrinth only.
+- If the CurseForge tab shows **Couldn't load modpacks**, read the message under it. `CURSEFORGE_API_KEY is not set` means the key never reached Isopod; recheck step 2 and restart. A `403` means CurseForge rejected the key.
+- Some pack authors block downloads outside the CurseForge app. Isopod can't install those packs, and the server log names the mod that failed.
+- Keep the key private. Isopod only sends it to `api.curseforge.com` and passes it to your server's container as an environment variable. It isn't written to the instance's `docker-compose.yml`.
 
 ## 📱 Bedrock Edition
 Isopod can host players on Minecraft for Windows, phones, tablets, and consoles in two ways.

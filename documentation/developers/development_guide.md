@@ -61,6 +61,8 @@ Create a file named `.env` in the root of the Isopod directory:
 PROJECT_ROOT=/home/your-user/Isopod
 SERVERS_DIR=/DATA/AppData/isopod/servers
 DEV_PORT=8001
+# Optional: enables CurseForge modpacks (quote it, keys contain `$`)
+CURSEFORGE_API_KEY='your-key-here'
 ```
 
 ### 2. Launch the Container
@@ -152,6 +154,24 @@ Duplicating or importing an instance moves every published port, the Bedrock UDP
 `GET /api/instances/{id}/status` also returns `type` (the `TYPE` setting) and `bedrock_port`: the UDP port Bedrock players join on, or `null` if they can't.
 
 The Isopod container publishes UDP `19132-19152` for these ports next to TCP `25565-25585`.
+
+---
+
+## 🔥 CurseForge Support
+CurseForge modpacks go through the official API at `https://api.curseforge.com/v1`, which needs a key from [console.curseforge.com](https://console.curseforge.com). Set it as `CURSEFORGE_API_KEY` (the compose files pass it into the container; `backend/main.py` also accepts `CF_API_KEY`). Without a key the CurseForge endpoints return `503`.
+
+**Endpoints** (`backend/main.py`):
+- `GET /api/mods/search/curseforge?q=&class_type=modpack&mc_version=&loader=` searches Minecraft (`gameId` 432). `class_type` maps to `classId`: `mod` 6, `modpack` 4471, `resourcepack` 12. Results are sorted by popularity, and `pageSize` is 50 because the API rejects anything larger. The loader filter is skipped for resource packs. Any non-200 reply from CurseForge becomes a `502` carrying the status, so the dashboard can show it instead of an empty list.
+- `GET /api/mods/curseforge/{project_id}/versions` lists a pack's files in the same shape as the Modrinth endpoint. `project_id` must be numeric.
+
+**Creating an instance.** `POST /api/instances` with `cf_id` (the numeric project ID) and `modpack_version` (the file ID):
+- The backend looks up the project to get its **slug**, because itzg's `CF_SLUG` wants the slug and not the ID. A failed lookup is a `502` and the half-created instance folder is removed.
+- The service gets `TYPE=AUTO_CURSEFORGE`, `CF_SLUG`, `CF_FILE_ID`, `CF_EXCLUDE_MODS` (a list of common client-only mods), and `VERSION` set to the pack's Minecraft version, which also picks the Java image tag.
+- `AUTO_CURSEFORGE` needs the key inside the container as `CF_API_KEY`. The compose file contains the literal `CF_API_KEY=${CF_API_KEY}`, so the secret is never written to an instance folder. At startup the backend exports the key as `CF_API_KEY` into its own environment, and every `docker compose` subprocess inherits it for the interpolation.
+
+**Keep the key off other hosts.** `cf_api_headers()` builds the `x-api-key` header per request. Don't put it on a shared `httpx.AsyncClient`: several handlers reuse one client for Modrinth and CurseForge calls.
+
+**Not covered yet:** adding single CurseForge mods and resource packs (tracked in #52). The Mods tab and resource pack search use Modrinth only.
 
 ---
 

@@ -42,6 +42,7 @@ Review everything since the previous release, `git diff <last-tag>..main`, with 
   - URLs come from the expected hosts.
   - Hashes are checked where the API provides them.
   - Archives are extracted with path checks, not with a bare `extractall` (zip slip).
+  - The CurseForge API key (`CURSEFORGE_API_KEY`) is only sent to `api.curseforge.com`, per request, and never written to an instance's `docker-compose.yml`. IDs placed in CurseForge URLs are checked to be numeric.
 - [ ] **`isopod-compose*.yml`, `Dockerfile`, `docker/`:** no new ports, mounts, capabilities, or privileges without a reason in the PR.
 - [ ] **Network exposure:** no new unauthenticated surface, and no CORS or bind-address changes.
 - [ ] **New dependencies:** maintained, widely used, and spelled correctly (no typosquats).
