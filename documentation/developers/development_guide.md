@@ -157,6 +157,17 @@ The Isopod container publishes UDP `19132-19152` for these ports next to TCP `25
 
 ---
 
+## 💤 Auto-pause
+
+**Sleep when empty** uses `itzg/minecraft-server`'s built-in autopause; `backend/autopause.py` has the Isopod side. Java servers only.
+- The frontend writes `ENABLE_AUTOPAUSE` and `AUTOPAUSE_TIMEOUT_EST` (seconds). On `PUT /api/instances/{id}/config`, `autopause.apply_settings` copies the timeout to `AUTOPAUSE_TIMEOUT_INIT` and sets `MAX_TICK_TIME=-1`, because the vanilla watchdog would otherwise kill a server that was just resumed. Turning it off removes `MAX_TICK_TIME` if it is `-1`.
+- Inside the container, the image saves the world and sends `SIGSTOP` to Java once the timeout passes with no players, and touches `data/.paused`. knockd watches the game port and resumes Java on the first incoming SYN, so a join or a server-list ping wakes it. Any running `rcon-cli` also wakes it within about 5 seconds. That's why the frontend stops polling `/players` while a server sleeps.
+- `GET /status` returns `is_paused` (with `startup_status: "Sleeping"`) when the container is running, the log says it's ready, and `data/.paused` was written after the container's `StartedAt`. The marker stays behind when a paused container is stopped, so an older one doesn't count.
+- `POST /stop` runs the image's `/image/scripts/auto/resume.sh` first. A frozen Java can't handle `SIGTERM`, so Docker would kill it after the timeout, and that exit looks like a crash.
+- Waking still happens through the container's own port. The idle server keeps its RAM; freeing it means stopping the container, which needs something outside it to accept the connection and start it again (#61).
+
+---
+
 ## 🔥 CurseForge Support
 CurseForge modpacks go through the official API at `https://api.curseforge.com/v1`, which needs a key from [console.curseforge.com](https://console.curseforge.com). Set it as `CURSEFORGE_API_KEY` (the compose files pass it into the container; `backend/main.py` also accepts `CF_API_KEY`). Without a key the CurseForge endpoints return `503`.
 
