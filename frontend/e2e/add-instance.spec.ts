@@ -12,6 +12,7 @@ test.describe("Add Instance modal", () => {
     await expect(page.getByRole("button", { name: "Custom", exact: true })).toBeVisible()
     await expect(page.getByRole("button", { name: "Import", exact: true })).toBeVisible()
     await expect(page.getByRole("button", { name: "Modrinth", exact: true })).toBeVisible()
+    await expect(page.getByRole("button", { name: "CurseForge", exact: true })).toBeVisible()
     expect(errors.problems).toEqual([])
   })
 
@@ -23,6 +24,17 @@ test.describe("Add Instance modal", () => {
   test("Modrinth tab loads the modpack search", async ({ page, errors }) => {
     await page.getByRole("button", { name: "Modrinth", exact: true }).click()
     await expect(page.getByRole("button", { name: "Modrinth", exact: true })).toBeVisible()
+    expect(errors.problems).toEqual([])
+  })
+})
+
+test.describe("Add Instance CurseForge", () => {
+  test("CurseForge tab loads the modpack search", async ({ page, errors }) => {
+    await page.goto("/")
+    await expect(page.getByText("Alpha Server").first()).toBeVisible()
+    await page.getByRole("button", { name: /Add Instance/ }).click()
+    await page.getByRole("button", { name: "CurseForge", exact: true }).click()
+    await expect(page.getByPlaceholder("Search curseforge modpacks...")).toBeVisible()
     expect(errors.problems).toEqual([])
   })
 })

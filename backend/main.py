@@ -38,6 +38,22 @@ app = FastAPI(title="Isopod Backend")
 ISOPOD_VERSION = "v0.3.0"
 GITHUB_REPO = os.getenv("GITHUB_REPO", "Isopod-Project/Isopod")
 
+# CurseForge's official API requires a key (https://console.curseforge.com). itzg's AUTO_CURSEFORGE
+# installer also reads it as CF_API_KEY, so export it for the `docker compose` subprocesses; instance
+# compose files reference ${CF_API_KEY} and never contain the secret itself.
+CF_API_BASE = "https://api.curseforge.com/v1"
+CF_API_KEY = (os.getenv("CURSEFORGE_API_KEY") or os.getenv("CF_API_KEY") or "").strip()
+if CF_API_KEY:
+    os.environ["CF_API_KEY"] = CF_API_KEY
+
+def cf_api_headers() -> Dict[str, str]:
+    """Per-request headers for api.curseforge.com. Never set these as client defaults: several
+    handlers share one client between Modrinth and CurseForge, and the key must only go to CurseForge."""
+    headers = {"User-Agent": "Isopod/1.0", "Accept": "application/json"}
+    if CF_API_KEY:
+        headers["x-api-key"] = CF_API_KEY
+    return headers
+
 # Internal state for background update checks
 cached_update_info: Optional[Dict[str, Any]] = None
 
@@ -1776,6 +1792,73 @@ MRPACK_LOADER_DEPENDENCIES = {
     "quilt-loader": "QUILT",
 }
 
+@app.get("/api/mods/curseforge/{project_id}/versions")
+async def get_curseforge_project_versions(project_id: str):
+    if not project_id.isdigit():
+        raise HTTPException(status_code=400, detail="Invalid CurseForge project ID")
+    url = f"{CF_API_BASE}/mods/{project_id}/files"
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url, params={"pageSize": 50}, headers=cf_api_headers(), timeout=20.0)
+            if res.status_code == 200:
+                files = res.json().get("data", [])
+                results = []
+                for f in files:
+                    game_versions = []
+                    loaders = []
+                    for ver in f.get("gameVersions", []):
+                        ver_lower = ver.lower()
+                        if ver_lower in ["fabric", "forge", "quilt", "neoforge"]:
+                            loaders.append(ver_lower)
+                        elif ver and ver[0].isdigit():
+                            game_versions.append(ver)
+                    
+                    results.append({
+                        "id": str(f["id"]),
+                        "version_number": f.get("displayName", f.get("fileName", "Unknown")),
+                        "name": f.get("displayName", f.get("fileName", "Unknown")),
+                        "game_versions": game_versions,
+                        "loaders": loaders,
+                        "version_type": "release" if f.get("releaseType") == 1 else ("beta" if f.get("releaseType") == 2 else "alpha")
+                    })
+                return results
+            else:
+                raise HTTPException(status_code=res.status_code, detail="Failed to fetch CurseForge versions")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"CurseForge API error: {str(e)}")
+
+MODPACK_SERVER_TYPES = {"modrinth", "auto_curseforge", "curseforge", "ftba"}
+
+# Plugin server TYPEs -> the Modrinth loader categories whose plugins they can run.
+# Purpur is a Paper fork and runs Paper/Spigot/Bukkit plugins; Folia only runs plugins built for it.
+PLUGIN_SERVER_LOADERS = {
+    "PAPER": ["paper", "spigot", "bukkit"],
+    "PURPUR": ["purpur", "paper", "spigot", "bukkit"],
+    "FOLIA": ["folia"],
+}
+
+# Server TYPE -> the itzg variable that pins its loader version or build (Folia's has no underscore).
+LOADER_VERSION_ENV = {
+    "FABRIC": "FABRIC_LOADER_VERSION",
+    "FORGE": "FORGE_VERSION",
+    "NEOFORGE": "NEOFORGE_VERSION",
+    "QUILT": "QUILT_LOADER_VERSION",
+    "PAPER": "PAPER_BUILD",
+    "PURPUR": "PURPUR_BUILD",
+    "FOLIA": "FOLIABUILD",
+}
+
+def is_plugin_server(server_type: Optional[str]) -> bool:
+    return (server_type or "").upper() in PLUGIN_SERVER_LOADERS
+
+# modrinth.index.json dependency keys -> itzg TYPE loader names
+MRPACK_LOADER_DEPENDENCIES = {
+    "neoforge": "NEOFORGE",
+    "forge": "FORGE",
+    "fabric-loader": "FABRIC",
+    "quilt-loader": "QUILT",
+}
+
 @app.get("/api/mods/search/modrinth")
 async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None, class_type: str = "mod", only_server_side: bool = True):
     # Handle "undefined" literals from frontend
@@ -1837,6 +1920,97 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
         results.append(meta_dict)
     return results
 
+
+@app.get("/api/mods/search/curseforge")
+async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None, class_type: str = "mod"):
+    # Handle "undefined" literals from frontend
+    q = None if q == "undefined" or not q else q
+    mc_version = None if mc_version == "undefined" or not mc_version else mc_version
+    loader = None if loader == "undefined" or not loader else loader
+    
+    # Using '6' for mods, '4471' for modpacks, '12' for resource packs
+    class_id = 6
+    if class_type == "modpack":
+        class_id = 4471
+    elif class_type == "resourcepack":
+        class_id = 12
+    
+    # If query is empty, we browse via parameters
+    query_str = q if q else ""
+        
+    # itzg/minecraft-server uses the CurseForge ID (int)
+    url = f"{CF_API_BASE}/mods/search"
+    
+    mod_loader_type = 0 # Any
+    if loader:
+        l = loader.lower()
+        if "forge" in l: mod_loader_type = 1
+        elif "cauldron" in l: mod_loader_type = 2
+        elif "liteLoader" in l: mod_loader_type = 3
+        elif "fabric" in l: mod_loader_type = 4
+        elif "quilt" in l: mod_loader_type = 5
+        
+    params = {
+        "gameId": 432, # Minecraft
+        "searchFilter": q,
+        "classId": class_id, 
+        "excludeCategoryIds": "4764" if class_id == 6 else None, # Client Side only for mods
+        "sortField": 2, # Popularity
+        "sortOrder": "desc",
+        "pageSize": 50 # the CurseForge API rejects anything above 50
+    }
+    if mc_version:
+        params["gameVersion"] = mc_version
+    if mod_loader_type > 0 and class_id != 12: # resource packs have no loader
+        params["modLoaderType"] = mod_loader_type
+    params = {k: v for k, v in params.items() if v is not None}
+
+    try:
+        if not CF_API_KEY:
+            raise HTTPException(status_code=503, detail="CURSEFORGE_API_KEY is not set")
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url, params=params, headers=cf_api_headers(), timeout=20.0)
+        if res.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"CurseForge API returned {res.status_code}")
+        data = res.json()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"CurseForge API error: {str(e)}")
+        
+    results = []
+    try:
+        # CurseForge API is notoriously flaky with its data structure
+        mod_list = data.get("data", [])
+        if not isinstance(mod_list, list):
+            mod_list = []
+            
+        for item in mod_list:
+            authors = item.get("authors", [])
+            author_name = authors[0].get("name", "Unknown") if authors and len(authors) > 0 else "Unknown"
+            
+            logo = item.get("logo", {})
+            icon_url = logo.get("thumbnailUrl") if logo else None
+            
+            cf_meta = {
+                "id": str(item.get("id", "")),
+                "name": item.get("name", "Unknown Mod"),
+                "summary": item.get("summary", ""),
+                "icon_url": icon_url,
+                "author": author_name,
+                "downloads": int(item.get("downloadCount", 0)) if item.get("downloadCount") is not None else 0,
+                "url": item.get("links", {}).get("websiteUrl", "") if item.get("links") else "",
+                "categories": [c.get("name", "").lower() for c in item.get("categories", [])] if item.get("categories") else [],
+                "provider": "curseforge"
+            }
+            mod_metadata_cache[str(item.get("id", "")).lower()] = cf_meta
+            if item.get("name"):
+                mod_metadata_cache[item["name"].lower()] = cf_meta
+            results.append(cf_meta)
+    except Exception as e:
+        print(f"DEBUG: Error parsing CurseForge data: {e}")
+        
+    return results
 
 def generate_slug(text: str) -> str:
     slug = text.lower()
@@ -1990,6 +2164,75 @@ async def create_instance(req: CreateInstanceRequest):
         if req.modpack_version:
             env.append(f"MODRINTH_VERSION={req.modpack_version}")
 
+
+    if req.cf_id:
+        file_id = None
+        if not str(req.cf_id).isdigit():
+            shutil.rmtree(path, ignore_errors=True)
+            raise HTTPException(status_code=400, detail="Invalid CurseForge project ID")
+        cf_slug = str(req.cf_id)
+        # If curseforge, req.modpack_version is the file ID
+        try:
+            async with httpx.AsyncClient() as client:
+                # itzg's CF_SLUG needs the slug, but the frontend sends the numeric project ID
+                res = await client.get(f"{CF_API_BASE}/mods/{req.cf_id}", headers=cf_api_headers(), timeout=20.0)
+                if res.status_code != 200:
+                    raise HTTPException(status_code=502, detail=f"CurseForge API returned {res.status_code} while resolving modpack {req.cf_id}")
+                cf_slug = res.json().get("data", {}).get("slug") or cf_slug
+                if req.modpack_version:
+                    file_id = req.modpack_version
+                else:
+                    res = await client.get(f"{CF_API_BASE}/mods/{req.cf_id}", headers=cf_api_headers(), timeout=20.0)
+                    if res.status_code == 200:
+                        data = res.json().get("data", {})
+                        latest_files = data.get("latestFiles", [])
+                        if latest_files:
+                            file_id = str(latest_files[0]["id"])
+                            req.modpack_version = file_id
+                            for ver in latest_files[0].get("gameVersions", []):
+                                if ver and ver[0].isdigit():
+                                    mc_version = ver
+                                    break
+                
+                if file_id and not mc_version:
+                    res = await client.get(f"{CF_API_BASE}/mods/{req.cf_id}/files/{file_id}", headers=cf_api_headers(), timeout=20.0)
+                    if res.status_code == 200:
+                        fdata = res.json().get("data", {})
+                        for ver in fdata.get("gameVersions", []):
+                             if ver and ver[0].isdigit():
+                                 mc_version = ver
+                                 break
+        except HTTPException:
+            shutil.rmtree(path, ignore_errors=True)
+            raise
+        except Exception as e:
+            print(f"Error fetching CurseForge version details: {e}")
+
+        # Replace TYPE=... with TYPE=AUTO_CURSEFORGE for CurseForge modpack
+        for i, val in enumerate(env):
+            if val.startswith("TYPE="):
+                env[i] = "TYPE=AUTO_CURSEFORGE"
+                break
+        env.append(f"CF_SLUG={cf_slug}")
+        env.append("CF_API_KEY=${CF_API_KEY}")
+        if req.modpack_version:
+            env.append(f"CF_FILE_ID={req.modpack_version}")
+        
+        # Exclude common client-only mods from CurseForge downloads
+        cf_excludes = [
+            "sodium", "rubidium", "embeddium", "iris-shaders", "oculus", "modmenu", "continuity",
+            "entityculling", "immediatelyfast", "dynamic-fps", "e4mc", "controlify",
+            "reeses-sodium-options", "sodium-extra", "bettergrassify", "cubes-without-borders",
+            "animatica", "skyboxify", "puzzle", "presence-footsteps", "sound-physics-remastered",
+            "borderlessfullscreen", "language-reload", "morechathistory", "mainmenucredits",
+            "crashassistant", "better-mount-hud", "cape-provider", "zoomify", "debugify",
+            "fastquit", "no-chat-reports", "optigui", "litematica", "minihud", "tweakeroo",
+            "lambdynamiclights", "bobby", "distant-horizons", "fancymenu", "konkrete",
+            "controlling", "searchables", "custom-skin-loader", "fabrishot", "perspectivemod",
+            "chunk-fade", "shulbox-tooltip", "itemphysics-lite", "ambience", "visuality",
+            "skinlayers-3d", "wavesurfer", "legendary-tooltips"
+        ]
+        env.append(f"CF_EXCLUDE_MODS={','.join(cf_excludes)}")
 
     # Set correct java version and Minecraft version based on resolved version
     if mc_version:

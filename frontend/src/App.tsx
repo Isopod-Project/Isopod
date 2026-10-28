@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Archive, Cat, History } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Archive, Cat, History, Flame } from "lucide-react";
 import { HelpButton } from "./components/HelpButton";
 import { BackupsPanel } from "./components/BackupsPanel";
 import { CrashBadge, CrashReportPanel } from "./components/CrashReport";
@@ -183,7 +183,7 @@ export default function App() {
 
    // Prism-like Add Modal States
    const [addStep, setAddStep] = useState<number>(1);
-   const [addTab, setAddTab] = useState<"custom" | "import" | "modrinth" | "world">("custom");
+   const [addTab, setAddTab] = useState<"custom" | "import" | "modrinth" | "curseforge" | "world">("custom");
    const [selectedAddVersion, setSelectedAddVersion] = useState("latest");
    const [selectedAddLoader, setSelectedAddLoader] = useState("VANILLA");
    const [searchModpacks, setSearchModpacks] = useState("");
@@ -760,9 +760,9 @@ export default function App() {
             version: selectedAddVersion === 'latest' ? '' : selectedAddVersion,
             loader_version: selectedAddLoaderVersion,
             modrinth_id: addTab === 'modrinth' && selectedModpack ? selectedModpack.id : null,
-            cf_id: null,
-            modpack_version: addTab === 'modrinth' && selectedModpack ? selectedModpackVersion : null,
-            icon_url: addTab === 'modrinth' && selectedModpack ? selectedModpack.icon_url : null,
+            cf_id: addTab === 'curseforge' && selectedModpack ? selectedModpack.id : null,
+            modpack_version: (addTab === 'modrinth' || addTab === 'curseforge') && selectedModpack ? selectedModpackVersion : null,
+            icon_url: (addTab === 'modrinth' || addTab === 'curseforge') && selectedModpack ? selectedModpack.icon_url : null,
             seed: newSeed,
             level_type: newLevelType,
             difficulty: newDifficulty,
@@ -3500,13 +3500,14 @@ export default function App() {
                            {[
                               { id: "custom", name: "Custom", icon: Gamepad2 },
                               { id: "import", name: "Import", icon: Database },
-                              { id: "modrinth", name: "Modrinth", icon: RefreshCw }
+                              { id: "modrinth", name: "Modrinth", icon: RefreshCw },
+                              { id: "curseforge", name: "CurseForge", icon: Flame }
                            ].map((tab) => (
                               <button
                                  key={tab.id}
                                  onClick={() => {
                                     setAddTab(tab.id as any);
-                                    if (tab.id === 'modrinth') {
+                                    if (tab.id === 'modrinth' || tab.id === 'curseforge') {
                                        handleModpackSearch("", tab.id);
                                     }
                                  }}
@@ -3773,7 +3774,7 @@ export default function App() {
                                  </div>
                               )}
 
-                              {addTab === "modrinth" && (
+                              {(addTab === "modrinth" || addTab === "curseforge") && (
                                  <div className="flex flex-col h-full bg-[#1E1E1E]/50">
                                     <div className="p-4 bg-[#242424] border-b border-[#323232] flex flex-col gap-3">
                                        <div className="flex gap-3 w-full">
