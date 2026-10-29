@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useMemo } from "react";
 import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Archive, Cat, History, Flame } from "lucide-react";
 import { HelpButton } from "./components/HelpButton";
 import { BackupsPanel } from "./components/BackupsPanel";
+import { BedrockAddonsPanel } from "./components/BedrockAddons";
 import { CrashBadge, CrashReportPanel } from "./components/CrashReport";
 import { crashLabel, crashSummary, type CrashInfo } from "./lib/crash";
 import { ResourceTotals, InstanceResources, type ResourceUsage } from "./components/ResourceUsage";
@@ -56,8 +57,8 @@ const LOADER_VERSION_ENV: Record<string, string> = {
 // Server types that run plugins (in plugins/) instead of mods
 const PLUGIN_SERVER_TYPES = ["PAPER", "PURPUR", "FOLIA"];
 
-// Edit window tabs that only apply to Java servers
-const BEDROCK_HIDDEN_TABS = ["loader", "mods", "resource-pack"];
+// Edit window tabs that only apply to Java servers. Bedrock servers show the "mods" tab as Add-ons.
+const BEDROCK_HIDDEN_TABS = ["loader", "resource-pack"];
 // Matches DEFAULT_TIMEOUT_SECONDS in backend/autopause.py
 const AUTO_PAUSE_DEFAULT_MINUTES = 10;
 
@@ -2048,7 +2049,7 @@ export default function App() {
    }, [selectedId]);
 
    useEffect(() => {
-      if (!isEditModalOpen || editTab !== "mods" || modListView !== "list" || dialog) return;
+      if (!isEditModalOpen || editTab !== "mods" || editingBedrock || modListView !== "list" || dialog) return;
       const handleKeyDown = (e: KeyboardEvent) => {
          const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
          if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
@@ -2686,10 +2687,10 @@ export default function App() {
    }, [isEditModalOpen, config.environment]);
 
    useEffect(() => {
-      if (isEditModalOpen && selectedId && editTab === "mods") {
+      if (isEditModalOpen && selectedId && editTab === "mods" && !editingBedrock) {
          fetchInstanceMods(selectedId);
       }
-   }, [isEditModalOpen, selectedId, editTab]);
+   }, [isEditModalOpen, selectedId, editTab, editingBedrock]);
 
    // A Bedrock server hides the Java-only tabs; don't leave one open from another instance
    useEffect(() => {
@@ -4319,15 +4320,13 @@ export default function App() {
                               <Archive className="w-4 h-4" />
                               Backups
                            </button>
-                           {!editingBedrock && (
                            <button
                               onClick={() => setEditTab("mods")}
                               className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "mods" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
                            >
                               <Box className="w-4 h-4" />
-                              Mods
+                              {editingBedrock ? "Add-ons" : "Mods"}
                            </button>
-                           )}
                            {!editingBedrock && (
                            <button
                               onClick={() => setEditTab("resource-pack")}
@@ -5392,7 +5391,11 @@ export default function App() {
                               </div>
                            </div>
                         )}
-                        {editTab === "mods" && (
+                        {editTab === "mods" && editingBedrock && selectedId && (
+                           <BedrockAddonsPanel instanceId={selectedId} isRunning={!!selectedStatus?.is_running} showAlert={showAlert} showConfirm={showConfirm} />
+                        )}
+
+                        {editTab === "mods" && !editingBedrock && (
                            <div className="flex flex-col h-full overflow-hidden bg-[#1E1E1E]">
                               {modListView === "list" ? (
                                  /* PRISM LAUNCHER STYLE MOD CONSOLE VIEW */

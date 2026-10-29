@@ -73,6 +73,7 @@ test.describe("Bedrock and cross-play in the Edit window", () => {
     for (const tab of ["Loaders", "Mods", "Resource Packs"]) {
       await expect(page.getByRole("button", { name: tab, exact: true })).toHaveCount(0)
     }
+    await expect(page.getByRole("button", { name: "Add-ons", exact: true })).toBeVisible()
 
     await page.getByRole("button", { name: "World", exact: true }).click()
     await expect(page.locator("select").filter({ hasText: "Survival" })).toHaveValue("creative")
@@ -186,5 +187,103 @@ test.describe("Bedrock User Management", () => {
     errors.expect(/400/)
     await page.getByRole("button", { name: "Save User Configuration" }).click()
     await expect(page.getByText("isn't a valid Xbox gamertag")).toBeVisible()
+  })
+})
+
+test.describe("Bedrock Add-ons tab", () => {
+  const BP = "11111111-1111-4111-8111-111111111111"
+  let addons: Record<string, unknown>[]
+  let uploads: string[]
+  let toggles: { uuid: string; enabled: boolean }[]
+  let deletes: { uuid: string }[]
+
+  const addon = (overrides: Record<string, unknown> = {}) => ({
+    uuid: BP, name: "Mob Pack", description: "More mobs", version: "1.2.3", type: "behavior", folder: "Mob_Pack_11111111",
+    enabled: true, beta_apis: [], missing_dependencies: [], error: null, ...overrides,
+  })
+
+  async function openAddons(page: Page, installed: Record<string, unknown>[] = []) {
+    addons = installed
+    uploads = []
+    toggles = []
+    deletes = []
+    await page.route("**/api/instances/alpha/config", (route) =>
+      route.fulfill({ json: { image: "itzg/minecraft-bedrock-server", environment: { TYPE: "BEDROCK" } } }),
+    )
+    await page.route("**/api/instances/alpha/addons**", (route) => {
+      const req = route.request()
+      const path = new URL(req.url()).pathname
+      if (path.endsWith("/upload")) {
+        const name = /filename="([^"]+)"/.exec(req.postDataBuffer()?.toString("latin1") || "")?.[1] || ""
+        uploads.push(name)
+        if (name.startsWith("evil")) {
+          return route.fulfill({ status: 400, json: { detail: `${name} wasn't installed. It contains an unsafe path (../x), so it wasn't installed.` } })
+        }
+        addons = [addon(), addon({ uuid: "22222222-2222-4222-8222-222222222222", name: "Mob Textures", type: "resource", folder: "Mob_Textures_22222222" })]
+        return route.fulfill({ json: { message: `Installed ${name}`, installed: [] } })
+      }
+      if (path.endsWith("/toggle")) {
+        const body = req.postDataJSON()
+        toggles.push(body)
+        addons = addons.map((a) => (a.uuid === body.uuid ? { ...a, enabled: body.enabled } : a))
+        return route.fulfill({ json: { message: "ok" } })
+      }
+      if (path.endsWith("/delete")) {
+        const body = req.postDataJSON()
+        deletes.push(body)
+        addons = addons.filter((a) => a.uuid !== body.uuid)
+        return route.fulfill({ json: { message: "ok" } })
+      }
+      return route.fulfill({ json: { world: "Bedrock level", addons } })
+    })
+    await page.goto("/")
+    await page.getByText("Alpha Server").first().click()
+    await page.getByRole("button", { name: "Edit" }).first().click()
+    await page.getByRole("button", { name: "Add-ons", exact: true }).click()
+    await expect(page.getByTestId("bedrock-addons")).toBeVisible()
+  }
+
+  test("uploads a .mcaddon and lists both packs with name and version", async ({ page }) => {
+    await openAddons(page)
+    await expect(page.getByText("No add-ons installed")).toBeVisible()
+    await expect(page.getByText("World: Bedrock level")).toBeVisible()
+    await page.getByTestId("addon-file-input").setInputFiles({ name: "mobs.mcaddon", mimeType: "application/zip", buffer: Buffer.from("PK") })
+
+    await expect(page.getByTestId("addon-row")).toHaveCount(2)
+    expect(uploads).toEqual(["mobs.mcaddon"])
+    await expect(page.getByText("Add-ons (2 installed)")).toBeVisible()
+    const row = page.getByTestId("addon-row").filter({ hasText: "Mob Pack" })
+    await expect(row).toContainText("1.2.3")
+    await expect(row).toContainText("Behavior pack")
+    await expect(page.getByTestId("addon-row").filter({ hasText: "Mob Textures" })).toContainText("Resource pack")
+  })
+
+  test("disables and removes an add-on", async ({ page }) => {
+    await openAddons(page, [addon()])
+    const toggle = page.getByRole("switch", { name: "Enable Mob Pack" })
+    await expect(toggle).toHaveAttribute("aria-checked", "true")
+    await toggle.click()
+    await expect(toggle).toHaveAttribute("aria-checked", "false")
+    expect(toggles).toEqual([{ uuid: BP, enabled: false }])
+
+    await page.getByRole("button", { name: "Remove Mob Pack" }).click()
+    await page.getByRole("button", { name: "OK" }).click()
+    await expect(page.getByTestId("addon-row")).toHaveCount(0)
+    expect(deletes).toEqual([{ uuid: BP }])
+  })
+
+  test("a rejected archive shows the server's reason", async ({ page, errors }) => {
+    errors.expect(/400/)
+    await openAddons(page)
+    await page.getByTestId("addon-file-input").setInputFiles({ name: "evil.mcpack", mimeType: "application/zip", buffer: Buffer.from("PK") })
+    await expect(page.getByText("evil.mcpack wasn't installed. It contains an unsafe path")).toBeVisible()
+    await expect(page.getByTestId("addon-row")).toHaveCount(0)
+  })
+
+  test("warns about Beta APIs and missing packs", async ({ page }) => {
+    await openAddons(page, [addon({ beta_apis: ["@minecraft/server"], missing_dependencies: ["22222222-2222-4222-8222-222222222222"] })])
+    const row = page.getByTestId("addon-row")
+    await expect(row).toContainText("Beta APIs experiment")
+    await expect(row).toContainText("Needs a pack that isn't installed")
   })
 })

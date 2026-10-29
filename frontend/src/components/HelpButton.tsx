@@ -34,6 +34,7 @@ const HELP_TOPICS = {
    "bedrock-files": "file-manager",
    "bedrock-world": "bedrock/bedrock-server",
    "bedrock-backups": "backups",
+   "bedrock-mods": "bedrock/bedrock-addons",
    "bedrock-config": "server-tuning",
    "bedrock-users": "bedrock/bedrock-allowlist",
 
