@@ -3,6 +3,8 @@
 
 **Isopod** is a modern, lightweight, and powerful Minecraft Instance Manager built on Docker. It provides a Prism-like experience for self-hosted Minecraft servers with a sleek, interactive dashboard.
 
+![The Isopod dashboard](docs/images/dashboard.png)
+
 ## ✨ Features
 - **Prism-Like Instance Management**: Easily create, configure, and manage separate Minecraft server instances.
 - **Smart Mod Management**: 
@@ -29,6 +31,9 @@
 1. Ensure you have **Docker** and **Docker Compose** installed.
 2. Clone this repository: `git clone https://github.com/Isopod-Project/Isopod.git`
 3. Start the application: `docker compose -f isopod-compose.yml up -d --build`
+   - On macOS, first run `echo "COMPOSE_FILE=isopod-compose.yml:docker/isopod-compose.macos.yml" > .env` once, then start with plain `docker compose up -d --build`. See [Running on macOS](documentation/everyone/getting-started.md#-running-on-macos).
+   - On Windows, `scripts\start-isopod.ps1` runs the same command, waits for the dashboard to come up, and opens it in your default browser.
+4. Access the dashboard at `http://localhost:8000`.
 
 ### CurseForge (optional)
 CurseForge modpack search and installs use the official CurseForge API, which needs a key from [console.curseforge.com](https://console.curseforge.com). Put it in a `.env` file next to the compose file, in single quotes because keys contain `$`:
@@ -38,9 +43,6 @@ CURSEFORGE_API_KEY='your-key-here'
 ```
 
 Then restart Isopod. Without a key, CurseForge search returns an error and Modrinth keeps working.
-4. Access the dashboard at `http://localhost:8000`.
-   - On macOS, first run `echo "COMPOSE_FILE=isopod-compose.yml:docker/isopod-compose.macos.yml" > .env` once, then start with plain `docker compose up -d --build`. See [Running on macOS](Documentation/everyone/getting-started.md#-running-on-macos).
-   - On Windows, `scripts\start-isopod.ps1` runs the same command, waits for the dashboard to come up, and opens it in your default browser.
 
 ## 🔒 Security
 Isopod has no login and runs privileged, so keep port 8000 on your local network or behind a VPN and never forward it to the internet. To report a vulnerability, see [SECURITY.md](SECURITY.md). Every pull request and release goes through an automated [security audit](docs/security-audit.md).
@@ -58,6 +60,12 @@ The official mascot of Isopod is a colorful, rolling isopod (woodlouse), represe
 - **[User Guides](documentation/everyone/getting-started.md)**: Getting started, features, and troubleshooting for all users.
 - **[Developer Guide](documentation/developers/organization_guide.md)**: Project architecture, coding standards, and organization rules.
 - **[Development Environment](documentation/developers/development_guide.md)**: Setting up the "Pull & Restart" dev workflow.
+
+## 🤝 Contributing
+Bug reports, feature ideas, and pull requests are all welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) to get set up, and look for issues labeled [`good first issue`](https://github.com/Isopod-Project/Isopod/labels/good%20first%20issue) if you want somewhere to start.
+
+## 📄 License
+Isopod is released under the [MIT License](LICENSE).
 
 ---
 *Made by the [Isopod Project](https://github.com/Isopod-Project)*
