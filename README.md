@@ -1,7 +1,27 @@
-# 🦀 Isopod
-![Isopod Logo](assets/logo.png)
+<p align="center">
+  <img src="assets/logo.png" alt="Isopod logo" width="140">
+</p>
 
-**Isopod** is a modern, lightweight, and powerful Minecraft Instance Manager built on Docker. It provides a Prism-like experience for self-hosted Minecraft servers with a sleek, interactive dashboard.
+<h1 align="center">Isopod</h1>
+
+<p align="center">
+  <strong>Self-hosted Minecraft servers, managed like Prism instances.</strong><br>
+  A Docker-powered dashboard for Java and Bedrock servers, mods, modpacks, and backups.
+</p>
+
+<p align="center">
+  <a href="https://github.com/Isopod-Project/Isopod/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Isopod-Project/Isopod?color=3E8ED0"></a>
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/github/license/Isopod-Project/Isopod?color=10b981"></a>
+  <a href="https://github.com/Isopod-Project/Isopod/actions/workflows/security-audit.yml"><img alt="Security audit" src="https://github.com/Isopod-Project/Isopod/actions/workflows/security-audit.yml/badge.svg"></a>
+  <a href="https://github.com/Isopod-Project/Isopod/labels/good%20first%20issue"><img alt="Good first issues" src="https://img.shields.io/github/issues/Isopod-Project/Isopod/good%20first%20issue?label=good%20first%20issues&color=7c3aed"></a>
+</p>
+
+<p align="center">
+  <a href="https://isopod-project.github.io/Isopod-Website/">Website</a> ·
+  <a href="https://isopod-project.github.io/Isopod-Website/#/wiki">Wiki</a> ·
+  <a href="#-quick-start">Quick Start</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
 
 ![The Isopod dashboard](docs/images/dashboard.png)
 
