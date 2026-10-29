@@ -117,7 +117,7 @@ Isopod can host players on Minecraft for Windows, phones, tablets, and consoles 
 - Geyser supports the newest Java releases. On an older Minecraft version, Bedrock players may not be able to join.
 - Switching cross-play off removes the Geyser and Floodgate jars and the Bedrock port. Their config folders stay, in case you turn it back on.
 
-Isopod publishes UDP ports `19132`-`19152` for Bedrock, so keep Bedrock ports in that range. If you installed Isopod before this feature, add `19132-19152:19132-19152/udp` to the ports in your compose file (see [the CasaOS guide](../../Documentation/CASAOS_INSTALL.md)).
+Isopod publishes UDP ports `19132`-`19152` for Bedrock, so keep Bedrock ports in that range. If you installed Isopod before this feature, add `19132-19152:19132-19152/udp` to the ports in your compose file (see [the CasaOS guide](../CASAOS_INSTALL.md)).
 
 ## 💾 Saving in the Edit Window
 - **Mods tab**: Every change applies right away. **Add** downloads the mod (it shows **Installing...** until it's done), and enabling, disabling, or removing a mod changes its file immediately. There is nothing to save.
@@ -173,4 +173,4 @@ A Java server can pause itself when nobody is playing, so it stops using CPU.
 The dashboard checks every few seconds that it can still reach the Isopod backend, even with **Automatic Refresh** off. If two checks in a row fail, a **Lost connection to Isopod** banner appears and every server shows **Unknown**, because its last known status can't be trusted. Once the backend is reachable again, the banner clears and statuses reload on their own; **Retry** checks right away. If the dashboard can't reach the backend when it first loads, it shows **Can't reach Isopod** instead of an empty server list.
 
 ## ❓ Need Help?
-Check out the [FAQ](faq.md) (coming soon) or open an issue on GitHub.
+Check the [wiki](https://isopod-project.github.io/Isopod-Website/#/wiki) or [open an issue](https://github.com/Isopod-Project/Isopod/issues) on GitHub.
