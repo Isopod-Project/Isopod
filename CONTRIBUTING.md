@@ -19,7 +19,7 @@ Issues labeled [`good first issue`](https://github.com/Isopod-Project/Isopod/lab
 
 ## 🛠 Setting up
 
-You need Git, Docker, and Node.js 20+.
+You need Git, Docker, and Node.js 24+.
 
 - **Full dev environment** (backend, frontend, and real Minecraft servers in Docker): follow the [Development Guide](documentation/developers/development_guide.md).
 - **Frontend only**: `npm run dev` in `frontend/` serves the dashboard at http://localhost:5173 and proxies `/api` to a backend on `localhost:8000` (set `VITE_API_PROXY` to point elsewhere). The Playwright suite mocks the whole API, so you can test dashboard changes without the backend or Docker.
