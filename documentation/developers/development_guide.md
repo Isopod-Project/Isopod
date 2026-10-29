@@ -179,7 +179,7 @@ The Isopod container publishes UDP `19132-19152` for these ports next to TCP `25
 CurseForge modpacks go through the official API at `https://api.curseforge.com/v1`, which needs a key from [console.curseforge.com](https://console.curseforge.com). Set it as `CURSEFORGE_API_KEY` (the compose files pass it into the container; `backend/main.py` also accepts `CF_API_KEY`). Without a key the CurseForge endpoints return `503`.
 
 **Endpoints** (`backend/main.py`):
-- `GET /api/mods/search/curseforge?q=&class_type=modpack&mc_version=&loader=` searches Minecraft (`gameId` 432). `class_type` maps to `classId`: `mod` 6, `modpack` 4471, `resourcepack` 12. Results are sorted by popularity, and `pageSize` is 50 because the API rejects anything larger. The loader filter is skipped for resource packs. Any non-200 reply from CurseForge becomes a `502` carrying the status, so the dashboard can show it instead of an empty list.
+- `GET /api/mods/search/curseforge?q=&class_type=modpack&mc_version=&loader=` searches Minecraft (`gameId` 432). `class_type` maps to `classId`: `mod` 6, `modpack` 4471, `resourcepack` 12, `plugin` 5. A `mod` search on a plugin server (Paper, Purpur, Folia) becomes a `plugin` search. Results are sorted by popularity, and `pageSize` is 50 because the API rejects anything larger. The loader filter (`modLoaderType`) is skipped for resource packs and plugins, and for modpack server types. Each hit has `downloadable: false` when the author set `allowModDistribution` to false; the API gives no download URL for those files. Any non-200 reply from CurseForge becomes a `502` carrying the status, so the dashboard can show it instead of an empty list.
 - `GET /api/mods/curseforge/{project_id}/versions` lists a pack's files in the same shape as the Modrinth endpoint. `project_id` must be numeric.
 
 **Creating an instance.** `POST /api/instances` with `cf_id` (the numeric project ID) and `modpack_version` (the file ID):
@@ -189,7 +189,15 @@ CurseForge modpacks go through the official API at `https://api.curseforge.com/v
 
 **Keep the key off other hosts.** `cf_api_headers()` builds the `x-api-key` header per request. Don't put it on a shared `httpx.AsyncClient`: several handlers reuse one client for Modrinth and CurseForge calls.
 
-**Not covered yet:** adding single CurseForge mods and resource packs (tracked in #52). The Mods tab and resource pack search use Modrinth only.
+**Single mods** (#52). The Mods tab's search has a Modrinth/CurseForge switch.
+- CurseForge mods are listed by numeric project ID in `CURSEFORGE_FILES`, which itzg resolves and upgrades on every start. Disabled ones move to `CURSEFORGE_DISABLED`, which only Isopod reads (like `MODRINTH_DISABLED`). When `CURSEFORGE_FILES` is set and the host has a key, saving the config adds the literal `CF_API_KEY=${CF_API_KEY}`.
+- CurseForge search has no server-side filter, so files tagged `Client` without `Server` in `gameVersions` count as client-only. Many older files have neither tag, which says nothing. Search hides a mod when its `latestFiles` have a client-only file and none tagged `Server`.
+- `cf_newest_file()` picks the newest file (by `fileDate`, skipping server packs and client-only files) for the server's `VERSION` and loader. `CF_MOD_LOADER_TYPES` maps each server TYPE to the `modLoaderType` values it runs, in order: Quilt falls back to Fabric, NeoForge to Forge.
+- Saving the config downloads missing CurseForge mods into `mods/` (or `plugins/`) right away, like Modrinth ones. Each download is recorded in `isopod-meta.json` under `curseforge_files` (project ID -> `slug`, `name`, `file`, `mod_id`). The mods list uses it to show a jar under its project ID, so enable, disable, and remove find the right `CURSEFORGE_FILES` entry. It matches by the jar's mod ID too, so the link survives itzg swapping in a newer file.
+- `GET /api/mods/dependencies?provider=curseforge&project_id=&mc_version=&loader=` walks the `relationType` 3 (required) dependencies of each chosen file, breadth first, up to 50 projects. itzg only warns about missing CurseForge dependencies, so Isopod adds them to `CURSEFORGE_FILES` itself.
+- `POST /api/mods/check-compatibility` also takes `curseforge_ids`. Entries that aren't numeric IDs (hand-written slugs or URLs) count as compatible and are left alone.
+
+**Not covered yet:** CurseForge resource packs. Resource pack search uses Modrinth only.
 
 ---
 
