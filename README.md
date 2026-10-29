@@ -73,9 +73,6 @@ Isopod has no login and runs privileged, so keep port 8000 on your local network
 - **Orchestration**: Docker Compose.
 - **Base Image**: [itzg/minecraft-server](https://github.com/itzg/docker-minecraft-server).
 
-## 🦀 Mascot
-The official mascot of Isopod is a colorful, rolling isopod (woodlouse), representing the project's focus on encapsulation, portability (rolling!), and vibrancy.
-
 ## 📖 Documentation
 - **[User Guides](documentation/everyone/getting-started.md)**: Getting started, features, and troubleshooting for all users.
 - **[Developer Guide](documentation/developers/organization_guide.md)**: Project architecture, coding standards, and organization rules.
