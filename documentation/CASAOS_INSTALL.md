@@ -45,7 +45,7 @@ services:
       # Optional: CurseForge API key (console.curseforge.com). Write every `$` in the key as `$$`.
       - CURSEFORGE_API_KEY=
     labels:
-      icon: "https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png"
+      icon: "https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/logo.png"
       title: "Isopod"
       description: "Modern Minecraft Server Manager"
       casaos_app_id: "isopod"
@@ -60,8 +60,8 @@ x-casaos:
   description:
     en_us: Modern, lightweight Minecraft instance manager with a sleek web dashboard.
   developer: Isopod-Project
-  icon: https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png
-  thumbnail: https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png
+  icon: https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/logo.png
+  thumbnail: https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/logo.png
   title:
     en_us: Isopod
   port_map: "8000"
@@ -69,7 +69,7 @@ x-casaos:
 ```
 
 6. Click **Submit**.
-7. For Icon URL, replace what's autofilled from CasaOS with `https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png`
+7. For Icon URL, replace what's autofilled from CasaOS with `https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/logo.png`
 8. Click **Install**.
 
 ## 3. Configuration Details (Manual Check)
