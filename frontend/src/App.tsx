@@ -2428,6 +2428,34 @@ export default function App() {
       setIsEditModalOpen(false);
    };
 
+   // Escape closes whatever is on top. The Files and Mods tabs use Escape for their own
+   // menus, renames and selections first; Edit still asks before dropping unsaved changes.
+   useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+         if (e.key !== 'Escape') return;
+         if (dialog) { dialog.onResult(null); return; }
+         if (fileConflictModal || updateProgressState) return;
+         if (contextMenu) { setContextMenu(null); return; }
+         if (isExportModalOpen) { setIsExportModalOpen(false); return; }
+         if (isSettingsModalOpen) { closeSettings(); return; }
+         if (isVersionModalOpen) { setIsVersionModalOpen(false); return; }
+         if (isEditModalOpen) {
+            if (fileContextMenu || inlineEditing || (editTab === "mods" && selectedModKeys.length > 0)) return;
+            closeEditModal();
+            return;
+         }
+         if (isAddModalOpen) setIsAddModalOpen(false);
+      };
+      // Capture runs before the tabs' own Escape handlers, so this sees the state they act on
+      window.addEventListener('keydown', handleKeyDown, true);
+      return () => window.removeEventListener('keydown', handleKeyDown, true);
+   });
+
+   // Closes a window when the click lands on its dimmed backdrop rather than the window itself
+   const onBackdrop = (close: () => void) => (e: React.MouseEvent) => {
+      if (e.target === e.currentTarget) close();
+   };
+
    // The Logs tab shows either the live console or the latest crash report
    const [logView, setLogView] = useState<"console" | "crash">("console");
 
@@ -2485,6 +2513,14 @@ export default function App() {
       } catch (e) {
          console.error("Failed to fetch settings", e);
       }
+   };
+
+   // Leaving Settings without saving puts back anything changed, such as a previewed theme
+   const closeSettings = () => {
+      if (JSON.stringify(globalSettings) !== originalGlobalSettings) {
+         setGlobalSettings(JSON.parse(originalGlobalSettings));
+      }
+      setIsSettingsModalOpen(false);
    };
 
    const handleSaveGlobalSettings = async () => {
@@ -4185,7 +4221,7 @@ export default function App() {
          )}
 
          {isEditModalOpen && (selectedInstance || isGlobalBrowser) && (
-            <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-6">
+            <div onMouseDown={onBackdrop(closeEditModal)} className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-6">
                <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg shadow-2xl w-full max-w-6xl h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
                   {/* Header */}
                   <div className="px-6 py-4 border-b border-[#3A3A3A] flex justify-between items-center bg-[#2B2B2B]">
@@ -7091,7 +7127,7 @@ export default function App() {
             </div>
          )}
          {isVersionModalOpen && (
-            <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-md p-6">
+            <div onMouseDown={onBackdrop(() => setIsVersionModalOpen(false))} className="absolute inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-md p-6">
                <div className="bg-[#1E1E1E] border border-[#3A3A3A] rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
                   <div className="p-6 border-b border-[#3A3A3A] flex justify-between items-center bg-[#242424]">
                      <div className="flex items-center gap-3">
@@ -7203,7 +7239,7 @@ export default function App() {
          )}
 
          {isSettingsModalOpen && (
-            <div className="absolute inset-0 z-[110] flex items-center justify-center bg-black/75 backdrop-blur-md p-6">
+            <div onMouseDown={onBackdrop(closeSettings)} className="absolute inset-0 z-[110] flex items-center justify-center bg-black/75 backdrop-blur-md p-6">
                <div className="bg-[#242424] border border-[#3A3A3A] rounded-xl shadow-2xl w-full max-w-4xl h-[70vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200 text-[#E0E0E0]">
                   {/* Header */}
                   <div className="px-6 py-5 border-b border-[#323232] bg-[#2B2B2B] flex justify-between items-center">
@@ -7219,7 +7255,8 @@ export default function App() {
                      <div className="flex items-center gap-2">
                         <HelpButton topic={`settings-${settingsTab}`} className="p-1.5 hover:bg-[#3A3A3A] rounded-full text-neutral-400" iconClassName="w-5 h-5" />
                         <button
-                           onClick={() => setIsSettingsModalOpen(false)}
+                           onClick={closeSettings}
+                           title="Close"
                            className="p-1.5 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition"
                         >
                            <X className="w-6 h-6" />
@@ -7674,12 +7711,7 @@ export default function App() {
                      </div>
                      <div className="flex gap-3">
                         <button
-                           onClick={() => {
-                              if (JSON.stringify(globalSettings) !== originalGlobalSettings) {
-                                 setGlobalSettings(JSON.parse(originalGlobalSettings));
-                              }
-                              setIsSettingsModalOpen(false);
-                           }}
+                           onClick={closeSettings}
                            className="px-6 py-2.5 rounded-lg text-neutral-400 hover:bg-[#3A3A3A] hover:text-white font-bold transition-all text-sm"
                         >
                            {JSON.stringify(globalSettings) !== originalGlobalSettings ? "Discard Changes" : "Close"}
@@ -7826,7 +7858,7 @@ export default function App() {
             </div>
          )}
          {dialog && (
-            <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div onMouseDown={onBackdrop(() => dialog.onResult(null))} className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">
                <div className="bg-[#2A2A2A] border border-[#3A3A3A] rounded-lg shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden animate-in zoom-in duration-200">
                   <div className="px-6 py-4 border-b border-[#323232] bg-[#242424] flex items-center gap-3 shrink-0">
                      {dialog.type === 'alert' && <AlertCircle className="w-5 h-5 text-amber-500" />}
@@ -7844,7 +7876,6 @@ export default function App() {
                            defaultValue={dialog.defaultValue}
                            onKeyDown={(e) => {
                               if (e.key === 'Enter') dialog.onResult(e.currentTarget.value);
-                              if (e.key === 'Escape') dialog.onResult(null);
                            }}
                            className="w-full bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-2 rounded text-white focus:outline-none focus:border-[#3E8ED0] text-sm"
                         />
@@ -7856,7 +7887,6 @@ export default function App() {
                            defaultValue={dialog.defaultValue || (dialog.options?.[0] || "")}
                            onKeyDown={(e) => {
                               if (e.key === 'Enter') dialog.onResult(e.currentTarget.value);
-                              if (e.key === 'Escape') dialog.onResult(null);
                            }}
                            className="w-full bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-2 rounded text-white focus:outline-none focus:border-[#3E8ED0] text-sm"
                         >
@@ -7899,7 +7929,7 @@ export default function App() {
             </div>
          )}
          {isExportModalOpen && (
-            <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div onMouseDown={onBackdrop(() => setIsExportModalOpen(false))} className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
                <div className="bg-[#2A2A2A] border border-[#3A3A3A] rounded-lg shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
                   <div className="px-6 py-4 border-b border-[#323232] bg-[#242424] flex items-center justify-between">
                      <div className="flex items-center gap-2">
