@@ -43,7 +43,7 @@ Server folders and worlds are stored in `data/servers` inside your clone. Docker
 ## 🦀 Features at a Glance
 - **Instance Creation**: Quickly spin up new Minecraft servers. Pick a **Group** in the Add Instance window (or **+ New Group...**) to file the new server under it; right-click a server and choose **Move to Folder** to change it later.
 - **Modpacks**: Create a server from a **Modrinth** or **CurseForge** modpack. CurseForge needs a free API key, see [CurseForge Modpacks](#-curseforge-modpacks).
-- **Mod Management**: Search and install mods directly from Modrinth. Mods install as soon as you click **Add**.
+- **Mod Management**: Search and install mods from Modrinth or CurseForge. Mods install as soon as you click **Add**, and **Add with Deps** also installs the mods they need. CurseForge needs a free API key, see [CurseForge Mods](#-curseforge-mods).
 - **Desktop-Grade File Explorer**: Right-click context menus, drag-and-drop file moves & direct OS uploads, breadcrumb navigation, inline renaming/creation, multi-select, and conflict resolution.
 - **Live Console**: Watch your server logs in real-time.
 - **RCON Support**: Send commands to your server without leaving the dashboard. If a command fails, it stays in the input box so you can retry it, and the console shows why.
@@ -62,7 +62,7 @@ Server folders and worlds are stored in `data/servers` inside your clone. Docker
 ## 🧱 Server Types
 Pick a server type when you add an instance, or change it later in the Edit window's **Loaders** tab. (For Bedrock servers, see [Bedrock Edition](#-bedrock-edition).) Each type lets you pin a loader version or build, or use **Latest Recommended**.
 - **Mod servers**: Fabric, Forge, NeoForge, and Quilt load mods from the `mods` folder.
-- **Plugin servers**: Paper, Purpur, and Folia load plugins from the `plugins` folder. On these servers the **Mods** tab manages plugins instead: its header reads **Plugins**, and **Download Plugins** searches Modrinth for plugins that run on that server type.
+- **Plugin servers**: Paper, Purpur, and Folia load plugins from the `plugins` folder. On these servers the **Mods** tab manages plugins instead: its header reads **Plugins**, and **Download Plugins** searches Modrinth or CurseForge for plugins that run on that server type.
   - **Paper** runs Paper, Spigot, and Bukkit plugins.
   - **Purpur** is a Paper fork with extra gameplay and config options. It runs the same plugins as Paper, plus Purpur-only ones.
   - **Folia** runs each region of the world on its own thread, for large servers on machines with many CPU cores. Most Paper plugins don't work on Folia, so the plugin search only shows plugins marked Folia-compatible. Folia only exists for some Minecraft versions (1.19.4 and newer), and all its builds are experimental; Isopod warns you if the version you picked has no Folia build.
@@ -92,10 +92,23 @@ docker compose -f isopod-compose.yml up -d
 The Minecraft version, loader, and Java version all come from the pack. Isopod skips well-known client-only mods (shaders, minimaps, menu mods, and similar) so they don't crash the server.
 
 **Good to know**
-- CurseForge support covers **modpacks**. The **Mods** tab still searches Modrinth only.
 - If the CurseForge tab shows **Couldn't load modpacks**, read the message under it. `CURSEFORGE_API_KEY is not set` means the key never reached Isopod; recheck step 2 and restart. A `403` means CurseForge rejected the key.
 - Some pack authors block downloads outside the CurseForge app. Isopod can't install those packs, and the server log names the mod that failed.
 - Keep the key private. Isopod only sends it to `api.curseforge.com` and passes it to your server's container as an environment variable. It isn't written to the instance's `docker-compose.yml`.
+
+## 🔥 CurseForge Mods
+With the API key from [CurseForge Modpacks](#-curseforge-modpacks) set up, you can also add single CurseForge mods to any mod or plugin server.
+
+1. Open the server's Edit window, go to **Mods**, and click **Download Mods** (**Download Plugins** on Paper, Purpur, and Folia).
+2. Switch the source at the top right from **Modrinth** to **CurseForge**. The search starts out filtered to the server's Minecraft version and loader.
+3. Click **Add** to install just that mod, or **Add with Deps** to also install every mod it requires, such as Cloth Config or Architectury, and the mods those need.
+
+Isopod downloads the newest file that fits the server's version and loader straight away. On Quilt it falls back to Fabric files, and on NeoForge to Forge files. The server keeps CurseForge mods up to date each time it starts. Enable, disable, and remove them in the Mods tab like any other mod.
+
+**Good to know**
+- A mod marked **CurseForge app only** can't be installed: its author blocks downloads outside the CurseForge app. Download it yourself and use **Add File** instead.
+- If a mod has no file for the server's Minecraft version and loader, Isopod says it couldn't download it.
+- Changing the server's Minecraft version checks CurseForge mods along with Modrinth ones, and removes the ones with no matching file if you choose to update mods.
 
 ## 📱 Bedrock Edition
 Isopod can host players on Minecraft for Windows, phones, tablets, and consoles in two ways.

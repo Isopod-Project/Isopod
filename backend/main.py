@@ -789,6 +789,9 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
             autopause.apply_settings(env)
+            # The server downloads CURSEFORGE_FILES itself. Compose fills the key in, so the file never holds the secret.
+            if CF_API_KEY and env.get("CURSEFORGE_FILES") and "CF_API_KEY" not in env:
+                env["CF_API_KEY"] = "${CF_API_KEY}"
         config['services'][first_service_name]['environment'] = env
 
     with open(compose_path, "w") as f:
@@ -1933,39 +1936,114 @@ async def search_modrinth(q: Optional[str] = None, mc_version: Optional[str] = N
     return results
 
 
+# itzg server TYPE -> CurseForge modLoaderType values whose mods it runs, best match first.
+# Quilt runs most Fabric mods; NeoForge runs Forge mods built for 1.20.1.
+CF_MOD_LOADER_TYPES = {
+    "FORGE": [1],
+    "FABRIC": [4],
+    "QUILT": [5, 4],
+    "NEOFORGE": [6, 1],
+}
+CF_CLASS_IDS = {"mod": 6, "modpack": 4471, "resourcepack": 12, "plugin": 5}
+CF_RELATION_REQUIRED = 3
+# The most required dependencies one install resolves, so a broken dependency chain can't run forever
+CF_MAX_DEPENDENCIES = 50
+
+def instance_mod_loader(env: dict) -> str:
+    """The server TYPE whose mods an instance runs. Modrinth modpacks record their loader separately."""
+    server_type = (env.get("TYPE") or "VANILLA").strip().upper()
+    if server_type == "MODRINTH":
+        return (env.get("ISOPOD_MODPACK_LOADER") or server_type).strip().upper()
+    return server_type
+
+def cf_project_meta(item: dict) -> dict:
+    """A CurseForge project in the shape the mod search returns, cached for the mods list."""
+    authors = item.get("authors") or []
+    logo = item.get("logo") or {}
+    meta = {
+        "id": str(item.get("id", "")),
+        "slug": item.get("slug") or "",
+        "name": item.get("name") or "Unknown Mod",
+        "summary": item.get("summary") or "",
+        "icon_url": logo.get("thumbnailUrl"),
+        "author": authors[0].get("name", "Unknown") if authors else "Unknown",
+        "downloads": int(item.get("downloadCount") or 0),
+        "url": (item.get("links") or {}).get("websiteUrl") or "",
+        "categories": [c.get("name", "").lower() for c in item.get("categories") or []],
+        # Some authors block downloads outside the CurseForge app; the API gives no URL for their files
+        "downloadable": item.get("allowModDistribution") is not False,
+        "provider": "curseforge",
+    }
+    mod_metadata_cache[meta["id"].lower()] = meta
+    if item.get("name"):
+        mod_metadata_cache[item["name"].lower()] = meta
+    return meta
+
+async def cf_newest_file(client: httpx.AsyncClient, project_id: str, mc_version: str, server_type: str) -> Optional[dict]:
+    """The newest file of a CurseForge project that runs on this Minecraft version and server type, or None."""
+    loader_types = [None] if is_plugin_server(server_type) else CF_MOD_LOADER_TYPES.get(server_type, [None])
+    for loader_type in loader_types:
+        params = {"pageSize": 50}
+        if mc_version:
+            params["gameVersion"] = mc_version
+        if loader_type:
+            params["modLoaderType"] = loader_type
+        res = await client.get(f"{CF_API_BASE}/mods/{project_id}/files", params=params, headers=cf_api_headers(), timeout=20.0)
+        if res.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"CurseForge API returned {res.status_code} for project {project_id}")
+        files = [f for f in res.json().get("data") or [] if not f.get("isServerPack")]
+        if files:
+            # ISO 8601 timestamps sort as strings
+            return max(files, key=lambda f: f.get("fileDate") or "")
+    return None
+
+async def cf_required_dependencies(client: httpx.AsyncClient, project_id: str, mc_version: str, server_type: str) -> List[str]:
+    """Project IDs of every mod project_id needs, directly or through another dependency."""
+    found: List[str] = []
+    seen = {project_id}
+    queue = [project_id]
+    while queue and len(found) < CF_MAX_DEPENDENCIES:
+        current = queue.pop(0)
+        try:
+            file = await cf_newest_file(client, current, mc_version, server_type)
+        except HTTPException:
+            # A dependency CurseForge can't serve is skipped; the mod itself has to resolve
+            if current == project_id:
+                raise
+            continue
+        for dep in (file or {}).get("dependencies") or []:
+            dep_id = str(dep.get("modId", ""))
+            if dep.get("relationType") == CF_RELATION_REQUIRED and dep_id.isdigit() and dep_id not in seen:
+                seen.add(dep_id)
+                found.append(dep_id)
+                queue.append(dep_id)
+    if found:
+        # Cache their names so the mods list shows them before they're downloaded
+        res = await client.post(f"{CF_API_BASE}/mods", json={"modIds": [int(i) for i in found]}, headers=cf_api_headers(), timeout=20.0)
+        if res.status_code == 200:
+            for item in res.json().get("data") or []:
+                cf_project_meta(item)
+    return found
+
 @app.get("/api/mods/search/curseforge")
 async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] = None, loader: Optional[str] = None, class_type: str = "mod"):
     # Handle "undefined" literals from frontend
     q = None if q == "undefined" or not q else q
     mc_version = None if mc_version == "undefined" or not mc_version else mc_version
-    loader = None if loader == "undefined" or not loader else loader
-    
-    # Using '6' for mods, '4471' for modpacks, '12' for resource packs
-    class_id = 6
-    if class_type == "modpack":
-        class_id = 4471
-    elif class_type == "resourcepack":
-        class_id = 12
-    
-    # If query is empty, we browse via parameters
-    query_str = q if q else ""
-        
-    # itzg/minecraft-server uses the CurseForge ID (int)
-    url = f"{CF_API_BASE}/mods/search"
-    
-    mod_loader_type = 0 # Any
-    if loader:
-        l = loader.lower()
-        if "forge" in l: mod_loader_type = 1
-        elif "cauldron" in l: mod_loader_type = 2
-        elif "liteLoader" in l: mod_loader_type = 3
-        elif "fabric" in l: mod_loader_type = 4
-        elif "quilt" in l: mod_loader_type = 5
-        
+    loader = None if loader == "undefined" or not loader else loader.upper()
+    # Modpack server types (e.g. TYPE=AUTO_CURSEFORGE) aren't loaders and would match nothing
+    if loader and loader.lower() in MODPACK_SERVER_TYPES:
+        loader = None
+
+    # Plugin servers run Bukkit plugins, not mods
+    if class_type == "mod" and is_plugin_server(loader):
+        class_type = "plugin"
+    class_id = CF_CLASS_IDS.get(class_type, CF_CLASS_IDS["mod"])
+
     params = {
         "gameId": 432, # Minecraft
         "searchFilter": q,
-        "classId": class_id, 
+        "classId": class_id,
         "excludeCategoryIds": "4764" if class_id == 6 else None, # Client Side only for mods
         "sortField": 2, # Popularity
         "sortOrder": "desc",
@@ -1973,15 +2051,17 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
     }
     if mc_version:
         params["gameVersion"] = mc_version
-    if mod_loader_type > 0 and class_id != 12: # resource packs have no loader
-        params["modLoaderType"] = mod_loader_type
+    # Resource packs and plugins have no loader
+    loader_types = CF_MOD_LOADER_TYPES.get(loader or "")
+    if loader_types and class_id in (CF_CLASS_IDS["mod"], CF_CLASS_IDS["modpack"]):
+        params["modLoaderType"] = loader_types[0]
     params = {k: v for k, v in params.items() if v is not None}
 
     try:
         if not CF_API_KEY:
             raise HTTPException(status_code=503, detail="CURSEFORGE_API_KEY is not set")
         async with httpx.AsyncClient() as client:
-            res = await client.get(url, params=params, headers=cf_api_headers(), timeout=20.0)
+            res = await client.get(f"{CF_API_BASE}/mods/search", params=params, headers=cf_api_headers(), timeout=20.0)
         if res.status_code != 200:
             raise HTTPException(status_code=502, detail=f"CurseForge API returned {res.status_code}")
         data = res.json()
@@ -1989,39 +2069,18 @@ async def search_curseforge(q: Optional[str] = None, mc_version: Optional[str] =
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"CurseForge API error: {str(e)}")
-        
+
     results = []
     try:
         # CurseForge API is notoriously flaky with its data structure
         mod_list = data.get("data", [])
         if not isinstance(mod_list, list):
             mod_list = []
-            
         for item in mod_list:
-            authors = item.get("authors", [])
-            author_name = authors[0].get("name", "Unknown") if authors and len(authors) > 0 else "Unknown"
-            
-            logo = item.get("logo", {})
-            icon_url = logo.get("thumbnailUrl") if logo else None
-            
-            cf_meta = {
-                "id": str(item.get("id", "")),
-                "name": item.get("name", "Unknown Mod"),
-                "summary": item.get("summary", ""),
-                "icon_url": icon_url,
-                "author": author_name,
-                "downloads": int(item.get("downloadCount", 0)) if item.get("downloadCount") is not None else 0,
-                "url": item.get("links", {}).get("websiteUrl", "") if item.get("links") else "",
-                "categories": [c.get("name", "").lower() for c in item.get("categories", [])] if item.get("categories") else [],
-                "provider": "curseforge"
-            }
-            mod_metadata_cache[str(item.get("id", "")).lower()] = cf_meta
-            if item.get("name"):
-                mod_metadata_cache[item["name"].lower()] = cf_meta
-            results.append(cf_meta)
+            results.append(cf_project_meta(item))
     except Exception as e:
         print(f"DEBUG: Error parsing CurseForge data: {e}")
-        
+
     return results
 
 def generate_slug(text: str) -> str:
@@ -2984,6 +3043,8 @@ UPDATE_ENV_KEYS = {
     "MODRINTH_VERSION": "modpack version",
     "MODRINTH_PROJECTS": "mods",
     "MODRINTH_DISABLED": "mods",
+    "CURSEFORGE_FILES": "mods",
+    "CURSEFORGE_DISABLED": "mods",
     "ISOPOD_CROSSPLAY": "Bedrock cross-play",
 }
 UPDATE_ENV_PREFIXES = ("CF_",)
@@ -3252,11 +3313,37 @@ async def check_mod_compatibility(req: Dict[str, Any]):
             except:
                 results["incompatible"].append({"id": mid, "provider": "modrinth"})
 
+        # CurseForge Compatibility Check. Only project IDs (what Isopod adds); hand-written slugs or URLs stay as they are.
+        for cid in req.get("curseforge_ids", []):
+            cid = str(cid)
+            name = (mod_metadata_cache.get(cid.lower()) or {}).get("name") or cid
+            entry = {"id": cid, "name": name, "provider": "curseforge"}
+            if not cid.isdigit():
+                results["compatible"].append(entry)
+                continue
+            try:
+                file = await cf_newest_file(client, cid, target_mc, instance_mod_loader({"TYPE": target_loader}))
+                results["compatible" if file else "incompatible"].append(entry)
+            except Exception:
+                results["incompatible"].append(entry)
+
     return results
 
 @app.get("/api/mods/dependencies")
-async def get_mod_dependencies(provider: str, project_id: str):
+async def get_mod_dependencies(provider: str, project_id: str, mc_version: str = "", loader: str = ""):
     """Fetch dependencies for a mod version. Defaults to latest."""
+    if provider == "curseforge":
+        if not project_id.isdigit():
+            raise HTTPException(status_code=400, detail="Invalid CurseForge project ID")
+        if not CF_API_KEY:
+            raise HTTPException(status_code=503, detail="CURSEFORGE_API_KEY is not set")
+        try:
+            async with httpx.AsyncClient() as client:
+                return await cf_required_dependencies(client, project_id, mc_version, instance_mod_loader({"TYPE": loader}))
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"CurseForge API error: {e}")
     if provider == "modrinth":
         try:
             async with httpx.AsyncClient() as client:
@@ -3458,6 +3545,30 @@ def parse_mod_jar_metadata(jar_path: str) -> dict:
     return meta
 
 
+def cf_installed_files(instance_path: str) -> Dict[str, dict]:
+    """CurseForge mods Isopod downloaded: project ID -> {slug, name, file, mod_id}."""
+    return dict(get_instance_meta(instance_path).get("curseforge_files") or {})
+
+def cf_project_for_file(filename: str, jar_mod_id: Optional[str], records: Dict[str, dict]) -> Optional[str]:
+    """The CurseForge project ID a mod file came from, or None. Matching the jar's mod ID too
+    keeps the link after the server swaps the file for a newer version."""
+    name = filename[:-len(".disabled")] if filename.endswith(".disabled") else filename
+    for pid, rec in records.items():
+        if (rec.get("file") or "").lower() == name.lower():
+            return pid
+    if jar_mod_id:
+        for pid, rec in records.items():
+            if (rec.get("mod_id") or "").lower() == jar_mod_id.lower():
+                return pid
+    return None
+
+def cf_mod_url(pid: str, rec: Optional[dict]) -> Optional[str]:
+    cached = mod_metadata_cache.get(pid)
+    if cached and cached.get("url"):
+        return cached["url"]
+    slug = (rec or {}).get("slug")
+    return f"https://www.curseforge.com/minecraft/mc-mods/{slug}" if slug else None
+
 @app.get("/api/instances/{instance_id}/mods")
 async def list_instance_mods(instance_id: str):
     """List all mods installed in an instance with enable/disable state and file metadata."""
@@ -3465,6 +3576,7 @@ async def list_instance_mods(instance_id: str):
     mods = []
     seen_ids = set()
     mods_dir = get_instance_mods_dir(instance_id)
+    cf_records = cf_installed_files(get_instance_path(instance_id))
 
     # 1. Physical mod files on disk
     if os.path.exists(mods_dir):
@@ -3486,6 +3598,10 @@ async def list_instance_mods(instance_id: str):
                 jar_meta = parse_mod_jar_metadata(entry.path)
 
                 mod_id = jar_meta["id"] or fname
+                # A CurseForge mod goes by its project ID, the ID CURSEFORGE_FILES lists it under
+                cf_pid = cf_project_for_file(fname, jar_meta["id"], cf_records)
+                if cf_pid:
+                    mod_id = cf_pid
                 seen_ids.add(mod_id.lower())
                 seen_ids.add(fname.lower())
 
@@ -3523,8 +3639,8 @@ async def list_instance_mods(instance_id: str):
                     "modified_str": mtime_str,
                     "icon_url": icon_url,
                     "summary": summary,
-                    "url": url,
-                    "provider": cached.get("provider", "local") if cached else "local",
+                    "url": url or (cf_mod_url(cf_pid, cf_records[cf_pid]) if cf_pid else None),
+                    "provider": "curseforge" if cf_pid else (cached.get("provider", "local") if cached else "local"),
                     "source": "file"
                 })
             except Exception as e:
@@ -3575,6 +3691,32 @@ async def list_instance_mods(instance_id: str):
                         "provider": "modrinth",
                         "source": "env"
                     })
+
+            # CurseForge projects
+            c_enabled = [x.strip() for x in env_dict.get("CURSEFORGE_FILES", "").split(",") if x.strip()]
+            c_disabled = [x.strip() for x in env_dict.get("CURSEFORGE_DISABLED", "").split(",") if x.strip()]
+            for cid in c_enabled + c_disabled:
+                if cid.lower() in seen_ids:
+                    continue
+                seen_ids.add(cid.lower())
+                cached = mod_metadata_cache.get(cid.lower()) or {}
+                rec = cf_records.get(cid) or {}
+                is_en = cid in c_enabled
+                mods.append({
+                    "filename": f"{cid}.jar" if is_en else f"{cid}.jar.disabled",
+                    "id": cid,
+                    "name": cached.get("name") or rec.get("name") or cid,
+                    "version": "-",
+                    "enabled": is_en,
+                    "size": 0,
+                    "modified": 0,
+                    "modified_str": "Configured",
+                    "icon_url": cached.get("icon_url"),
+                    "summary": cached.get("summary"),
+                    "url": cf_mod_url(cid, rec),
+                    "provider": "curseforge",
+                    "source": "env"
+                })
 
         # 3. Mods bundled in a Modrinth modpack that itzg hasn't downloaded yet (before first start)
         modpack = env_dict.get("MODRINTH_MODPACK", "").strip()
@@ -3732,7 +3874,8 @@ def toggle_instance_mod(instance_id: str, req: ToggleModRequest):
 
             # Helper to update comma lists in env
             def move_in_env(enabled_key, disabled_key, target_id):
-                nonlocal env
+                # Read it fresh: an earlier call may have replaced it
+                env = service.get("environment")
                 is_list = isinstance(env, list)
                 env_map = {}
                 if is_list:
@@ -3776,6 +3919,7 @@ def toggle_instance_mod(instance_id: str, req: ToggleModRequest):
             target_identifier = req.mod_id or (req.filename.replace(".disabled", "").replace(".jar", "") if req.filename else "")
             if target_identifier:
                 move_in_env("MODRINTH_PROJECTS", "MODRINTH_DISABLED", target_identifier)
+                move_in_env("CURSEFORGE_FILES", "CURSEFORGE_DISABLED", target_identifier)
 
             with open(compose_path, 'w') as f:
                 yaml.dump(cdata, f, default_flow_style=False, sort_keys=False)
@@ -3846,7 +3990,7 @@ def delete_instance_mod(instance_id: str, req: DeleteModRequest):
 
             target = (req.mod_id or req.filename or "").replace(".disabled", "").replace(".jar", "").lower()
 
-            for key in ["MODRINTH_PROJECTS", "MODRINTH_DISABLED"]:
+            for key in ["MODRINTH_PROJECTS", "MODRINTH_DISABLED", "CURSEFORGE_FILES", "CURSEFORGE_DISABLED"]:
                 if key in env_map:
                     items = [x.strip() for x in env_map[key].split(",") if x.strip()]
                     items = [x for x in items if x.lower() != target]
@@ -3861,6 +4005,10 @@ def delete_instance_mod(instance_id: str, req: DeleteModRequest):
             with open(compose_path, 'w') as f:
                 yaml.dump(cdata, f, default_flow_style=False, sort_keys=False)
             deleted = True
+
+            cf_records = cf_installed_files(base_path)
+            if cf_records.pop(target, None) is not None:
+                save_instance_meta(base_path, {"curseforge_files": cf_records})
     except Exception as e:
         print(f"Error removing mod from compose: {e}")
 
@@ -4011,6 +4159,60 @@ async def sync_instance_mods_to_disk(instance_id: str, env: Optional[dict] = Non
             except Exception as e:
                 failed.append(mid)
                 print(f"Error syncing Modrinth mod {mid}: {e}")
+
+        # 2. CurseForge. Only project IDs, which is what Isopod adds; the server resolves anything else itself.
+        c_enabled = [x.strip() for x in env.get("CURSEFORGE_FILES", "").split(",") if x.strip()]
+        c_disabled = [x.strip() for x in env.get("CURSEFORGE_DISABLED", "").split(",") if x.strip()]
+        cf_records = cf_installed_files(path)
+        server_type = instance_mod_loader(env)
+        for cid in c_enabled + c_disabled:
+            if not cid.isdigit():
+                continue
+            rec = cf_records.get(cid) or {}
+            label = rec.get("name") or (mod_metadata_cache.get(cid) or {}).get("name") or cid
+            if rec.get("mod_id") and rec["mod_id"].lower() in existing_ids:
+                continue
+            if rec.get("file") and rec["file"].lower().replace(".jar", "") in existing_stems:
+                continue
+            if not CF_API_KEY:
+                failed.append(label)
+                continue
+            try:
+                res = await client.get(f"{CF_API_BASE}/mods/{cid}", headers=cf_api_headers())
+                if res.status_code != 200:
+                    failed.append(label)
+                    continue
+                project = cf_project_meta(res.json().get("data") or {})
+                label = project["name"]
+                # A jar the user uploaded themselves
+                if not rec and project["slug"] and is_mod_on_disk(project["slug"]):
+                    continue
+                file = await cf_newest_file(client, cid, mc_version, server_type)
+                # No downloadUrl when the author only allows downloads through the CurseForge app
+                dest_path = mod_file_path(mods_dir, file["fileName"]) if file and file.get("fileName") else None
+                if not file or not file.get("downloadUrl") or not dest_path:
+                    failed.append(label)
+                    continue
+                if cid in c_disabled:
+                    dest_path += ".disabled"
+                async with client.stream("GET", file["downloadUrl"]) as dl_res:
+                    if dl_res.status_code != 200:
+                        failed.append(label)
+                        continue
+                    with open(dest_path, "wb") as f_out:
+                        async for chunk in dl_res.aiter_bytes():
+                            f_out.write(chunk)
+                jar_id = parse_mod_jar_metadata(dest_path).get("id")
+                cf_records[cid] = {"slug": project["slug"], "name": project["name"], "file": file["fileName"], "mod_id": jar_id}
+                save_instance_meta(path, {"curseforge_files": cf_records})
+                existing_stems.add(file["fileName"].lower().replace(".jar", ""))
+                if jar_id:
+                    existing_ids.add(jar_id.lower())
+                downloaded.append(label)
+                print(f"Synced CurseForge mod {cid} -> {file['fileName']} ({os.path.getsize(dest_path)} bytes)")
+            except Exception as e:
+                failed.append(label)
+                print(f"Error syncing CurseForge mod {cid}: {e}")
 
     return {"downloaded": downloaded, "failed": failed}
 
