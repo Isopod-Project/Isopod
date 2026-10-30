@@ -23,7 +23,7 @@ services:
       # CurseForge API key (https://console.curseforge.com), needed for CurseForge search and modpacks
       - CURSEFORGE_API_KEY=${CURSEFORGE_API_KEY:-}
     labels:
-      icon: "https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png"
+      icon: "https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/logo.png"
       title: "Isopod"
       description: "Modern Minecraft Server Manager"
       casaos_app_id: "isopod"
@@ -33,13 +33,13 @@ x-casaos:
     - amd64
     - arm64
   main: isopod
-  author: Tacoz234
+  author: Isopod-Project
   category: Utilities
   description:
     en_us: Modern, lightweight Minecraft instance manager with a sleek web dashboard.
-  developer: Tacoz234
-  icon: https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png
-  thumbnail: https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png
+  developer: Isopod-Project
+  icon: https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/logo.png
+  thumbnail: https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/logo.png
   title:
     en_us: Isopod
   port_map: "8000"

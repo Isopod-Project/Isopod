@@ -2829,12 +2829,9 @@ class PlayerActionRequest(BaseModel):
 
 @app.get("/api/instances/{instance_id}/players")
 def get_online_players(instance_id: str):
-    """Who is online right now, from RCON `list`. Only meaningful while the server is Online."""
+    """Who is online right now, from RCON `list` (Bedrock: the server log). Only meaningful while the server is Online."""
     path = get_instance_path(instance_id)
-    if bedrock.is_bedrock(read_compose_env(path).get("TYPE")):
-        # Bedrock has no RCON to ask, so the player list isn't available
-        return {"available": False, "online": 0, "max": 0, "players": []}
-    return players.online_players(instance_id, path)
+    return players.online_players(instance_id, path, bedrock.is_bedrock(read_compose_env(path).get("TYPE")))
 
 @app.get("/api/instances/{instance_id}/bans")
 def get_banned_players(instance_id: str):

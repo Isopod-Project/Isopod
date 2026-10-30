@@ -23,7 +23,7 @@ Follow these steps exactly to get a "100% working" setup.
 SSH into your server and download the code to a known location:
 ```bash
 cd /home/your-user  # Or wherever you store apps
-git clone https://github.com/tacoz234/Isopod.git
+git clone https://github.com/Isopod-Project/Isopod.git
 cd Isopod
 ```
 
@@ -39,7 +39,7 @@ docker build -t isopod:dev -f docker/Dockerfile.dev .
 3. Click the **Import** button (top right icon) and paste the contents of `docker/docker-compose.dev.yml` from your repo.
 4. **Important UI Settings**: After importing, fill in these specific fields:
    - **App Name**: `Isopod Dev`
-   - **Icon URL**: `https://raw.githubusercontent.com/tacoz234/Isopod/main/assets/dev_logo.png`
+   - **Icon URL**: `https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/dev_logo.png`
    - **Web UI Port**: `8001`
    - **Network**: `Bridge`
 5. **Volume Mapping**: Scroll down to "Volumes" and ensure these are set:
@@ -138,7 +138,7 @@ Isopod runs servers on its own Docker daemon inside the container (DinD). On cgr
 **Bedrock servers.** `POST /api/instances` with `"template": "bedrock"` writes a compose service on `itzg/minecraft-bedrock-server` instead of `itzg/minecraft-server`:
 - The port maps to `19132/udp`, and `TYPE=BEDROCK` stays in the environment so the rest of the backend can tell Bedrock instances apart (the image itself ignores it).
 - World settings use the Bedrock image's names: `LEVEL_SEED`, `GAMEMODE`, `LEVEL_TYPE` (`DEFAULT`/`FLAT`/`LEGACY`), and `ALLOW_LIST`/`ALLOW_LIST_USERS` for the whitelist. `VERSION` is `LATEST`, `PREVIEW`, or an exact release.
-- There's no RCON. `POST /api/instances/{id}/command` runs the image's `send-command` helper, which needs `stdin_open` and `tty` on the service. The reply only reaches the log, so `bedrock.run_command` notes the last log timestamp before sending and returns the lines written in the next moment or so, minus player joins/leaves and auto-compaction. `GET /players` always returns `available: false`.
+- There's no RCON. `POST /api/instances/{id}/command` runs the image's `send-command` helper, which needs `stdin_open` and `tty` on the service. The reply only reaches the log, so `bedrock.run_command` notes the last log timestamp before sending and returns the lines written in the next moment or so, minus player joins/leaves and auto-compaction. `GET /players` rebuilds the online list from the container log instead (`bedrock.parse_online_players`): BDS logs `Player connected: <name>, xuid: <xuid>` and `Player disconnected: ...`, and the list starts over at each `Starting Server` line so players from an earlier run don't carry over. The response also has `xuids` (gamertag to XUID), and `max` comes from `max-players` in `data/server.properties`. The side panel shows the list without the kick/ban/message actions, since those are RCON commands.
 - User Management uses the same `/users` endpoints, handled by `backend/bedrock_users.py`. `users.json` is the source of truth. A save mirrors it to `ALLOW_LIST`/`ALLOW_LIST_USERS`/`OPS` (the entrypoint rebuilds `allowlist.json` and `permissions.json` from them on every start), to those two files directly (the entrypoint leaves a file alone when its variable is empty), and to `allowlist add/remove`, `allowlist on/off`, and `op`/`deop` on a running server. `ALLOW_LIST_USERS` stays empty while the allowlist is off, because the entrypoint turns the allowlist on whenever it has names. Operators are stored by XUID, which is taken from `allowlist.json` (BDS fills it in when an allowlisted player joins) or looked up from mcprofile.io, falling back to the gamertag in `OPS`. Gamertags can't contain commas, colons, or quotes.
 - The server is **Online** once the log prints `Server started.`.
 - Worlds live in `data/worlds/<level name>/`, so `backups.find_world_dirs` reports `worlds`. While the server runs, backups send `save hold`, wait a few seconds, and `save resume` afterwards.

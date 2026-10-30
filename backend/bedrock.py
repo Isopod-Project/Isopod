@@ -12,7 +12,7 @@ import os
 import re
 import subprocess
 import time
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 BEDROCK_IMAGE = "itzg/minecraft-bedrock-server"
 BEDROCK_CONTAINER_PORT = 19132
@@ -40,6 +40,16 @@ GAMEMODES = {"survival", "creative", "adventure"}
 
 # Bedrock Dedicated Server logs this once players can join.
 READY_MARKER = "Server started."
+
+# BDS logs this at the start of every run. Players listed before it belong to an earlier run.
+START_MARKER = "Starting Server"
+
+# "Player connected: Tacoz YouTube, xuid: 2535400000000001"
+# "Player disconnected: Tacoz YouTube, xuid: 2535400000000001, pfid: 7f3c..."
+PLAYER_EVENT = re.compile(r"Player (connected|disconnected): (.+?), xuid: ?(\d*)")
+
+# BDS's own default when server.properties has no max-players.
+DEFAULT_MAX_PLAYERS = 10
 
 
 def is_bedrock(server_type: Optional[str]) -> bool:
@@ -211,6 +221,63 @@ def find_world_dirs(data_dir: str) -> List[str]:
         return []
     has_world = any(e.is_dir() and os.path.isfile(os.path.join(e.path, "level.dat")) for e in os.scandir(worlds))
     return ["worlds"] if has_world else []
+
+
+def parse_online_players(log: str) -> Dict[str, Optional[str]]:
+    """Gamertag -> XUID (None if the log had none) for the players online at the end of a BDS log.
+
+    Rebuilt from connect/disconnect lines, starting over at each server start, so players
+    still listed when the server stopped or crashed don't carry over into the next run.
+    """
+    online: Dict[str, Optional[str]] = {}
+    for line in (log or "").splitlines():
+        if START_MARKER in line:
+            online.clear()
+            continue
+        m = PLAYER_EVENT.search(line)
+        if not m:
+            continue
+        name = m.group(2).strip()
+        # Gamertags are case-insensitive, so a rejoin with different casing replaces the old entry
+        for known in [n for n in online if n.lower() == name.lower()]:
+            del online[known]
+        if m.group(1) == "connected" and name:
+            online[name] = m.group(3) or None
+    return online
+
+
+def read_max_players(data_dir: str) -> int:
+    """max-players from server.properties, or BDS's default if it's missing or unreadable."""
+    try:
+        with open(os.path.join(data_dir, "server.properties")) as f:
+            for line in f:
+                key, sep, value = line.partition("=")
+                if sep and key.strip() == "max-players":
+                    return int(value.strip())
+    except (OSError, ValueError):
+        pass
+    return DEFAULT_MAX_PLAYERS
+
+
+def online_players(instance_path: str) -> Optional[dict]:
+    """Online players of a running BDS instance, read from its container log. None if the log can't be read."""
+    try:
+        result = subprocess.run(
+            ["docker", "compose", "logs", "--no-log-prefix", "mc"],
+            cwd=instance_path, capture_output=True, text=True, timeout=10,
+        )
+    except Exception as e:
+        print(f"Couldn't read the Bedrock server log: {e}")
+        return None
+    if result.returncode != 0:
+        return None
+    online = parse_online_players(result.stdout)
+    return {
+        "online": len(online),
+        "max": read_max_players(os.path.join(instance_path, "data")),
+        "players": list(online),
+        "xuids": online,
+    }
 
 
 def send_command(instance_path: str, command: str, timeout: int = 10) -> Tuple[bool, str]:
