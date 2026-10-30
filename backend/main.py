@@ -31,13 +31,15 @@ from . import bedrock_users
 from . import bedrock_addons
 from . import security
 from . import autopause
+from . import auth
+from . import self_update
 import threading
 
 load_dotenv()
 
 app = FastAPI(title="Isopod Backend")
 
-ISOPOD_VERSION = "v0.3.0"
+ISOPOD_VERSION = "v0.5.0"
 GITHUB_REPO = os.getenv("GITHUB_REPO", "Isopod-Project/Isopod")
 
 # CurseForge's official API requires a key (https://console.curseforge.com). itzg's AUTO_CURSEFORGE
@@ -69,20 +71,9 @@ class UpdateInfo(BaseModel):
     has_update: bool
     release_notes: str
     published_at: Optional[str] = None
+    can_self_update: bool = False
+    failed_version: Optional[str] = None
 
-
-# The frontend is served from this same origin, so cross-origin access is off unless
-# ISOPOD_CORS_ORIGINS lists extra origins (e.g. the Vite dev server). See backend/security.py.
-CORS_ORIGINS = security.allowed_origins_from_env()
-app.add_middleware(security.OriginGuardMiddleware, allowed_origins=CORS_ORIGINS)
-if CORS_ORIGINS:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=CORS_ORIGINS,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
 
 class AuthorizationMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -105,26 +96,36 @@ app.add_middleware(AuthorizationMiddleware)
 
 SERVERS_DIR = os.getenv("SERVERS_DIR", "./servers")
 
+# Middleware added last runs first: CORS, then the cross-origin guard, then the login check.
+# Every /api route needs a session from the dashboard login (backend/auth.py).
+auth_store = auth.AuthStore(os.path.join(SERVERS_DIR, ".isopod_auth.json"))
+app.include_router(auth.create_router(auth_store))
+app.add_middleware(auth.AuthMiddleware, store=auth_store)
+
+# The frontend is served from this same origin, so cross-origin access is off unless
+# ISOPOD_CORS_ORIGINS lists extra origins (e.g. the Vite dev server). See backend/security.py.
+CORS_ORIGINS = security.allowed_origins_from_env()
+app.add_middleware(security.OriginGuardMiddleware, allowed_origins=CORS_ORIGINS)
+if CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
 def get_current_version() -> str:
-    version_file = os.path.join(SERVERS_DIR, ".isopod_version")
-    if os.path.exists(version_file):
-        try:
-            with open(version_file, "r", encoding="utf-8") as f:
-                v = f.read().strip()
-                if v:
-                    return v
-        except Exception:
-            pass
+    # The code that's actually running. Older versions wrote .isopod_version before updating,
+    # which could claim a version that never got installed, so that file is ignored.
     return ISOPOD_VERSION
 
-def set_current_version(version: str):
-    try:
-        version_file = os.path.join(SERVERS_DIR, ".isopod_version")
-        os.makedirs(os.path.dirname(version_file), exist_ok=True)
-        with open(version_file, "w", encoding="utf-8") as f:
-            f.write(version.strip())
-    except Exception as e:
-        print(f"Failed to set current version: {e}")
+def self_update_compose_file() -> Optional[str]:
+    """The compose file an update can rebuild from. A standard install has none in its container."""
+    for name in ("isopod-compose.yml", "docker-compose.yml"):
+        if os.path.exists(name):
+            return name
+    return None
 
 
 try:
@@ -2805,8 +2806,8 @@ def execute_command(instance_id: str, req: CommandRequest):
     """Execute a command on the 'mc' service of the instance using docker compose exec."""
     path = get_instance_path(instance_id)
     if bedrock.is_bedrock(read_compose_env(path).get("TYPE")):
-        # Bedrock has no RCON; the command's output shows up in the server log
-        ok, output = bedrock.send_command(path, req.command)
+        # Bedrock has no RCON; the reply is read back from the server log
+        ok, output = bedrock.run_command(path, req.command)
         return {"output": output, "success": ok}
     # Using 'docker compose exec mc rcon-cli [command]'
     # rcon-cli is the built-in helper in itzg/minecraft-server
@@ -2830,12 +2831,9 @@ class PlayerActionRequest(BaseModel):
 
 @app.get("/api/instances/{instance_id}/players")
 def get_online_players(instance_id: str):
-    """Who is online right now, from RCON `list`. Only meaningful while the server is Online."""
+    """Who is online right now, from RCON `list` (Bedrock: the server log). Only meaningful while the server is Online."""
     path = get_instance_path(instance_id)
-    if bedrock.is_bedrock(read_compose_env(path).get("TYPE")):
-        # Bedrock has no RCON to ask, so the player list isn't available
-        return {"available": False, "online": 0, "max": 0, "players": []}
-    return players.online_players(instance_id, path)
+    return players.online_players(instance_id, path, bedrock.is_bedrock(read_compose_env(path).get("TYPE")))
 
 @app.get("/api/instances/{instance_id}/bans")
 def get_banned_players(instance_id: str):
@@ -4535,7 +4533,10 @@ async def get_latest_release():
                     "latest_version": latest_v,
                     "has_update": latest_v != curr_v,
                     "release_notes": data.get("body", "No release notes available."),
-                    "published_at": data.get("published_at")
+                    "published_at": data.get("published_at"),
+                    "can_self_update": self_update_compose_file() is not None or self_update.can_install(data, GITHUB_REPO),
+                    "failed_version": self_update.failed_version(SERVERS_DIR),
+                    "bundle": self_update.find_bundle(data, GITHUB_REPO),
                 }
             elif res.status_code == 404:
                 return {
@@ -4562,6 +4563,7 @@ async def update_check_loop():
 
 @app.on_event("startup")
 async def startup_event():
+    self_update.mark_started(SERVERS_DIR, ISOPOD_VERSION)
     # Start the periodic update check in the background
     asyncio.create_task(update_check_loop())
     asyncio.create_task(backup_schedule_loop())
@@ -4590,6 +4592,38 @@ async def check_updates(force: bool = False):
     
     return cached_update_info
 
+async def update_in_place():
+    """Install the latest release's bundle, then restart into it."""
+    global cached_update_info
+
+    info = await get_latest_release()
+    bundle = info.get("bundle") if info else None
+    if not info or not info.get("has_update"):
+        raise HTTPException(status_code=409, detail="There's no update to install.")
+    if not bundle or self_update.image_rev() is None:
+        raise HTTPException(status_code=409, detail="This install can't update itself. Run the update commands on the machine hosting Isopod.")
+    try:
+        await asyncio.to_thread(self_update.install, bundle, SERVERS_DIR)
+    except self_update.UpdateError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        print(f"Self-update failed: {e}")
+        raise HTTPException(status_code=500, detail="The update couldn't be installed. Isopod wasn't changed.")
+
+    cached_update_info = None
+
+    async def restart():
+        await asyncio.sleep(1)
+        await asyncio.to_thread(self_update.stop_docker_daemon)
+        os._exit(0)
+
+    asyncio.create_task(restart())
+    return {
+        "status": "initiated",
+        "message": f"Installed {bundle['tag']}. Isopod is restarting.",
+        "version": bundle["tag"],
+    }
+
 @app.post("/api/system/update")
 async def perform_update():
     """
@@ -4598,26 +4632,23 @@ async def perform_update():
     """
     global cached_update_info
 
-    # Fetch latest release to persist target version
-    info = await get_latest_release()
-    if info and info.get("latest_version") and info.get("latest_version") != "Unknown":
-        set_current_version(info["latest_version"])
+    compose_file = self_update_compose_file()
+    if compose_file is None:
+        return await update_in_place()
 
     cached_update_info = None  # Immediately clear cached update info
 
     async def trigger_restart():
         await asyncio.sleep(2)
-        compose_file = "isopod-compose.yml" if os.path.exists("isopod-compose.yml") else "docker-compose.yml"
-        
+
         has_build = False
-        if os.path.exists(compose_file):
-            try:
-                with open(compose_file, "r", encoding="utf-8") as cf:
-                    content = cf.read()
-                    if "build:" in content or "build :" in content:
-                        has_build = True
-            except Exception:
-                pass
+        try:
+            with open(compose_file, "r", encoding="utf-8") as cf:
+                content = cf.read()
+                if "build:" in content or "build :" in content:
+                    has_build = True
+        except Exception:
+            pass
 
         try:
             if os.path.exists(".git"):
@@ -4627,17 +4658,13 @@ async def perform_update():
                 except Exception as ge:
                     print(f"Git pull warning: {ge}")
 
-            if os.path.exists(compose_file):
-                if has_build:
-                    cmd = ["docker", "compose", "-f", compose_file, "up", "-d", "--build"]
-                else:
-                    cmd = ["docker", "compose", "-f", compose_file, "up", "-d", "--pull", "always"]
+            if has_build:
+                cmd = ["docker", "compose", "-f", compose_file, "up", "-d", "--build"]
+            else:
+                cmd = ["docker", "compose", "-f", compose_file, "up", "-d", "--pull", "always"]
 
-                print(f"Executing update sequence: {' '.join(cmd)}")
-                subprocess.Popen(cmd, start_new_session=True)
-            elif os.path.exists("/.dockerenv"):
-                print("Running inside container. Exiting process to trigger Docker container restart...")
-                os._exit(0)
+            print(f"Executing update sequence: {' '.join(cmd)}")
+            subprocess.Popen(cmd, start_new_session=True)
         except Exception as e:
             print(f"Self-update trigger failed: {e}")
 

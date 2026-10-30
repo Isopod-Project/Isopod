@@ -312,6 +312,7 @@ class EndpointTests(unittest.TestCase):
         patches = [
             mock.patch.object(self.main, "get_instance_path", return_value=self.path),
             mock.patch.object(self.main, "take_pre_update_snapshot", return_value=None),
+            mock.patch.object(self.main.auth_store, "username_for", return_value="admin"),
         ]
         for p in patches:
             p.start()

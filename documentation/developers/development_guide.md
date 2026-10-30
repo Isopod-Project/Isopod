@@ -138,7 +138,7 @@ Isopod runs servers on its own Docker daemon inside the container (DinD). On cgr
 **Bedrock servers.** `POST /api/instances` with `"template": "bedrock"` writes a compose service on `itzg/minecraft-bedrock-server` instead of `itzg/minecraft-server`:
 - The port maps to `19132/udp`, and `TYPE=BEDROCK` stays in the environment so the rest of the backend can tell Bedrock instances apart (the image itself ignores it).
 - World settings use the Bedrock image's names: `LEVEL_SEED`, `GAMEMODE`, `LEVEL_TYPE` (`DEFAULT`/`FLAT`/`LEGACY`), and `ALLOW_LIST`/`ALLOW_LIST_USERS` for the whitelist. `VERSION` is `LATEST`, `PREVIEW`, or an exact release.
-- There's no RCON. `POST /api/instances/{id}/command` runs the image's `send-command` helper, which needs `stdin_open` and `tty` on the service; its output only reaches the log. `GET /players` always returns `available: false`.
+- There's no RCON. `POST /api/instances/{id}/command` runs the image's `send-command` helper, which needs `stdin_open` and `tty` on the service. The reply only reaches the log, so `bedrock.run_command` notes the last log timestamp before sending and returns the lines written in the next moment or so, minus player joins/leaves and auto-compaction. `GET /players` rebuilds the online list from the container log instead (`bedrock.parse_online_players`): BDS logs `Player connected: <name>, xuid: <xuid>` and `Player disconnected: ...`, and the list starts over at each `Starting Server` line so players from an earlier run don't carry over. The response also has `xuids` (gamertag to XUID), and `max` comes from `max-players` in `data/server.properties`. The side panel shows the list without the kick/ban/message actions, since those are RCON commands.
 - User Management uses the same `/users` endpoints, handled by `backend/bedrock_users.py`. `users.json` is the source of truth. A save mirrors it to `ALLOW_LIST`/`ALLOW_LIST_USERS`/`OPS` (the entrypoint rebuilds `allowlist.json` and `permissions.json` from them on every start), to those two files directly (the entrypoint leaves a file alone when its variable is empty), and to `allowlist add/remove`, `allowlist on/off`, and `op`/`deop` on a running server. `ALLOW_LIST_USERS` stays empty while the allowlist is off, because the entrypoint turns the allowlist on whenever it has names. Operators are stored by XUID, which is taken from `allowlist.json` (BDS fills it in when an allowlisted player joins) or looked up from mcprofile.io, falling back to the gamertag in `OPS`. Gamertags can't contain commas, colons, or quotes.
 - The server is **Online** once the log prints `Server started.`.
 - Worlds live in `data/worlds/<level name>/`, so `backups.find_world_dirs` reports `worlds`. While the server runs, backups send `save hold`, wait a few seconds, and `save resume` afterwards.
@@ -194,6 +194,26 @@ CurseForge modpacks go through the official API at `https://api.curseforge.com/v
 
 ---
 
+## 🔐 Authentication
+
+`backend/auth.py` adds a single admin login:
+
+- **Storage:** `SERVERS_DIR/.isopod_auth.json` holds the username, the argon2 password hash, and the SHA-256 hashes of live session tokens. If the file exists but can't be read, the API answers `503` instead of reopening first-run setup.
+- **Sessions:** `POST /api/auth/setup` (only while no account exists) and `POST /api/auth/login` set the `isopod_session` cookie: random, `HttpOnly`, `SameSite=Strict`, `Secure` over HTTPS, 30 days. `POST /api/auth/logout` revokes it on the server. `POST /api/auth/password` changes the password and ends every other session. After 10 failed logins from one address in 15 minutes, logins from it get `429`.
+- **Enforcement:** `AuthMiddleware` answers `401` to every `/api` request and WebSocket upgrade without a valid session. Only `/api/health` and `/api/auth/{status,login,setup,logout}` are open. The frontend files themselves are public.
+- **Frontend:** `AuthGate` (`frontend/src/components/AuthGate.tsx`) wraps `App`. It shows setup or login until `/api/auth/status` says the user is logged in, and goes back to the login screen whenever an `/api` call returns `401`. The e2e fixtures answer `/api/auth/status` as logged in, so other specs don't need to log in.
+
+For scripts, log in once and reuse the cookie:
+
+```bash
+curl -c jar -H 'Content-Type: application/json' -d '{"username":"admin","password":"..."}' http://<host>:8000/api/auth/login
+curl -b jar http://<host>:8000/api/instances
+```
+
+Scoped API tokens for automation (`Authorization: Bearer`) are tracked in #68.
+
+---
+
 ## 🔒 Cross-origin requests
 
 The backend serves the frontend, so the browser only talks to the API from the same origin and the backend allows no cross-origin access by default (`backend/security.py`):
@@ -212,4 +232,4 @@ ISOPOD_CORS_ORIGINS=http://localhost:5173,https://isopod.example.com
 ## 🛠️ Tech Stack
 - **Backend**: FastAPI (Python 3.11)
 - **Frontend**: React + Vite (TypeScript)
-- **Dev Tooling**: Uvicorn (Auto-reload), Node.js 20
+- **Dev Tooling**: Uvicorn (Auto-reload), Node.js 24

@@ -5,7 +5,19 @@ services:
     build: .
     image: isopod:latest
     container_name: isopod
-    privileged: true
+    # Runs its own Docker daemon (Docker-in-Docker) without privileged mode. These are the only
+    # permissions that daemon needs. See docs/adr/0001-unprivileged-docker-in-docker.md for what
+    # they do and don't protect against.
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    devices:
+      - /dev/fuse
+    cgroup: private
     restart: unless-stopped
     network_mode: bridge
     ports:
@@ -23,7 +35,7 @@ services:
       # CurseForge API key (https://console.curseforge.com), needed for CurseForge search and modpacks
       - CURSEFORGE_API_KEY=${CURSEFORGE_API_KEY:-}
     labels:
-      icon: "https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png"
+      icon: "https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/logo.png"
       title: "Isopod"
       description: "Modern Minecraft Server Manager"
       casaos_app_id: "isopod"
@@ -38,8 +50,8 @@ x-casaos:
   description:
     en_us: Modern, lightweight Minecraft instance manager with a sleek web dashboard.
   developer: Isopod-Project
-  icon: https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png
-  thumbnail: https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png
+  icon: https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/logo.png
+  thumbnail: https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/logo.png
   title:
     en_us: Isopod
   port_map: "8000"
