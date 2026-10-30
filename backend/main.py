@@ -32,13 +32,14 @@ from . import bedrock_addons
 from . import security
 from . import autopause
 from . import auth
+from . import self_update
 import threading
 
 load_dotenv()
 
 app = FastAPI(title="Isopod Backend")
 
-ISOPOD_VERSION = "v0.4.1"
+ISOPOD_VERSION = "v0.5.0"
 GITHUB_REPO = os.getenv("GITHUB_REPO", "Isopod-Project/Isopod")
 
 # CurseForge's official API requires a key (https://console.curseforge.com). itzg's AUTO_CURSEFORGE
@@ -71,6 +72,7 @@ class UpdateInfo(BaseModel):
     release_notes: str
     published_at: Optional[str] = None
     can_self_update: bool = False
+    failed_version: Optional[str] = None
 
 
 class AuthorizationMiddleware(BaseHTTPMiddleware):
@@ -4525,7 +4527,9 @@ async def get_latest_release():
                     "has_update": latest_v != curr_v,
                     "release_notes": data.get("body", "No release notes available."),
                     "published_at": data.get("published_at"),
-                    "can_self_update": self_update_compose_file() is not None
+                    "can_self_update": self_update_compose_file() is not None or self_update.can_install(data, GITHUB_REPO),
+                    "failed_version": self_update.failed_version(SERVERS_DIR),
+                    "bundle": self_update.find_bundle(data, GITHUB_REPO),
                 }
             elif res.status_code == 404:
                 return {
@@ -4552,6 +4556,7 @@ async def update_check_loop():
 
 @app.on_event("startup")
 async def startup_event():
+    self_update.mark_started(SERVERS_DIR, ISOPOD_VERSION)
     # Start the periodic update check in the background
     asyncio.create_task(update_check_loop())
     asyncio.create_task(backup_schedule_loop())
@@ -4580,6 +4585,38 @@ async def check_updates(force: bool = False):
     
     return cached_update_info
 
+async def update_in_place():
+    """Install the latest release's bundle, then restart into it."""
+    global cached_update_info
+
+    info = await get_latest_release()
+    bundle = info.get("bundle") if info else None
+    if not info or not info.get("has_update"):
+        raise HTTPException(status_code=409, detail="There's no update to install.")
+    if not bundle or self_update.image_rev() is None:
+        raise HTTPException(status_code=409, detail="This install can't update itself. Run the update commands on the machine hosting Isopod.")
+    try:
+        await asyncio.to_thread(self_update.install, bundle, SERVERS_DIR)
+    except self_update.UpdateError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        print(f"Self-update failed: {e}")
+        raise HTTPException(status_code=500, detail="The update couldn't be installed. Isopod wasn't changed.")
+
+    cached_update_info = None
+
+    async def restart():
+        await asyncio.sleep(1)
+        await asyncio.to_thread(self_update.stop_docker_daemon)
+        os._exit(0)
+
+    asyncio.create_task(restart())
+    return {
+        "status": "initiated",
+        "message": f"Installed {bundle['tag']}. Isopod is restarting.",
+        "version": bundle["tag"],
+    }
+
 @app.post("/api/system/update")
 async def perform_update():
     """
@@ -4590,7 +4627,7 @@ async def perform_update():
 
     compose_file = self_update_compose_file()
     if compose_file is None:
-        raise HTTPException(status_code=409, detail="This install can't update itself. Run the update commands on the machine hosting Isopod.")
+        return await update_in_place()
 
     cached_update_info = None  # Immediately clear cached update info
 

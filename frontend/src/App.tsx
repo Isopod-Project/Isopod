@@ -2178,7 +2178,7 @@ export default function App() {
    };
 
    const performSystemUpdate = async () => {
-      const confirmed = await showConfirm("This will pull the latest release, rebuild/restart the container, and update Isopod. All server instances and data remain safe. Proceed?", "Update Isopod");
+      const confirmed = await showConfirm("This downloads the latest release and restarts Isopod. Running servers save and stop first, and servers set to restart come back afterwards. Proceed?", "Update Isopod");
       if (!confirmed) return;
 
       setIsSettingsModalOpen(false);
@@ -2186,7 +2186,7 @@ export default function App() {
       setUpdateProgressState({
          stage: "initiating",
          progress: 15,
-         message: "Initiating update sequence with server..."
+         message: "Downloading and checking the update..."
       });
 
       try {
@@ -2208,8 +2208,7 @@ export default function App() {
 
          // Begin active polling
          let attempts = 0;
-         const maxAttempts = 60; // 60 * 1.5s = 90s
-         let serverDropped = false;
+         const maxAttempts = 240; // 240 * 1.5s = 6 minutes, since running servers save and stop first
 
          // Progress animation incrementer
          const progressInterval = setInterval(() => {
@@ -2241,7 +2240,7 @@ export default function App() {
                   const info = await pingRes.json();
                   const targetVer = updateInfo?.latest_version;
                   const isTarget = Boolean(targetVer && info.version === targetVer);
-                  if (serverDropped || isTarget) {
+                  if (isTarget) {
                      clearInterval(pollInterval);
                      clearInterval(progressInterval);
 
@@ -2258,7 +2257,6 @@ export default function App() {
                   }
                }
             } catch (err) {
-               serverDropped = true;
                setUpdateProgressState(prev => prev ? {
                   ...prev,
                   progress: Math.max(prev.progress, 70),
@@ -2273,7 +2271,7 @@ export default function App() {
                   ...prev,
                   stage: "error",
                   progress: 85,
-                  message: "The restart is taking longer than expected.",
+                  message: `Isopod didn't come back on ${updateInfo?.latest_version || "the new version"}.`,
                   errorDetails: "The container may still be compiling or starting. You can manually reload the page or check your docker logs."
                } : null);
             }
@@ -7655,6 +7653,11 @@ export default function App() {
                                              </div>
                                           </div>
 
+                                          {updateInfo.failed_version && (
+                                             <div className="flex items-center gap-2 text-red-400 text-xs font-bold bg-red-500/10 px-4 py-2 rounded-lg border border-red-500/20">
+                                                <AlertTriangle className="w-4 h-4" /> {updateInfo.failed_version} didn't start, so Isopod went back
+                                             </div>
+                                          )}
                                           {updateInfo.has_update && !updateInfo.can_self_update ? (
                                              <div className="flex items-center gap-2 text-amber-400 text-xs font-bold bg-amber-500/10 px-4 py-2 rounded-lg border border-amber-500/20">
                                                 <AlertTriangle className="w-4 h-4" /> Update available
@@ -7677,7 +7680,7 @@ export default function App() {
 
                                        {updateInfo.has_update && !updateInfo.can_self_update && (
                                           <div className="p-6 border-t border-[#3A3A3A] bg-[#1E1E1E] text-sm text-neutral-300 space-y-3">
-                                             <p>Isopod can't update itself from here. To install {updateInfo.latest_version}, run these in the folder you cloned Isopod into, on the machine hosting it:</p>
+                                             <p>This update can't be installed from the dashboard. To install {updateInfo.latest_version}, run these in the folder you cloned Isopod into, on the machine hosting it:</p>
                                              <pre className="bg-[#111] border border-[#333] rounded-lg p-3 font-mono text-xs text-neutral-200 overflow-x-auto">{"git pull\ndocker compose -f isopod-compose.yml up -d --build"}</pre>
                                              <p className="text-xs text-neutral-400">On macOS, leave out <code>-f isopod-compose.yml</code>. Your servers and worlds are kept.</p>
                                           </div>

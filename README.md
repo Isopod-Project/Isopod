@@ -40,7 +40,7 @@
   - Integrated RCON command input to execute commands on the fly.
 - **Status Awareness**: Distinguishes between `Offline`, `Starting`, and `Online` states using log-based heartbeat detection.
 - **Update World**: Offers a one-click Minecraft version upgrade when a newer release is available for an instance.
-- **Update Notices**: The dashboard tells you when a new release is out, shows its release notes, and gives you the commands to install it.
+- **Self-Updating Dashboard**: Install new releases with **Update Now**. Servers save and stop first, and Isopod goes back to the previous version if the new one fails to start.
 - **Desktop-Grade File Explorer**: Built-in file manager with right-click context menu (delete, rename, download, cut, copy, paste), drag-and-drop file moves & direct OS uploads, breadcrumb drop targets, multi-select batch actions, and collision resolution.
 - **Automatic World Backups**: Schedule per-instance world backups with retention limits, or back up on demand; download, restore, or delete backups from the instance's Backups tab.
 - **Pre-update Snapshots**: Isopod snapshots the world, mods, config, and server settings before you change the Minecraft version, loader, or mods, so you can roll a bad update back in one click.

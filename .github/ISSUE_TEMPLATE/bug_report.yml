@@ -29,7 +29,7 @@ body:
     attributes:
       label: Isopod version
       description: Shown in the top bar of the dashboard.
-      placeholder: v0.4.1
+      placeholder: v0.5.0
     validations:
       required: true
   - type: dropdown

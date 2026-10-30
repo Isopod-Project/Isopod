@@ -45,6 +45,7 @@ Review everything since the previous release, `git diff <last-tag>..main`, with 
   - The CurseForge API key (`CURSEFORGE_API_KEY`) is only sent to `api.curseforge.com`, per request, and never written to an instance's `docker-compose.yml`. IDs placed in CurseForge URLs are checked to be numeric.
 - [ ] **`isopod-compose*.yml`, `Dockerfile`, `docker/`:** no new ports, mounts, capabilities, or privileges without a reason in the PR, and no `privileged: true`. New capabilities go in the table in [ADR 0001](adr/0001-unprivileged-docker-in-docker.md).
 - [ ] **Network exposure:** no new routes in `auth.PUBLIC_PATHS` or outside `/api` that skip the login, and no CORS or bind-address changes.
+- [ ] **Self-update:** bundles only come from this repo's release assets and pass their checksum. Changes to the `Dockerfile`, `docker/entrypoint.sh`, or the compose file raise `docker/image-rev`.
 - [ ] **New dependencies:** maintained, widely used, and spelled correctly (no typosquats).
 - [ ] **No secrets,** tokens, or personal paths committed.
 

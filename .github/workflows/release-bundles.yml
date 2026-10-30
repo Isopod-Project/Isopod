@@ -1,0 +1,50 @@
+name: Release Bundles
+
+# Attaches the self-update bundles to a release, which is what makes Update Now work
+# (docs/adr/0002-in-place-self-update.md). Until they're attached, the dashboard shows the
+# manual commands for that release.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to attach bundles to, such as v0.5.0
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  bundles:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # Upload the release assets
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+          package-manager-cache: false # This job publishes release assets, so never restore a cache
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Build the frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Build the bundles
+        run: |
+          python scripts/build_app_bundle.py "$TAG" amd64 bundles
+          python scripts/build_app_bundle.py "$TAG" arm64 bundles
+      - name: Attach the bundles
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" bundles/* --clobber

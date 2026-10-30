@@ -121,6 +121,7 @@ gh release create <TAG> --draft --title "<TAG> - <TITLE>" --notes "<MARKDOWN_NOT
    ```bash
    gh release view <TAG>
    ```
+   Publishing starts the **Release Bundles** workflow, which attaches the self-update bundles. Confirm both architectures and their `.sha256` files are on the release, because **Update Now** isn't offered without them. If the release changes the `Dockerfile`, `docker/entrypoint.sh`, or the compose file, `docker/image-rev` must be raised first, and the release notes must give the manual commands.
 2. Verify the backend update endpoint triggers the notification:
    - Query `/api/system/check-updates?force=true`.
    - Confirm `has_update: true` is returned for running instances on older versions.
