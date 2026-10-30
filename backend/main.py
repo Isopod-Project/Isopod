@@ -38,7 +38,7 @@ load_dotenv()
 
 app = FastAPI(title="Isopod Backend")
 
-ISOPOD_VERSION = "v0.3.0"
+ISOPOD_VERSION = "v0.4.0"
 GITHUB_REPO = os.getenv("GITHUB_REPO", "Isopod-Project/Isopod")
 
 # CurseForge's official API requires a key (https://console.curseforge.com). itzg's AUTO_CURSEFORGE
