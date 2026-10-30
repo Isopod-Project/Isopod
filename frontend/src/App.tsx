@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useRef, useMemo } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Archive, Cat, History } from "lucide-react";
+import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Archive, Cat, History, Flame } from "lucide-react";
 import { HelpButton } from "./components/HelpButton";
 import { AccountSettings } from "./components/AuthGate";
 import { BackupsPanel } from "./components/BackupsPanel";
+import { BedrockAddonsPanel } from "./components/BedrockAddons";
 import { CrashBadge, CrashReportPanel } from "./components/CrashReport";
 import { crashLabel, crashSummary, type CrashInfo } from "./lib/crash";
 import { ResourceTotals, InstanceResources, type ResourceUsage } from "./components/ResourceUsage";
@@ -26,6 +27,8 @@ interface InstanceStatus {
    instance_id: string;
    is_running: boolean;
    is_ready: boolean;
+   // Paused by auto-pause after sitting empty; the first player to connect wakes it
+   is_paused?: boolean;
    version?: string;
    type?: string;
    port?: number;
@@ -55,8 +58,10 @@ const LOADER_VERSION_ENV: Record<string, string> = {
 // Server types that run plugins (in plugins/) instead of mods
 const PLUGIN_SERVER_TYPES = ["PAPER", "PURPUR", "FOLIA"];
 
-// Edit window tabs that only apply to Java servers
-const BEDROCK_HIDDEN_TABS = ["loader", "mods", "resource-pack"];
+// Edit window tabs that only apply to Java servers. Bedrock servers show the "mods" tab as Add-ons.
+const BEDROCK_HIDDEN_TABS = ["loader", "resource-pack"];
+// Matches DEFAULT_TIMEOUT_SECONDS in backend/autopause.py
+const AUTO_PAUSE_DEFAULT_MINUTES = 10;
 
 const FOLIA_WARNING = "Folia runs each region of the world on its own thread and is meant for large servers on machines with many CPU cores. Most Paper plugins don't work on it: only install plugins marked as Folia-compatible. All Folia builds are experimental.";
 
@@ -184,13 +189,14 @@ export default function App() {
 
    // Prism-like Add Modal States
    const [addStep, setAddStep] = useState<number>(1);
-   const [addTab, setAddTab] = useState<"custom" | "import" | "modrinth" | "world">("custom");
+   const [addTab, setAddTab] = useState<"custom" | "import" | "modrinth" | "curseforge" | "world">("custom");
    const [selectedAddVersion, setSelectedAddVersion] = useState("latest");
    const [selectedAddLoader, setSelectedAddLoader] = useState("VANILLA");
    const [searchModpacks, setSearchModpacks] = useState("");
    const [onlyServerSideModpacks, setOnlyServerSideModpacks] = useState(true);
    const [modpackResults, setModpackResults] = useState<any[]>([]);
    const [isModpackLoading, setIsModpackLoading] = useState(false);
+   const [modpackSearchError, setModpackSearchError] = useState("");
    const [selectedModpack, setSelectedModpack] = useState<any>(null);
    const [modpackVersions, setModpackVersions] = useState<any[]>([]);
    const [selectedModpackVersion, setSelectedModpackVersion] = useState<string>("");
@@ -503,8 +509,9 @@ export default function App() {
          const res = await fetch(`/api/instances/${id}/status`);
          const data = await res.json();
          setStatuses((prev: Record<string, InstanceStatus>) => ({ ...prev, [id]: data }));
-         // Piggyback on status polling so players are only asked for while the server is Online
-         if (data.is_ready) {
+         // Piggyback on status polling so players are only asked for while the server is Online.
+         // Not while it sleeps: the RCON query would wake it.
+         if (data.is_ready && !data.is_paused) {
             fetchPlayers(id);
          } else {
             setPlayerLists((prev) => {
@@ -761,9 +768,9 @@ export default function App() {
             version: selectedAddVersion === 'latest' ? '' : selectedAddVersion,
             loader_version: selectedAddLoaderVersion,
             modrinth_id: addTab === 'modrinth' && selectedModpack ? selectedModpack.id : null,
-            cf_id: null,
-            modpack_version: addTab === 'modrinth' && selectedModpack ? selectedModpackVersion : null,
-            icon_url: addTab === 'modrinth' && selectedModpack ? selectedModpack.icon_url : null,
+            cf_id: addTab === 'curseforge' && selectedModpack ? selectedModpack.id : null,
+            modpack_version: (addTab === 'modrinth' || addTab === 'curseforge') && selectedModpack ? selectedModpackVersion : null,
+            icon_url: (addTab === 'modrinth' || addTab === 'curseforge') && selectedModpack ? selectedModpack.icon_url : null,
             seed: newSeed,
             level_type: newLevelType,
             difficulty: newDifficulty,
@@ -1134,16 +1141,21 @@ export default function App() {
 
    const handleModpackSearch = async (query: string, provider: string) => {
       setIsModpackLoading(true);
+      setModpackSearchError("");
       try {
          const url = provider === "modrinth"
             ? `/api/mods/search/${provider}?q=${encodeURIComponent(query)}&class_type=modpack&only_server_side=${onlyServerSideModpacks}`
             : `/api/mods/search/${provider}?q=${encodeURIComponent(query)}&class_type=modpack`;
          const res = await fetch(url);
-         if (!res.ok) throw new Error(`${provider} search failed`);
+         if (!res.ok) {
+            const body = await res.json().catch(() => null);
+            throw new Error(typeof body?.detail === "string" ? body.detail : `${provider} search failed`);
+         }
          const data = await res.json();
          setModpackResults(Array.isArray(data) ? data : []);
       } catch (e) {
          console.error("Search error:", e);
+         setModpackSearchError(e instanceof Error ? e.message : `${provider} search failed`);
          setModpackResults([]);
       } finally {
          setIsModpackLoading(false);
@@ -1812,6 +1824,8 @@ export default function App() {
    const isPluginServer = PLUGIN_SERVER_TYPES.includes((config.environment?.["TYPE"] || "").toUpperCase());
    // Bedrock servers have no mods, resource pack bundling, or Java player management, and name some world settings differently
    const editingBedrock = isBedrockType(config.environment?.["TYPE"]);
+   const autoPauseOn = (config.environment?.["ENABLE_AUTOPAUSE"] || "").toLowerCase() === "true";
+   const autoPauseMinutes = Math.max(1, Math.round(Number(config.environment?.["AUTOPAUSE_TIMEOUT_EST"] || AUTO_PAUSE_DEFAULT_MINUTES * 60) / 60));
    const worldEnv = editingBedrock
       ? { seed: "LEVEL_SEED", mode: "GAMEMODE" }
       : { seed: "SEED", mode: "MODE" };
@@ -2036,7 +2050,7 @@ export default function App() {
    }, [selectedId]);
 
    useEffect(() => {
-      if (!isEditModalOpen || editTab !== "mods" || modListView !== "list" || dialog) return;
+      if (!isEditModalOpen || editTab !== "mods" || editingBedrock || modListView !== "list" || dialog) return;
       const handleKeyDown = (e: KeyboardEvent) => {
          const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
          if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
@@ -2416,6 +2430,34 @@ export default function App() {
       setIsEditModalOpen(false);
    };
 
+   // Escape closes whatever is on top. The Files and Mods tabs use Escape for their own
+   // menus, renames and selections first; Edit still asks before dropping unsaved changes.
+   useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+         if (e.key !== 'Escape') return;
+         if (dialog) { dialog.onResult(null); return; }
+         if (fileConflictModal || updateProgressState) return;
+         if (contextMenu) { setContextMenu(null); return; }
+         if (isExportModalOpen) { setIsExportModalOpen(false); return; }
+         if (isSettingsModalOpen) { closeSettings(); return; }
+         if (isVersionModalOpen) { setIsVersionModalOpen(false); return; }
+         if (isEditModalOpen) {
+            if (fileContextMenu || inlineEditing || (editTab === "mods" && selectedModKeys.length > 0)) return;
+            closeEditModal();
+            return;
+         }
+         if (isAddModalOpen) setIsAddModalOpen(false);
+      };
+      // Capture runs before the tabs' own Escape handlers, so this sees the state they act on
+      window.addEventListener('keydown', handleKeyDown, true);
+      return () => window.removeEventListener('keydown', handleKeyDown, true);
+   });
+
+   // Closes a window when the click lands on its dimmed backdrop rather than the window itself
+   const onBackdrop = (close: () => void) => (e: React.MouseEvent) => {
+      if (e.target === e.currentTarget) close();
+   };
+
    // The Logs tab shows either the live console or the latest crash report
    const [logView, setLogView] = useState<"console" | "crash">("console");
 
@@ -2473,6 +2515,14 @@ export default function App() {
       } catch (e) {
          console.error("Failed to fetch settings", e);
       }
+   };
+
+   // Leaving Settings without saving puts back anything changed, such as a previewed theme
+   const closeSettings = () => {
+      if (JSON.stringify(globalSettings) !== originalGlobalSettings) {
+         setGlobalSettings(JSON.parse(originalGlobalSettings));
+      }
+      setIsSettingsModalOpen(false);
    };
 
    const handleSaveGlobalSettings = async () => {
@@ -2638,10 +2688,10 @@ export default function App() {
    }, [isEditModalOpen, config.environment]);
 
    useEffect(() => {
-      if (isEditModalOpen && selectedId && editTab === "mods") {
+      if (isEditModalOpen && selectedId && editTab === "mods" && !editingBedrock) {
          fetchInstanceMods(selectedId);
       }
-   }, [isEditModalOpen, selectedId, editTab]);
+   }, [isEditModalOpen, selectedId, editTab, editingBedrock]);
 
    // A Bedrock server hides the Java-only tabs; don't leave one open from another instance
    useEffect(() => {
@@ -3026,12 +3076,12 @@ export default function App() {
                                                    className="w-16 h-16 object-contain rounded"
                                                 />
                                              ) : (
-                                                <Gamepad2 className={`w-10 h-10 ${isRunning ? (statuses[inst.id]?.is_ready ? 'text-emerald-400' : 'text-amber-400') : 'text-[#878787]'}`} />
+                                                <Gamepad2 className={`w-10 h-10 ${isRunning ? (statuses[inst.id]?.is_paused ? 'text-sky-400' : statuses[inst.id]?.is_ready ? 'text-emerald-400' : 'text-amber-400') : 'text-[#878787]'}`} />
                                              )}
                                              <div className={`absolute bottom-1 right-1 w-3 h-3 rounded-full border-2 border-[#3B3B3B] ${isRunning
-                                                   ? (statuses[inst.id]?.is_ready ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse')
+                                                   ? (statuses[inst.id]?.is_paused ? 'bg-sky-500' : statuses[inst.id]?.is_ready ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse')
                                                    : 'bg-neutral-500'
-                                                }`}></div>
+                                                }`} title={isRunning && statuses[inst.id]?.is_paused ? "Sleeping" : undefined}></div>
                                           </div>
                                           <span className="text-xs text-center font-medium line-clamp-2 leading-tight break-all">
                                              {inst.name}
@@ -3110,12 +3160,12 @@ export default function App() {
                                                    className="w-16 h-16 object-contain rounded"
                                                 />
                                              ) : (
-                                                <Gamepad2 className={`w-10 h-10 ${isRunning ? (statuses[inst.id]?.is_ready ? 'text-emerald-400' : 'text-amber-400') : 'text-[#878787]'}`} />
+                                                <Gamepad2 className={`w-10 h-10 ${isRunning ? (statuses[inst.id]?.is_paused ? 'text-sky-400' : statuses[inst.id]?.is_ready ? 'text-emerald-400' : 'text-amber-400') : 'text-[#878787]'}`} />
                                              )}
                                              <div className={`absolute bottom-1 right-1 w-3 h-3 rounded-full border-2 border-[#3B3B3B] ${isRunning
-                                                   ? (statuses[inst.id]?.is_ready ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse')
+                                                   ? (statuses[inst.id]?.is_paused ? 'bg-sky-500' : statuses[inst.id]?.is_ready ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse')
                                                    : 'bg-neutral-500'
-                                                }`}></div>
+                                                }`} title={isRunning && statuses[inst.id]?.is_paused ? "Sleeping" : undefined}></div>
                                           </div>
                                           <span className="text-xs text-center font-medium line-clamp-2 leading-tight break-all">
                                              {inst.name}
@@ -3174,8 +3224,10 @@ export default function App() {
 
                         {selectedStatus?.is_running && (
                            <span className="absolute top-2 right-2 flex h-3 w-3 z-10">
-                              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${selectedStatus?.is_ready ? 'bg-emerald-400' : 'bg-amber-400'} opacity-75`}></span>
-                              <span className={`relative inline-flex rounded-full h-3 w-3 ${selectedStatus?.is_ready ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+                              {!selectedStatus.is_paused && (
+                                 <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${selectedStatus?.is_ready ? 'bg-emerald-400' : 'bg-amber-400'} opacity-75`}></span>
+                              )}
+                              <span className={`relative inline-flex rounded-full h-3 w-3 ${selectedStatus.is_paused ? 'bg-sky-500' : selectedStatus?.is_ready ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
                            </span>
                         )}
                      </div>
@@ -3184,7 +3236,7 @@ export default function App() {
                         {connectionLost ? 'Unknown' : !selectedStatus?.is_running
                            ? (selectedStatus?.startup_status === "Stopping..." ? 'Stopping...'
                               : (selectedStatus?.crash && selectedStatus.crash.state !== "recovered" ? crashLabel(selectedStatus.crash) : 'Offline'))
-                           : (selectedStatus?.is_ready ? 'Online' : (selectedStatus?.startup_status || 'Starting...'))}
+                           : (selectedStatus?.is_paused ? 'Sleeping' : selectedStatus?.is_ready ? 'Online' : (selectedStatus?.startup_status || 'Starting...'))}
                      </p>
 
                      {/* Progress Bar */}
@@ -3221,7 +3273,8 @@ export default function App() {
                            <div className={`w-full p-3 rounded flex flex-col gap-2 border ${selectedStatus.crash.state === "recovered" ? "bg-amber-500/5 border-amber-500/30" : "bg-red-500/5 border-red-500/30"}`}>
                               <div className={`flex items-start gap-2 text-xs ${selectedStatus.crash.state === "recovered" ? "text-amber-300" : "text-red-300"}`}>
                                  <Skull className="w-4 h-4 shrink-0 mt-px" />
-                                 <span>{crashSummary(selectedStatus.crash)}</span>
+                                 <span className="flex-1">{crashSummary(selectedStatus.crash)}</span>
+                                 <HelpButton topic="crash" iconClassName="w-3.5 h-3.5" />
                               </div>
                               <div className="flex gap-1.5">
                                  <button
@@ -3249,10 +3302,11 @@ export default function App() {
                            <div className="w-full bg-sky-500/5 border border-sky-500/30 p-3 rounded flex flex-col gap-2">
                               <div className="flex items-start gap-2 text-xs text-sky-300">
                                  <History className="w-4 h-4 shrink-0 mt-px" />
-                                 <span>
+                                 <span className="flex-1">
                                     A snapshot was taken {selectedStatus.pending_snapshot.reason.replace(/^Before/, "before")}.
                                     {" "}If the update causes problems, you can roll back.
                                  </span>
+                                 <HelpButton topic="snapshot" iconClassName="w-3.5 h-3.5" />
                               </div>
                               <div className="flex gap-1.5">
                                  <button
@@ -3286,6 +3340,7 @@ export default function App() {
                            instanceId={selectedInstance.id}
                            list={playerLists[selectedInstance.id]}
                            onChanged={() => fetchPlayers(selectedInstance.id)}
+                           readOnly={isBedrockType(selectedStatus.type)}
                            showAlert={showAlert}
                            showConfirm={showConfirm}
                            showPrompt={showPrompt}
@@ -3501,13 +3556,14 @@ export default function App() {
                            {[
                               { id: "custom", name: "Custom", icon: Gamepad2 },
                               { id: "import", name: "Import", icon: Database },
-                              { id: "modrinth", name: "Modrinth", icon: RefreshCw }
+                              { id: "modrinth", name: "Modrinth", icon: RefreshCw },
+                              { id: "curseforge", name: "CurseForge", icon: Flame }
                            ].map((tab) => (
                               <button
                                  key={tab.id}
                                  onClick={() => {
                                     setAddTab(tab.id as any);
-                                    if (tab.id === 'modrinth') {
+                                    if (tab.id === 'modrinth' || tab.id === 'curseforge') {
                                        handleModpackSearch("", tab.id);
                                     }
                                  }}
@@ -3774,7 +3830,7 @@ export default function App() {
                                  </div>
                               )}
 
-                              {addTab === "modrinth" && (
+                              {(addTab === "modrinth" || addTab === "curseforge") && (
                                  <div className="flex flex-col h-full bg-[#1E1E1E]/50">
                                     <div className="p-4 bg-[#242424] border-b border-[#323232] flex flex-col gap-3">
                                        <div className="flex gap-3 w-full">
@@ -3813,6 +3869,12 @@ export default function App() {
                                           <div className="flex flex-col items-center justify-center h-64 text-neutral-600 gap-3">
                                              <RefreshCw className="w-8 h-8 animate-spin" />
                                              <span className="text-sm font-medium">Fetching modpacks...</span>
+                                          </div>
+                                       ) : modpackSearchError ? (
+                                          <div role="alert" className="flex flex-col items-center justify-center h-64 text-red-400 gap-2 px-6 text-center">
+                                             <AlertCircle className="w-10 h-10" />
+                                             <p className="text-sm font-medium">Couldn't load modpacks</p>
+                                             <p className="text-xs text-red-400/80 break-words max-w-md">{modpackSearchError}</p>
                                           </div>
                                        ) : modpackResults.length === 0 ? (
                                           <div className="flex flex-col items-center justify-center h-64 text-neutral-600 opacity-40">
@@ -4162,7 +4224,7 @@ export default function App() {
          )}
 
          {isEditModalOpen && (selectedInstance || isGlobalBrowser) && (
-            <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-6">
+            <div onMouseDown={onBackdrop(closeEditModal)} className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-6">
                <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg shadow-2xl w-full max-w-6xl h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
                   {/* Header */}
                   <div className="px-6 py-4 border-b border-[#3A3A3A] flex justify-between items-center bg-[#2B2B2B]">
@@ -4178,15 +4240,15 @@ export default function App() {
                               {!isGlobalBrowser && selectedInstance && (
                                  <div className="flex items-center gap-2 bg-[#1A1A1A] border border-[#3A3A3A] px-2.5 py-0.5 rounded-full">
                                     <span className="relative flex h-2 w-2">
-                                       {statuses[selectedInstance.id]?.is_running && (
+                                       {statuses[selectedInstance.id]?.is_running && !statuses[selectedInstance.id]?.is_paused && (
                                           <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${statuses[selectedInstance.id]?.is_ready ? 'bg-emerald-400' : 'bg-amber-400'} opacity-75`}></span>
                                        )}
-                                       <span className={`relative inline-flex rounded-full h-2 w-2 ${statuses[selectedInstance.id]?.is_running ? (statuses[selectedInstance.id]?.is_ready ? 'bg-emerald-500' : 'bg-amber-500') : 'bg-neutral-500'}`}></span>
+                                       <span className={`relative inline-flex rounded-full h-2 w-2 ${statuses[selectedInstance.id]?.is_running ? (statuses[selectedInstance.id]?.is_paused ? 'bg-sky-500' : statuses[selectedInstance.id]?.is_ready ? 'bg-emerald-500' : 'bg-amber-500') : 'bg-neutral-500'}`}></span>
                                     </span>
                                     <span className="text-[11px] font-medium text-neutral-300">
                                        {connectionLost ? 'Unknown' : !statuses[selectedInstance.id]?.is_running
                                           ? (statuses[selectedInstance.id]?.startup_status === "Stopping..." ? 'Stopping' : 'Offline')
-                                          : (statuses[selectedInstance.id]?.is_ready ? 'Online' : (statuses[selectedInstance.id]?.startup_status || 'Starting...'))}
+                                          : (statuses[selectedInstance.id]?.is_paused ? 'Sleeping' : statuses[selectedInstance.id]?.is_ready ? 'Online' : (statuses[selectedInstance.id]?.startup_status || 'Starting...'))}
                                     </span>
                                     {statuses[selectedInstance.id]?.is_ready && playerLists[selectedInstance.id]?.available && (
                                        <span className="text-[11px] font-mono text-neutral-500 border-l border-[#3A3A3A] pl-2 flex items-center gap-1" title={playerLists[selectedInstance.id].players.join(", ") || "No players online"} data-testid="edit-player-count">
@@ -4201,7 +4263,7 @@ export default function App() {
                         </div>
                      </div>
                      <div className="flex items-center gap-2">
-                        <HelpButton topic={editTab} className="p-1.5 hover:bg-[#3A3A3A] rounded-full text-neutral-400" iconClassName="w-5 h-5" />
+                        <HelpButton topic={editingBedrock ? `bedrock-${editTab}` : editTab} className="p-1.5 hover:bg-[#3A3A3A] rounded-full text-neutral-400" iconClassName="w-5 h-5" />
                         <button onClick={closeEditModal} className="p-1 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition" title="Close">
                            <X className="w-6 h-6" />
                         </button>
@@ -4210,8 +4272,9 @@ export default function App() {
 
                   <div className="flex flex-1 overflow-hidden">
                      {/* Left Sidebar Tabs */}
-                     <div className="w-56 bg-[#1E1E1E] border-r border-[#3A3A3A] p-4 flex flex-col justify-between">
-                        <div className="flex flex-col gap-1.5">
+                     <div className="w-56 bg-[#1E1E1E] border-r border-[#3A3A3A] p-4 flex flex-col justify-between min-h-0">
+                        {/* Tabs scroll on short windows so Save Changes below always stays visible */}
+                        <div className="flex flex-col gap-1.5 min-h-0 overflow-y-auto">
                            <button
                               onClick={() => setEditTab("logs")}
                               className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "logs" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
@@ -4259,15 +4322,13 @@ export default function App() {
                               <Archive className="w-4 h-4" />
                               Backups
                            </button>
-                           {!editingBedrock && (
                            <button
                               onClick={() => setEditTab("mods")}
                               className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "mods" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
                            >
                               <Box className="w-4 h-4" />
-                              Mods
+                              {editingBedrock ? "Add-ons" : "Mods"}
                            </button>
-                           )}
                            {!editingBedrock && (
                            <button
                               onClick={() => setEditTab("resource-pack")}
@@ -4297,7 +4358,7 @@ export default function App() {
                            </button>
                         </div>
 
-                        <div className="mt-auto pt-4 flex flex-col gap-2">
+                        <div className="mt-auto pt-4 flex flex-col gap-2 shrink-0">
                            {JSON.stringify(config) !== originalConfig && (
                               <div className="text-[10px] text-amber-500 font-bold mb-1 flex items-center gap-1 animate-pulse">
                                  <AlertCircle className="w-3 h-3" /> Unsaved Changes
@@ -5332,7 +5393,11 @@ export default function App() {
                               </div>
                            </div>
                         )}
-                        {editTab === "mods" && (
+                        {editTab === "mods" && editingBedrock && selectedId && (
+                           <BedrockAddonsPanel instanceId={selectedId} isRunning={!!selectedStatus?.is_running} showAlert={showAlert} showConfirm={showConfirm} />
+                        )}
+
+                        {editTab === "mods" && !editingBedrock && (
                            <div className="flex flex-col h-full overflow-hidden bg-[#1E1E1E]">
                               {modListView === "list" ? (
                                  /* PRISM LAUNCHER STYLE MOD CONSOLE VIEW */
@@ -6809,6 +6874,50 @@ export default function App() {
                                        </select>
                                     </div>
 
+                                    {!editingBedrock && (
+                                       <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg p-4 flex items-center justify-between gap-4">
+                                          <div>
+                                             <label htmlFor="auto-pause" className="text-sm font-bold text-white">Sleep when empty</label>
+                                             <p className="text-xs text-neutral-500">
+                                                Pauses the server after nobody has been online for a while, so it stops using CPU. The first player to connect (or refresh their server list) wakes it within a few seconds. Takes effect the next time the server starts.
+                                             </p>
+                                          </div>
+                                          <div className="flex items-center gap-3 shrink-0">
+                                             {autoPauseOn && (
+                                                <label className="flex items-center gap-2 text-xs text-neutral-400">
+                                                   after
+                                                   <input
+                                                      type="number"
+                                                      min={1}
+                                                      aria-label="Minutes before sleeping"
+                                                      value={autoPauseMinutes}
+                                                      onChange={(e) => setConfig(prev => ({
+                                                         ...prev,
+                                                         environment: { ...prev.environment, AUTOPAUSE_TIMEOUT_EST: String(Math.max(1, Math.round(Number(e.target.value) || 1)) * 60) }
+                                                      }))}
+                                                      className="w-16 bg-[#141414] border border-[#3A3A3A] p-2 rounded text-sm text-[#E0E0E0] focus:outline-none focus:border-[#3E8ED0]"
+                                                   />
+                                                   min
+                                                </label>
+                                             )}
+                                             <input
+                                                id="auto-pause"
+                                                type="checkbox"
+                                                checked={autoPauseOn}
+                                                onChange={(e) => setConfig(prev => ({
+                                                   ...prev,
+                                                   environment: {
+                                                      ...prev.environment,
+                                                      ENABLE_AUTOPAUSE: e.target.checked ? "TRUE" : "FALSE",
+                                                      AUTOPAUSE_TIMEOUT_EST: prev.environment.AUTOPAUSE_TIMEOUT_EST || String(AUTO_PAUSE_DEFAULT_MINUTES * 60),
+                                                   }
+                                                }))}
+                                                className="w-4 h-4 accent-[#3E8ED0]"
+                                             />
+                                          </div>
+                                       </div>
+                                    )}
+
                                     <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg overflow-hidden">
                                        <div className="px-4 py-2.5 bg-[#2D2D2D] border-b border-[#3A3A3A] flex justify-between items-center">
                                           <span className="text-xs font-bold text-neutral-400 uppercase">Environment Variables</span>
@@ -6860,6 +6969,7 @@ export default function App() {
                      const status = statuses[selectedInstance.id];
                      const isRunning = status?.is_running;
                      const isReady = status?.is_ready;
+                     const isPaused = isRunning && status?.is_paused;
                      const isStopping = status?.startup_status === "Stopping..." || status?.startup_status === "Killing...";
                      const isRestarting = status?.startup_status === "Restarting...";
                      const isStarting = isRunning && !isReady && !isStopping;
@@ -6904,7 +7014,9 @@ export default function App() {
                               {/* Left: Server Status & Metadata */}
                               <div className="flex items-center gap-3">
                                  {/* Status Badge */}
-                                 <div className={`flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-bold transition-colors ${isReady
+                                 <div className={`flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-bold transition-colors ${isPaused
+                                       ? 'bg-sky-500/10 border-sky-500/30 text-sky-400'
+                                       : isReady
                                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
                                        : isRunning
                                           ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
@@ -6913,17 +7025,17 @@ export default function App() {
                                              : 'bg-neutral-800 border-neutral-700 text-neutral-400'
                                     }`}>
                                     <span className="relative flex h-2 w-2">
-                                       {isRunning && (
+                                       {isRunning && !isPaused && (
                                           <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isReady ? 'bg-emerald-400' : 'bg-amber-400'
                                              }`} />
                                        )}
-                                       <span className={`relative inline-flex rounded-full h-2 w-2 ${isReady ? 'bg-emerald-500' : (isRunning ? 'bg-amber-500' : 'bg-neutral-500')
+                                       <span className={`relative inline-flex rounded-full h-2 w-2 ${isPaused ? 'bg-sky-500' : isReady ? 'bg-emerald-500' : (isRunning ? 'bg-amber-500' : 'bg-neutral-500')
                                           }`} />
                                     </span>
                                     <span>
                                        {!isRunning
                                           ? (isStopping ? 'STOPPING...' : (status?.crash && status.crash.state !== "recovered" ? crashLabel(status.crash).toUpperCase() : 'OFFLINE'))
-                                          : (isReady ? 'ONLINE' : (status?.startup_status || 'STARTING...'))}
+                                          : (isPaused ? 'SLEEPING' : isReady ? 'ONLINE' : (status?.startup_status || 'STARTING...'))}
                                     </span>
                                  </div>
 
@@ -7020,7 +7132,7 @@ export default function App() {
             </div>
          )}
          {isVersionModalOpen && (
-            <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-md p-6">
+            <div onMouseDown={onBackdrop(() => setIsVersionModalOpen(false))} className="absolute inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-md p-6">
                <div className="bg-[#1E1E1E] border border-[#3A3A3A] rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
                   <div className="p-6 border-b border-[#3A3A3A] flex justify-between items-center bg-[#242424]">
                      <div className="flex items-center gap-3">
@@ -7132,7 +7244,7 @@ export default function App() {
          )}
 
          {isSettingsModalOpen && (
-            <div className="absolute inset-0 z-[110] flex items-center justify-center bg-black/75 backdrop-blur-md p-6">
+            <div onMouseDown={onBackdrop(closeSettings)} className="absolute inset-0 z-[110] flex items-center justify-center bg-black/75 backdrop-blur-md p-6">
                <div className="bg-[#242424] border border-[#3A3A3A] rounded-xl shadow-2xl w-full max-w-4xl h-[70vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200 text-[#E0E0E0]">
                   {/* Header */}
                   <div className="px-6 py-5 border-b border-[#323232] bg-[#2B2B2B] flex justify-between items-center">
@@ -7148,7 +7260,8 @@ export default function App() {
                      <div className="flex items-center gap-2">
                         <HelpButton topic={`settings-${settingsTab}`} className="p-1.5 hover:bg-[#3A3A3A] rounded-full text-neutral-400" iconClassName="w-5 h-5" />
                         <button
-                           onClick={() => setIsSettingsModalOpen(false)}
+                           onClick={closeSettings}
+                           title="Close"
                            className="p-1.5 hover:bg-[#3A3A3A] rounded-full text-neutral-400 hover:text-white transition"
                         >
                            <X className="w-6 h-6" />
@@ -7606,12 +7719,7 @@ export default function App() {
                      </div>
                      <div className="flex gap-3">
                         <button
-                           onClick={() => {
-                              if (JSON.stringify(globalSettings) !== originalGlobalSettings) {
-                                 setGlobalSettings(JSON.parse(originalGlobalSettings));
-                              }
-                              setIsSettingsModalOpen(false);
-                           }}
+                           onClick={closeSettings}
                            className="px-6 py-2.5 rounded-lg text-neutral-400 hover:bg-[#3A3A3A] hover:text-white font-bold transition-all text-sm"
                         >
                            {JSON.stringify(globalSettings) !== originalGlobalSettings ? "Discard Changes" : "Close"}
@@ -7758,7 +7866,7 @@ export default function App() {
             </div>
          )}
          {dialog && (
-            <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div onMouseDown={onBackdrop(() => dialog.onResult(null))} className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">
                <div className="bg-[#2A2A2A] border border-[#3A3A3A] rounded-lg shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden animate-in zoom-in duration-200">
                   <div className="px-6 py-4 border-b border-[#323232] bg-[#242424] flex items-center gap-3 shrink-0">
                      {dialog.type === 'alert' && <AlertCircle className="w-5 h-5 text-amber-500" />}
@@ -7776,7 +7884,6 @@ export default function App() {
                            defaultValue={dialog.defaultValue}
                            onKeyDown={(e) => {
                               if (e.key === 'Enter') dialog.onResult(e.currentTarget.value);
-                              if (e.key === 'Escape') dialog.onResult(null);
                            }}
                            className="w-full bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-2 rounded text-white focus:outline-none focus:border-[#3E8ED0] text-sm"
                         />
@@ -7788,7 +7895,6 @@ export default function App() {
                            defaultValue={dialog.defaultValue || (dialog.options?.[0] || "")}
                            onKeyDown={(e) => {
                               if (e.key === 'Enter') dialog.onResult(e.currentTarget.value);
-                              if (e.key === 'Escape') dialog.onResult(null);
                            }}
                            className="w-full bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-2 rounded text-white focus:outline-none focus:border-[#3E8ED0] text-sm"
                         >
@@ -7831,7 +7937,7 @@ export default function App() {
             </div>
          )}
          {isExportModalOpen && (
-            <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div onMouseDown={onBackdrop(() => setIsExportModalOpen(false))} className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
                <div className="bg-[#2A2A2A] border border-[#3A3A3A] rounded-lg shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
                   <div className="px-6 py-4 border-b border-[#323232] bg-[#242424] flex items-center justify-between">
                      <div className="flex items-center gap-2">

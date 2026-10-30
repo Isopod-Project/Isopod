@@ -51,8 +51,8 @@ RUN chmod +x /entrypoint.sh
 
 # Metadata for CasaOS
 LABEL com.casaos.app.name="Isopod"
-LABEL com.casaos.app.icon="https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png"
-LABEL icon="https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png"
+LABEL com.casaos.app.icon="https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/logo.png"
+LABEL icon="https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/logo.png"
 LABEL name="Isopod"
 LABEL title="Isopod"
 

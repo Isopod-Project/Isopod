@@ -19,7 +19,7 @@ import urllib.parse
 import urllib.request
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-# Gamertags are letters, digits and spaces ("Tacoz YouTube"); # and _ cover suffixed and
+# Gamertags are letters, digits and spaces ("Blocky Builder"); # and _ cover suffixed and
 # Geyser-style names. Commas, colons, quotes and newlines are rejected: they would break the
 # ALLOW_LIST_USERS list or the quoted console command.
 GAMERTAG = re.compile(r"^[A-Za-z0-9_#](?:[A-Za-z0-9_# ]{0,30}[A-Za-z0-9_#])?$")

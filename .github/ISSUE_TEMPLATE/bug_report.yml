@@ -1,0 +1,79 @@
+name: Bug report
+description: Something in Isopod is broken or behaves wrongly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Check the [troubleshooting guide](https://isopod-project.github.io/Isopod-Website/#/wiki/troubleshooting) and [open issues](https://github.com/Isopod-Project/Isopod/issues) first.
+        Security problems go through [private reporting](https://github.com/Isopod-Project/Isopod/security/advisories/new), not here.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Create a Fabric 1.21.4 instance
+        2. Add Sodium from the Mods tab
+        3. Click Launch
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Isopod version
+      description: Shown in the top bar of the dashboard.
+      placeholder: v0.3.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Host OS
+      options:
+        - Linux
+        - Windows (Docker Desktop)
+        - macOS (Docker Desktop)
+        - CasaOS
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: server-type
+    attributes:
+      label: Server type
+      description: Leave blank if the bug isn't about a specific instance.
+      options:
+        - Vanilla
+        - Fabric
+        - Forge
+        - NeoForge
+        - Quilt
+        - Paper
+        - Purpur
+        - Folia
+        - Bedrock
+        - Modpack (Modrinth)
+        - Modpack (CurseForge)
+  - type: input
+    id: mc-version
+    attributes:
+      label: Minecraft version
+      placeholder: 1.21.4
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The instance console output, or `docker logs isopod` for dashboard and backend errors. Remove anything private, like API keys or IPs.
+      render: text
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Drag images here if they help.

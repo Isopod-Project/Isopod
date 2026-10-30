@@ -23,7 +23,7 @@ Follow these steps exactly to get a "100% working" setup.
 SSH into your server and download the code to a known location:
 ```bash
 cd /home/your-user  # Or wherever you store apps
-git clone https://github.com/tacoz234/Isopod.git
+git clone https://github.com/Isopod-Project/Isopod.git
 cd Isopod
 ```
 
@@ -39,7 +39,7 @@ docker build -t isopod:dev -f docker/Dockerfile.dev .
 3. Click the **Import** button (top right icon) and paste the contents of `docker/docker-compose.dev.yml` from your repo.
 4. **Important UI Settings**: After importing, fill in these specific fields:
    - **App Name**: `Isopod Dev`
-   - **Icon URL**: `https://raw.githubusercontent.com/tacoz234/Isopod/main/assets/dev_logo.png`
+   - **Icon URL**: `https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/dev_logo.png`
    - **Web UI Port**: `8001`
    - **Network**: `Bridge`
 5. **Volume Mapping**: Scroll down to "Volumes" and ensure these are set:
@@ -61,6 +61,8 @@ Create a file named `.env` in the root of the Isopod directory:
 PROJECT_ROOT=/home/your-user/Isopod
 SERVERS_DIR=/DATA/AppData/isopod/servers
 DEV_PORT=8001
+# Optional: enables CurseForge modpacks (quote it, keys contain `$`)
+CURSEFORGE_API_KEY='your-key-here'
 ```
 
 ### 2. Launch the Container
@@ -136,10 +138,17 @@ Isopod runs servers on its own Docker daemon inside the container (DinD). On cgr
 **Bedrock servers.** `POST /api/instances` with `"template": "bedrock"` writes a compose service on `itzg/minecraft-bedrock-server` instead of `itzg/minecraft-server`:
 - The port maps to `19132/udp`, and `TYPE=BEDROCK` stays in the environment so the rest of the backend can tell Bedrock instances apart (the image itself ignores it).
 - World settings use the Bedrock image's names: `LEVEL_SEED`, `GAMEMODE`, `LEVEL_TYPE` (`DEFAULT`/`FLAT`/`LEGACY`), and `ALLOW_LIST`/`ALLOW_LIST_USERS` for the whitelist. `VERSION` is `LATEST`, `PREVIEW`, or an exact release.
-- There's no RCON. `POST /api/instances/{id}/command` runs the image's `send-command` helper, which needs `stdin_open` and `tty` on the service; its output only reaches the log. `GET /players` always returns `available: false`.
+- There's no RCON. `POST /api/instances/{id}/command` runs the image's `send-command` helper, which needs `stdin_open` and `tty` on the service. The reply only reaches the log, so `bedrock.run_command` notes the last log timestamp before sending and returns the lines written in the next moment or so, minus player joins/leaves and auto-compaction. `GET /players` rebuilds the online list from the container log instead (`bedrock.parse_online_players`): BDS logs `Player connected: <name>, xuid: <xuid>` and `Player disconnected: ...`, and the list starts over at each `Starting Server` line so players from an earlier run don't carry over. The response also has `xuids` (gamertag to XUID), and `max` comes from `max-players` in `data/server.properties`. The side panel shows the list without the kick/ban/message actions, since those are RCON commands.
 - User Management uses the same `/users` endpoints, handled by `backend/bedrock_users.py`. `users.json` is the source of truth. A save mirrors it to `ALLOW_LIST`/`ALLOW_LIST_USERS`/`OPS` (the entrypoint rebuilds `allowlist.json` and `permissions.json` from them on every start), to those two files directly (the entrypoint leaves a file alone when its variable is empty), and to `allowlist add/remove`, `allowlist on/off`, and `op`/`deop` on a running server. `ALLOW_LIST_USERS` stays empty while the allowlist is off, because the entrypoint turns the allowlist on whenever it has names. Operators are stored by XUID, which is taken from `allowlist.json` (BDS fills it in when an allowlisted player joins) or looked up from mcprofile.io, falling back to the gamertag in `OPS`. Gamertags can't contain commas, colons, or quotes.
 - The server is **Online** once the log prints `Server started.`.
 - Worlds live in `data/worlds/<level name>/`, so `backups.find_world_dirs` reports `worlds`. While the server runs, backups send `save hold`, wait a few seconds, and `save resume` afterwards.
+
+**Add-ons.** The Mods tab of a Bedrock server is the Add-ons tab (`frontend/src/components/BedrockAddons.tsx`), backed by `backend/bedrock_addons.py`. Java servers get a 400 from these endpoints.
+- `GET /api/instances/{id}/addons` returns `{world, addons: [{uuid, name, description, version, type: "behavior"|"resource", folder, enabled, beta_apis, missing_dependencies, error}]}`. Packs are read from `data/behavior_packs/` and `data/resource_packs/`; `enabled` means the pack is in the world's `world_behavior_packs.json` or `world_resource_packs.json`. Folders BDS ships (`vanilla*`, `chemistry*`, `experimental*`, `editor*`, `server_*`) are hidden unless the world turns one on.
+- `POST .../addons/upload` takes a `.mcpack` or `.mcaddon`. Every `manifest.json` marks a pack, and a `.mcaddon`'s nested `.mcpack`/`.zip` files are opened one level deep. Module type `data`/`script` is a behavior pack, `resources` a resource pack; skin packs and world templates are refused. Each pack goes to `<folder>/<name>_<uuid prefix>/`, replacing an installed pack with the same uuid, and is added to the world file with its manifest `uuid` and `version`. The world is `level-name` from `server.properties`, else `LEVEL_NAME`, else `Bedrock level`; its folder is created if the server hasn't made the world yet.
+- Uploads are checked before anything is written: no absolute paths, `..`, drive letters, symlinks, or encrypted entries; at most 20,000 files and 1 GB unpacked. Any failure is a 400 whose `detail` says why.
+- `POST .../addons/toggle` (`{uuid, enabled}`) adds or removes the world-file entry and keeps the files; `POST .../addons/delete` (`{uuid}`) removes the entry and the folder. All three take a pre-update snapshot first.
+- `beta_apis` lists `@minecraft/*` script dependencies with a beta version, which need the world's Beta APIs experiment. Experiments live in `level.dat`, which Isopod doesn't edit, so the tab only warns.
 
 **Cross-play.** Java servers keep two settings in their environment: `ISOPOD_CROSSPLAY` (`true`/`false`) and `ISOPOD_BEDROCK_PORT`. On `PUT /api/instances/{id}/config`, `bedrock.apply_crossplay` turns them into real settings:
 - Adds Geyser and Floodgate download URLs from `download.geysermc.org` to `PLUGINS` (Paper, Purpur) or `MODS` (Fabric, NeoForge), and `fabric-api` to `MODRINTH_PROJECTS` on Fabric.
@@ -152,6 +161,35 @@ Duplicating or importing an instance moves every published port, the Bedrock UDP
 `GET /api/instances/{id}/status` also returns `type` (the `TYPE` setting) and `bedrock_port`: the UDP port Bedrock players join on, or `null` if they can't.
 
 The Isopod container publishes UDP `19132-19152` for these ports next to TCP `25565-25585`.
+
+---
+
+## 💤 Auto-pause
+
+**Sleep when empty** uses `itzg/minecraft-server`'s built-in autopause; `backend/autopause.py` has the Isopod side. Java servers only.
+- The frontend writes `ENABLE_AUTOPAUSE` and `AUTOPAUSE_TIMEOUT_EST` (seconds). On `PUT /api/instances/{id}/config`, `autopause.apply_settings` copies the timeout to `AUTOPAUSE_TIMEOUT_INIT` and sets `MAX_TICK_TIME=-1`, because the vanilla watchdog would otherwise kill a server that was just resumed. Turning it off removes `MAX_TICK_TIME` if it is `-1`.
+- Inside the container, the image saves the world and sends `SIGSTOP` to Java once the timeout passes with no players, and touches `data/.paused`. knockd watches the game port and resumes Java on the first incoming SYN, so a join or a server-list ping wakes it. Any running `rcon-cli` also wakes it within about 5 seconds. That's why the frontend stops polling `/players` while a server sleeps.
+- `GET /status` returns `is_paused` (with `startup_status: "Sleeping"`) when the container is running, the log says it's ready, and `data/.paused` was written after the container's `StartedAt`. The marker stays behind when a paused container is stopped, so an older one doesn't count.
+- `POST /stop` runs the image's `/image/scripts/auto/resume.sh` first. A frozen Java can't handle `SIGTERM`, so Docker would kill it after the timeout, and that exit looks like a crash.
+- Waking still happens through the container's own port. The idle server keeps its RAM; freeing it means stopping the container, which needs something outside it to accept the connection and start it again (#61).
+
+---
+
+## 🔥 CurseForge Support
+CurseForge modpacks go through the official API at `https://api.curseforge.com/v1`, which needs a key from [console.curseforge.com](https://console.curseforge.com). Set it as `CURSEFORGE_API_KEY` (the compose files pass it into the container; `backend/main.py` also accepts `CF_API_KEY`). Without a key the CurseForge endpoints return `503`.
+
+**Endpoints** (`backend/main.py`):
+- `GET /api/mods/search/curseforge?q=&class_type=modpack&mc_version=&loader=` searches Minecraft (`gameId` 432). `class_type` maps to `classId`: `mod` 6, `modpack` 4471, `resourcepack` 12. Results are sorted by popularity, and `pageSize` is 50 because the API rejects anything larger. The loader filter is skipped for resource packs. Any non-200 reply from CurseForge becomes a `502` carrying the status, so the dashboard can show it instead of an empty list.
+- `GET /api/mods/curseforge/{project_id}/versions` lists a pack's files in the same shape as the Modrinth endpoint. `project_id` must be numeric.
+
+**Creating an instance.** `POST /api/instances` with `cf_id` (the numeric project ID) and `modpack_version` (the file ID):
+- The backend looks up the project to get its **slug**, because itzg's `CF_SLUG` wants the slug and not the ID. A failed lookup is a `502` and the half-created instance folder is removed.
+- The service gets `TYPE=AUTO_CURSEFORGE`, `CF_SLUG`, `CF_FILE_ID`, `CF_EXCLUDE_MODS` (a list of common client-only mods), and `VERSION` set to the pack's Minecraft version, which also picks the Java image tag.
+- `AUTO_CURSEFORGE` needs the key inside the container as `CF_API_KEY`. The compose file contains the literal `CF_API_KEY=${CF_API_KEY}`, so the secret is never written to an instance folder. At startup the backend exports the key as `CF_API_KEY` into its own environment, and every `docker compose` subprocess inherits it for the interpolation.
+
+**Keep the key off other hosts.** `cf_api_headers()` builds the `x-api-key` header per request. Don't put it on a shared `httpx.AsyncClient`: several handlers reuse one client for Modrinth and CurseForge calls.
+
+**Not covered yet:** adding single CurseForge mods and resource packs (tracked in #52). The Mods tab and resource pack search use Modrinth only.
 
 ---
 

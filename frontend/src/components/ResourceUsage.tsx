@@ -1,4 +1,5 @@
 import { Cpu, MemoryStick } from "lucide-react";
+import { HelpButton } from "./HelpButton";
 import { formatBytes } from "../lib/utils";
 
 export interface InstanceUsage {
@@ -72,7 +73,7 @@ export function InstanceResources({ usage }: { usage: InstanceUsage | undefined 
          <div className="w-full bg-[#1A1A1A] border border-[#323232] p-2 rounded flex flex-col gap-2 shadow-inner">
             <div className="flex flex-col gap-1" title="Share of all host CPU cores">
                <div className="flex justify-between text-[10px] text-neutral-400 font-mono">
-                  <span className="flex items-center gap-1"><Cpu className="w-3 h-3" /> CPU</span>
+                  <span className="flex items-center gap-1"><Cpu className="w-3 h-3" /> CPU <HelpButton topic="resources" iconClassName="w-3 h-3" /></span>
                   <span>{usage.cpu_percent.toFixed(1)}%</span>
                </div>
                <UsageBar percent={usage.cpu_percent} color="bg-sky-500" warn />

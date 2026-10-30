@@ -14,6 +14,7 @@ const HELP_TOPICS = {
    "new-custom": "dashboard-guide/create-instance",
    "new-import": "dashboard-guide/import-modpacks",
    "new-modrinth": "dashboard-guide/import-modpacks",
+   "new-curseforge": "dashboard-guide/import-modpacks",
 
    // Instance editor tabs (keys match editTab)
    logs: "console-rcon/log-controls",
@@ -25,7 +26,24 @@ const HELP_TOPICS = {
    backups: "backups",
    mods: "mod-management",
    "resource-pack": "mod-management/resource-packs",
-   config: "server-tuning/raw-environment",
+   config: "server-tuning",
+
+   // Instance editor tabs on a Bedrock server ("bedrock-" + editTab)
+   "bedrock-logs": "bedrock/bedrock-console",
+   "bedrock-version": "bedrock/bedrock-server",
+   "bedrock-files": "file-manager",
+   "bedrock-world": "bedrock/bedrock-server",
+   "bedrock-backups": "backups",
+   "bedrock-mods": "bedrock/bedrock-addons",
+   "bedrock-config": "server-tuning",
+   "bedrock-users": "bedrock/bedrock-allowlist",
+
+   // Side panel and Logs tab cards
+   crash: "crashes",
+   "crash-report": "crashes/crash-report",
+   snapshot: "backups/snapshots",
+   resources: "monitoring/resource-usage",
+   "online-players": "players-access/online-players",
 
    // Settings modal tabs (keys match "settings-" + settingsTab)
    "settings-general": "app-settings/general",
