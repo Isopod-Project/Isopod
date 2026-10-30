@@ -38,7 +38,7 @@ load_dotenv()
 
 app = FastAPI(title="Isopod Backend")
 
-ISOPOD_VERSION = "v0.4.0"
+ISOPOD_VERSION = "v0.4.1"
 GITHUB_REPO = os.getenv("GITHUB_REPO", "Isopod-Project/Isopod")
 
 # CurseForge's official API requires a key (https://console.curseforge.com). itzg's AUTO_CURSEFORGE
@@ -70,6 +70,7 @@ class UpdateInfo(BaseModel):
     has_update: bool
     release_notes: str
     published_at: Optional[str] = None
+    can_self_update: bool = False
 
 
 class AuthorizationMiddleware(BaseHTTPMiddleware):
@@ -113,25 +114,16 @@ if CORS_ORIGINS:
     )
 
 def get_current_version() -> str:
-    version_file = os.path.join(SERVERS_DIR, ".isopod_version")
-    if os.path.exists(version_file):
-        try:
-            with open(version_file, "r", encoding="utf-8") as f:
-                v = f.read().strip()
-                if v:
-                    return v
-        except Exception:
-            pass
+    # The code that's actually running. Older versions wrote .isopod_version before updating,
+    # which could claim a version that never got installed, so that file is ignored.
     return ISOPOD_VERSION
 
-def set_current_version(version: str):
-    try:
-        version_file = os.path.join(SERVERS_DIR, ".isopod_version")
-        os.makedirs(os.path.dirname(version_file), exist_ok=True)
-        with open(version_file, "w", encoding="utf-8") as f:
-            f.write(version.strip())
-    except Exception as e:
-        print(f"Failed to set current version: {e}")
+def self_update_compose_file() -> Optional[str]:
+    """The compose file an update can rebuild from. A standard install has none in its container."""
+    for name in ("isopod-compose.yml", "docker-compose.yml"):
+        if os.path.exists(name):
+            return name
+    return None
 
 
 try:
@@ -4532,7 +4524,8 @@ async def get_latest_release():
                     "latest_version": latest_v,
                     "has_update": latest_v != curr_v,
                     "release_notes": data.get("body", "No release notes available."),
-                    "published_at": data.get("published_at")
+                    "published_at": data.get("published_at"),
+                    "can_self_update": self_update_compose_file() is not None
                 }
             elif res.status_code == 404:
                 return {
@@ -4595,26 +4588,23 @@ async def perform_update():
     """
     global cached_update_info
 
-    # Fetch latest release to persist target version
-    info = await get_latest_release()
-    if info and info.get("latest_version") and info.get("latest_version") != "Unknown":
-        set_current_version(info["latest_version"])
+    compose_file = self_update_compose_file()
+    if compose_file is None:
+        raise HTTPException(status_code=409, detail="This install can't update itself. Run the update commands on the machine hosting Isopod.")
 
     cached_update_info = None  # Immediately clear cached update info
 
     async def trigger_restart():
         await asyncio.sleep(2)
-        compose_file = "isopod-compose.yml" if os.path.exists("isopod-compose.yml") else "docker-compose.yml"
-        
+
         has_build = False
-        if os.path.exists(compose_file):
-            try:
-                with open(compose_file, "r", encoding="utf-8") as cf:
-                    content = cf.read()
-                    if "build:" in content or "build :" in content:
-                        has_build = True
-            except Exception:
-                pass
+        try:
+            with open(compose_file, "r", encoding="utf-8") as cf:
+                content = cf.read()
+                if "build:" in content or "build :" in content:
+                    has_build = True
+        except Exception:
+            pass
 
         try:
             if os.path.exists(".git"):
@@ -4624,17 +4614,13 @@ async def perform_update():
                 except Exception as ge:
                     print(f"Git pull warning: {ge}")
 
-            if os.path.exists(compose_file):
-                if has_build:
-                    cmd = ["docker", "compose", "-f", compose_file, "up", "-d", "--build"]
-                else:
-                    cmd = ["docker", "compose", "-f", compose_file, "up", "-d", "--pull", "always"]
+            if has_build:
+                cmd = ["docker", "compose", "-f", compose_file, "up", "-d", "--build"]
+            else:
+                cmd = ["docker", "compose", "-f", compose_file, "up", "-d", "--pull", "always"]
 
-                print(f"Executing update sequence: {' '.join(cmd)}")
-                subprocess.Popen(cmd, start_new_session=True)
-            elif os.path.exists("/.dockerenv"):
-                print("Running inside container. Exiting process to trigger Docker container restart...")
-                os._exit(0)
+            print(f"Executing update sequence: {' '.join(cmd)}")
+            subprocess.Popen(cmd, start_new_session=True)
         except Exception as e:
             print(f"Self-update trigger failed: {e}")
 

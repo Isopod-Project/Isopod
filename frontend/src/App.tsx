@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo } from "react";
-import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Archive, Cat, History, Flame } from "lucide-react";
+import { AlertTriangle, Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Archive, Cat, History, Flame } from "lucide-react";
 import { HelpButton } from "./components/HelpButton";
 import { AccountSettings } from "./components/AuthGate";
 import { BackupsPanel } from "./components/BackupsPanel";
@@ -7655,7 +7655,11 @@ export default function App() {
                                              </div>
                                           </div>
 
-                                          {updateInfo.has_update ? (
+                                          {updateInfo.has_update && !updateInfo.can_self_update ? (
+                                             <div className="flex items-center gap-2 text-amber-400 text-xs font-bold bg-amber-500/10 px-4 py-2 rounded-lg border border-amber-500/20">
+                                                <AlertTriangle className="w-4 h-4" /> Update available
+                                             </div>
+                                          ) : updateInfo.has_update ? (
                                              <button
                                                 onClick={performSystemUpdate}
                                                 disabled={isUpdatingSystem}
@@ -7670,6 +7674,14 @@ export default function App() {
                                              </div>
                                           )}
                                        </div>
+
+                                       {updateInfo.has_update && !updateInfo.can_self_update && (
+                                          <div className="p-6 border-t border-[#3A3A3A] bg-[#1E1E1E] text-sm text-neutral-300 space-y-3">
+                                             <p>Isopod can't update itself from here. To install {updateInfo.latest_version}, run these in the folder you cloned Isopod into, on the machine hosting it:</p>
+                                             <pre className="bg-[#111] border border-[#333] rounded-lg p-3 font-mono text-xs text-neutral-200 overflow-x-auto">{"git pull\ndocker compose -f isopod-compose.yml up -d --build"}</pre>
+                                             <p className="text-xs text-neutral-400">On macOS, leave out <code>-f isopod-compose.yml</code>. Your servers and worlds are kept.</p>
+                                          </div>
+                                       )}
 
                                        {updateInfo.has_update && (
                                           <div className="p-6 border-t border-[#3A3A3A] bg-[#1E1E1E]">
