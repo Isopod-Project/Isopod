@@ -106,7 +106,7 @@ Isopod can host players on Minecraft for Windows, phones, tablets, and consoles 
 - World types are Default, Flat, and Legacy. Bedrock has no Spectator game mode or structures switch.
 - The whitelist (Bedrock calls it the allowlist) takes Xbox gamertags, spaces included. Manage it later in the **User Management** tab: add or remove players, turn the allowlist on or off, and make players operators. Changes reach a running server straight away, except that a new operator who isn't online gets operator powers at the next start.
 - Bedrock has no ban command, so there's no Banned Players list. To keep someone out, turn the allowlist on and remove them from it.
-- Bedrock servers can't run Java mods or plugins, so the Edit window has no **Loaders**, **Mods**, or **Resource Packs** tab. The online player list isn't available either.
+- Bedrock servers can't run Java mods or plugins, so the Edit window has no **Loaders**, **Mods**, or **Resource Packs** tab. The online player list and player count work as they do on Java, but the side panel only lists names: kick, message, and teleport need RCON, which Bedrock doesn't have.
 - Console commands work, but their output shows up in the log rather than under the input box.
 - Backups and snapshots include the `worlds` folder. While the server is running, Isopod pauses saving for a few seconds so the copy is consistent.
 
