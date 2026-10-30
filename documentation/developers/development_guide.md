@@ -143,6 +143,13 @@ Isopod runs servers on its own Docker daemon inside the container (DinD). On cgr
 - The server is **Online** once the log prints `Server started.`.
 - Worlds live in `data/worlds/<level name>/`, so `backups.find_world_dirs` reports `worlds`. While the server runs, backups send `save hold`, wait a few seconds, and `save resume` afterwards.
 
+**Add-ons.** The Mods tab of a Bedrock server is the Add-ons tab (`frontend/src/components/BedrockAddons.tsx`), backed by `backend/bedrock_addons.py`. Java servers get a 400 from these endpoints.
+- `GET /api/instances/{id}/addons` returns `{world, addons: [{uuid, name, description, version, type: "behavior"|"resource", folder, enabled, beta_apis, missing_dependencies, error}]}`. Packs are read from `data/behavior_packs/` and `data/resource_packs/`; `enabled` means the pack is in the world's `world_behavior_packs.json` or `world_resource_packs.json`. Folders BDS ships (`vanilla*`, `chemistry*`, `experimental*`, `editor*`, `server_*`) are hidden unless the world turns one on.
+- `POST .../addons/upload` takes a `.mcpack` or `.mcaddon`. Every `manifest.json` marks a pack, and a `.mcaddon`'s nested `.mcpack`/`.zip` files are opened one level deep. Module type `data`/`script` is a behavior pack, `resources` a resource pack; skin packs and world templates are refused. Each pack goes to `<folder>/<name>_<uuid prefix>/`, replacing an installed pack with the same uuid, and is added to the world file with its manifest `uuid` and `version`. The world is `level-name` from `server.properties`, else `LEVEL_NAME`, else `Bedrock level`; its folder is created if the server hasn't made the world yet.
+- Uploads are checked before anything is written: no absolute paths, `..`, drive letters, symlinks, or encrypted entries; at most 20,000 files and 1 GB unpacked. Any failure is a 400 whose `detail` says why.
+- `POST .../addons/toggle` (`{uuid, enabled}`) adds or removes the world-file entry and keeps the files; `POST .../addons/delete` (`{uuid}`) removes the entry and the folder. All three take a pre-update snapshot first.
+- `beta_apis` lists `@minecraft/*` script dependencies with a beta version, which need the world's Beta APIs experiment. Experiments live in `level.dat`, which Isopod doesn't edit, so the tab only warns.
+
 **Cross-play.** Java servers keep two settings in their environment: `ISOPOD_CROSSPLAY` (`true`/`false`) and `ISOPOD_BEDROCK_PORT`. On `PUT /api/instances/{id}/config`, `bedrock.apply_crossplay` turns them into real settings:
 - Adds Geyser and Floodgate download URLs from `download.geysermc.org` to `PLUGINS` (Paper, Purpur) or `MODS` (Fabric, NeoForge), and `fabric-api` to `MODRINTH_PROJECTS` on Fabric.
 - Publishes `<ISOPOD_BEDROCK_PORT>:19132/udp`.

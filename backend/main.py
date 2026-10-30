@@ -28,6 +28,7 @@ from . import modpacks
 from . import crashes
 from . import bedrock
 from . import bedrock_users
+from . import bedrock_addons
 from . import security
 from . import autopause
 import threading
@@ -3884,6 +3885,75 @@ async def upload_instance_mod(instance_id: str, file: UploadFile = File(...)):
         "name": meta["name"],
         "version": meta["version"]
     }
+
+
+def bedrock_addon_context(instance_id: str) -> Tuple[str, str, dict]:
+    """(instance path, data dir, compose env) for a Bedrock instance; 400 for a Java one."""
+    path = get_instance_path(instance_id)
+    env = read_compose_env(path)
+    if not bedrock.is_bedrock(env.get("TYPE")):
+        raise HTTPException(status_code=400, detail="Add-ons are only for Bedrock servers.")
+    return path, os.path.join(path, "data"), env
+
+
+@app.get("/api/instances/{instance_id}/addons")
+def list_bedrock_addons(instance_id: str):
+    """Behavior and resource packs installed on a Bedrock server, and which the world has on."""
+    _, data_dir, env = bedrock_addon_context(instance_id)
+    try:
+        return bedrock_addons.list_addons(data_dir, env)
+    except bedrock_addons.AddonError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/instances/{instance_id}/addons/upload")
+def upload_bedrock_addon(instance_id: str, file: UploadFile = File(...)):
+    """Install a .mcpack or .mcaddon and turn its packs on for the world."""
+    path, data_dir, env = bedrock_addon_context(instance_id)
+    filename = os.path.basename(file.filename or "")
+    if not filename.lower().endswith(bedrock_addons.ADDON_EXTENSIONS):
+        raise HTTPException(status_code=400, detail="Only .mcpack and .mcaddon files can be installed.")
+    take_pre_update_snapshot(path, "Before changing add-ons")
+    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+    try:
+        installed = bedrock_addons.install_addon(data_dir, tmp.name, filename, env)
+    except bedrock_addons.AddonError as e:
+        raise HTTPException(status_code=400, detail=f"{filename} wasn't installed. {e}")
+    finally:
+        os.remove(tmp.name)
+    return {"message": f"Installed {filename}", "installed": installed}
+
+
+class AddonRequest(BaseModel):
+    uuid: str
+    enabled: Optional[bool] = None
+
+
+@app.post("/api/instances/{instance_id}/addons/toggle")
+def toggle_bedrock_addon(instance_id: str, req: AddonRequest):
+    """Turn an installed pack on or off for the world, keeping its files."""
+    path, data_dir, env = bedrock_addon_context(instance_id)
+    if req.enabled is None:
+        raise HTTPException(status_code=400, detail="enabled is required")
+    take_pre_update_snapshot(path, "Before changing add-ons")
+    try:
+        bedrock_addons.toggle_addon(data_dir, req.uuid, req.enabled, env)
+    except bedrock_addons.AddonError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"message": "Add-on enabled" if req.enabled else "Add-on disabled"}
+
+
+@app.post("/api/instances/{instance_id}/addons/delete")
+def delete_bedrock_addon(instance_id: str, req: AddonRequest):
+    """Turn a pack off for the world and delete its files."""
+    path, data_dir, env = bedrock_addon_context(instance_id)
+    take_pre_update_snapshot(path, "Before changing add-ons")
+    try:
+        bedrock_addons.remove_addon(data_dir, req.uuid, env)
+    except bedrock_addons.AddonError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"message": "Add-on removed"}
 
 
 async def sync_instance_mods_to_disk(instance_id: str, env: Optional[dict] = None):

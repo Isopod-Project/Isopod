@@ -106,7 +106,10 @@ Isopod can host players on Minecraft for Windows, phones, tablets, and consoles 
 - World types are Default, Flat, and Legacy. Bedrock has no Spectator game mode or structures switch.
 - The whitelist (Bedrock calls it the allowlist) takes Xbox gamertags, spaces included. Manage it later in the **User Management** tab: add or remove players, turn the allowlist on or off, and make players operators. Changes reach a running server straight away, except that a new operator who isn't online gets operator powers at the next start.
 - Bedrock has no ban command, so there's no Banned Players list. To keep someone out, turn the allowlist on and remove them from it.
-- Bedrock servers can't run Java mods or plugins, so the Edit window has no **Loaders**, **Mods**, or **Resource Packs** tab. The online player list and player count work as they do on Java, but the side panel only lists names: kick, message, and teleport need RCON, which Bedrock doesn't have.
+- Bedrock servers can't run Java mods or plugins, so the Edit window has no **Loaders** or **Resource Packs** tab, and the **Mods** tab is called **Add-ons**. The online player list and player count work as they do on Java, but the side panel only lists names: kick, message, and teleport need RCON, which Bedrock doesn't have.
+- **Add-ons**: click **Add File** and pick a `.mcpack` or `.mcaddon`. Isopod installs its behavior packs (and the resource packs a `.mcaddon` brings with them) and turns them on for the world. Each add-on shows its name, version, and type; switch one off to keep it installed but unused, or remove it to delete it. Changes apply the next time the server starts.
+  - Add-ons marked **Uses experimental Beta APIs** only work in a world that has the Beta APIs experiment on. Experiments are set when a world is created in the game, so turn it on there and upload that world.
+  - Files that aren't valid add-ons, or that try to write outside their folder, are rejected with the reason. Marketplace content is encrypted and can't be installed.
 - Backups and snapshots include the `worlds` folder. While the server is running, Isopod pauses saving for a few seconds so the copy is consistent.
 
 **Cross-play on a Java server.** Open a Paper, Purpur, Fabric, or NeoForge server's **Loaders** tab and switch on **Bedrock cross-play**, then **Save Changes** and restart the server.
@@ -119,7 +122,7 @@ Isopod can host players on Minecraft for Windows, phones, tablets, and consoles 
 Isopod publishes UDP ports `19132`-`19152` for Bedrock, so keep Bedrock ports in that range. If you installed Isopod before this feature, add `19132-19152:19132-19152/udp` to the ports in your compose file (see [the CasaOS guide](../CASAOS_INSTALL.md)).
 
 ## 💾 Saving in the Edit Window
-- **Mods tab**: Every change applies right away. **Add** downloads the mod (it shows **Installing...** until it's done), and enabling, disabling, or removing a mod changes its file immediately. There is nothing to save.
+- **Mods tab** (**Add-ons** on Bedrock): Every change applies right away. **Add** downloads the mod (it shows **Installing...** until it's done), and enabling, disabling, or removing a mod changes its file immediately. There is nothing to save.
 - **User Management**: Player changes and the **Whitelist** switch are saved with **Save User Configuration**, and **Discard Changes** undoes them.
 - **Everything else** (version, loader, configuration) waits for **Save Changes**. The sidebar shows **Unsaved Changes** while something is waiting.
 - Closing the Edit window with anything unsaved asks **Discard N unsaved changes?** Choose **Keep editing** to go back and save.
