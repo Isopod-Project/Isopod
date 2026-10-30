@@ -5,7 +5,19 @@ services:
     build: .
     image: isopod:latest
     container_name: isopod
-    privileged: true
+    # Runs its own Docker daemon (Docker-in-Docker) without privileged mode. These are the only
+    # permissions that daemon needs. See docs/adr/0001-unprivileged-docker-in-docker.md for what
+    # they do and don't protect against.
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    devices:
+      - /dev/fuse
+    cgroup: private
     restart: unless-stopped
     network_mode: bridge
     ports:

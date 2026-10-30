@@ -6,7 +6,7 @@ import unittest
 
 from fastapi import FastAPI, WebSocket
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
+from starlette.testclient import WebSocketDenialResponse
 
 from backend import security
 
@@ -82,9 +82,10 @@ class MiddlewareTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/thing").status_code, 200)
 
     def test_foreign_websocket_is_rejected(self):
-        with self.assertRaises(WebSocketDisconnect):
+        with self.assertRaises(WebSocketDenialResponse) as ctx:
             with self.client.websocket_connect("/api/ws", headers={"Origin": EVIL}):
                 pass
+        self.assertEqual(ctx.exception.status_code, 403)
 
     def test_same_origin_websocket_connects(self):
         with self.client.websocket_connect("ws://isopod.lan:8000/api/ws", headers={"Origin": "http://isopod.lan:8000"}) as ws:

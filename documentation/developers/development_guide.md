@@ -193,6 +193,26 @@ CurseForge modpacks go through the official API at `https://api.curseforge.com/v
 
 ---
 
+## 🔐 Authentication
+
+`backend/auth.py` adds a single admin login:
+
+- **Storage:** `SERVERS_DIR/.isopod_auth.json` holds the username, the argon2 password hash, and the SHA-256 hashes of live session tokens. If the file exists but can't be read, the API answers `503` instead of reopening first-run setup.
+- **Sessions:** `POST /api/auth/setup` (only while no account exists) and `POST /api/auth/login` set the `isopod_session` cookie: random, `HttpOnly`, `SameSite=Strict`, `Secure` over HTTPS, 30 days. `POST /api/auth/logout` revokes it on the server. `POST /api/auth/password` changes the password and ends every other session. After 10 failed logins from one address in 15 minutes, logins from it get `429`.
+- **Enforcement:** `AuthMiddleware` answers `401` to every `/api` request and WebSocket upgrade without a valid session. Only `/api/health` and `/api/auth/{status,login,setup,logout}` are open. The frontend files themselves are public.
+- **Frontend:** `AuthGate` (`frontend/src/components/AuthGate.tsx`) wraps `App`. It shows setup or login until `/api/auth/status` says the user is logged in, and goes back to the login screen whenever an `/api` call returns `401`. The e2e fixtures answer `/api/auth/status` as logged in, so other specs don't need to log in.
+
+For scripts, log in once and reuse the cookie:
+
+```bash
+curl -c jar -H 'Content-Type: application/json' -d '{"username":"admin","password":"..."}' http://<host>:8000/api/auth/login
+curl -b jar http://<host>:8000/api/instances
+```
+
+Scoped API tokens for automation (`Authorization: Bearer`) are tracked in #68.
+
+---
+
 ## 🔒 Cross-origin requests
 
 The backend serves the frontend, so the browser only talks to the API from the same origin and the backend allows no cross-origin access by default (`backend/security.py`):

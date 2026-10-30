@@ -40,6 +40,13 @@ docker compose logs -f         # watch logs
 
 Server folders and worlds are stored in `data/servers` inside your clone. Docker images that Isopod downloads, like `itzg/minecraft-server`, go in a Docker volume named `isopod_isopod-docker`. Keep the clone under your home folder, or add its location in Docker Desktop under **Settings → Resources → File sharing**.
 
+## 🔐 Logging In
+The first time you open the dashboard, Isopod asks you to create the admin account. Open it right after you start Isopod: until the account exists, anyone who can reach port 8000 can create it. After that, every visit and every API call needs a login. Sessions last 30 days.
+
+To change the password or log out, open **Settings → Account**. Changing the password logs out every other browser.
+
+**Forgot the password?** Delete `.isopod_auth.json` from your servers folder (`/DATA/AppData/isopod/servers` on CasaOS, `data/servers` on macOS) and reload the dashboard to set up the account again. Your servers aren't affected.
+
 ## 🦀 Features at a Glance
 - **Instance Creation**: Quickly spin up new Minecraft servers. Pick a **Group** in the Add Instance window (or **+ New Group...**) to file the new server under it; right-click a server and choose **Move to Folder** to change it later.
 - **Modpacks**: Create a server from a **Modrinth** or **CurseForge** modpack. CurseForge needs a free API key, see [CurseForge Modpacks](#-curseforge-modpacks).

@@ -65,7 +65,7 @@ CURSEFORGE_API_KEY='your-key-here'
 Then restart Isopod. Without a key, CurseForge search returns an error and Modrinth keeps working.
 
 ## 🔒 Security
-Isopod has no login and runs privileged, so keep port 8000 on your local network or behind a VPN and never forward it to the internet. To report a vulnerability, see [SECURITY.md](SECURITY.md). Every pull request and release goes through an automated [security audit](docs/security-audit.md).
+The first time you open the dashboard, it asks you to create the admin login, so open it right after installing. Isopod manages Docker on its host and serves plain HTTP, so keep port 8000 on your local network or behind a VPN and never forward it to the internet. To report a vulnerability, see [SECURITY.md](SECURITY.md). Every pull request and release goes through an automated [security audit](docs/security-audit.md).
 
 ## 🛠 Tech Stack
 - **Frontend**: React, TypeScript, Vite, TailwindCSS, Lucide Icons.

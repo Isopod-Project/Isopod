@@ -20,6 +20,7 @@ const MOCK_SETTINGS = {
 }
 
 function jsonFor(path: string): unknown {
+  if (path === "/api/auth/status") return { setup_required: false, authenticated: true, username: "admin" }
   if (path === "/api/instances") return MOCK_INSTANCES
   if (path === "/api/settings") return MOCK_SETTINGS
   if (path === "/api/groups") return ["No group"]

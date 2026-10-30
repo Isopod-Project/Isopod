@@ -11,10 +11,23 @@ echo "===================================================="
 # controller for children first (same as the official docker:dind entrypoint).
 enable_cgroup_nesting() {
     if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
-        mkdir -p /sys/fs/cgroup/init
+        mkdir -p /sys/fs/cgroup/init 2>/dev/null || return 0
         xargs -rn1 < /sys/fs/cgroup/cgroup.procs > /sys/fs/cgroup/init/cgroup.procs 2>/dev/null || true
         sed -e 's/ / +/g' -e 's/^/+/' < /sys/fs/cgroup/cgroup.controllers > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || true
     fi
+}
+
+# Isopod runs without privileged mode (#145), so Docker mounts /sys/fs/cgroup read-only.
+# CAP_SYS_ADMIN lets us remount it for the inner daemon. /proc/sys stays read-only, so the
+# daemon also has to skip turning off IPv6 on containers' IPv4-only interfaces.
+prepare_unprivileged_dind() {
+    if ! touch /sys/fs/cgroup/.isopod-rw 2>/dev/null; then
+        if ! mount -o remount,rw /sys/fs/cgroup 2>/dev/null; then
+            echo "⚠️  /sys/fs/cgroup is read-only. Check the cap_add and security_opt settings in isopod-compose.yml."
+        fi
+    fi
+    rm -f /sys/fs/cgroup/.isopod-rw 2>/dev/null || true
+    export DOCKER_ALLOW_IPV6_ON_IPV4_INTERFACE=1
 }
 
 # Check if an external Docker socket is mounted and reachable
@@ -33,6 +46,7 @@ if [ "$USE_EXTERNAL_DOCKER" = "false" ]; then
     rm -f /var/run/docker.pid /var/run/docker.sock /var/run/docker/containerd/containerd.pid 2>/dev/null || true
     mkdir -p /var/log /var/run
 
+    prepare_unprivileged_dind
     enable_cgroup_nesting
 
     # Storage driver order: $DOCKER_STORAGE_DRIVER if set, then fuse-overlayfs (avoids DinD vfs

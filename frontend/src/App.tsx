@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useMemo } from "react";
 import { Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Archive, Cat, History, Flame } from "lucide-react";
 import { HelpButton } from "./components/HelpButton";
+import { AccountSettings } from "./components/AuthGate";
 import { BackupsPanel } from "./components/BackupsPanel";
 import { BedrockAddonsPanel } from "./components/BedrockAddons";
 import { CrashBadge, CrashReportPanel } from "./components/CrashReport";
@@ -7291,6 +7292,7 @@ export default function App() {
                         {[
                            { id: "defaults", name: "Server Defaults", icon: Database },
                            { id: "updates", name: "Updates", icon: RefreshCw },
+                           { id: "account", name: "Account", icon: Users },
                            { id: "advanced", name: "Advanced", icon: Shield }
                         ].map((tab) => (
                            <button
@@ -7584,6 +7586,8 @@ export default function App() {
                               </div>
                            </div>
                         )}
+
+                        {settingsTab === "account" && <AccountSettings />}
 
                         {settingsTab === "advanced" && (
                            <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
