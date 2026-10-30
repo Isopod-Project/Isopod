@@ -231,4 +231,4 @@ ISOPOD_CORS_ORIGINS=http://localhost:5173,https://isopod.example.com
 ## 🛠️ Tech Stack
 - **Backend**: FastAPI (Python 3.11)
 - **Frontend**: React + Vite (TypeScript)
-- **Dev Tooling**: Uvicorn (Auto-reload), Node.js 20
+- **Dev Tooling**: Uvicorn (Auto-reload), Node.js 24
