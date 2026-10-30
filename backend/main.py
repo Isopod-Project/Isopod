@@ -2804,8 +2804,8 @@ def execute_command(instance_id: str, req: CommandRequest):
     """Execute a command on the 'mc' service of the instance using docker compose exec."""
     path = get_instance_path(instance_id)
     if bedrock.is_bedrock(read_compose_env(path).get("TYPE")):
-        # Bedrock has no RCON; the command's output shows up in the server log
-        ok, output = bedrock.send_command(path, req.command)
+        # Bedrock has no RCON; the reply is read back from the server log
+        ok, output = bedrock.run_command(path, req.command)
         return {"output": output, "success": ok}
     # Using 'docker compose exec mc rcon-cli [command]'
     # rcon-cli is the built-in helper in itzg/minecraft-server
