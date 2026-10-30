@@ -100,6 +100,23 @@ test("server defaults are saved, and new instances start from them", async ({ pa
   })
 })
 
+test("Updates shows the commands when Isopod can't update itself", async ({ page }) => {
+  await page.route("**/api/system/check-updates*", (route) =>
+    route.fulfill({ json: { current_version: "0.3.0", latest_version: "0.4.0", has_update: true, release_notes: "Faster", can_self_update: false } }),
+  )
+  await tab(page, "Updates").click()
+  await expect(page.getByText("docker compose -f isopod-compose.yml up -d --build")).toBeVisible()
+  await expect(page.getByRole("button", { name: "Update Now" })).toHaveCount(0)
+})
+
+test("Updates offers Update Now when Isopod can update itself", async ({ page }) => {
+  await page.route("**/api/system/check-updates*", (route) =>
+    route.fulfill({ json: { current_version: "0.3.0", latest_version: "0.4.0", has_update: true, release_notes: "Faster", can_self_update: true } }),
+  )
+  await tab(page, "Updates").click()
+  await expect(page.getByRole("button", { name: "Update Now" })).toBeVisible()
+})
+
 test("Updates checks for a new version and shows it", async ({ page }) => {
   await page.route("**/api/system/check-updates*", (route) =>
     route.fulfill({ json: { current_version: "0.3.0", latest_version: "0.4.0", has_update: true, release_notes: "Faster" } }),

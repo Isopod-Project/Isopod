@@ -47,6 +47,18 @@ To change the password or log out, open **Settings → Account**. Changing the p
 
 **Forgot the password?** Delete `.isopod_auth.json` from your servers folder (`/DATA/AppData/isopod/servers` on CasaOS, `data/servers` on macOS) and reload the dashboard to set up the account again. Your servers aren't affected.
 
+## 🔄 Updating Isopod
+**Settings → Updates** tells you when a new release is out and shows its release notes. Isopod can't rebuild itself from inside its container, so on a standard install, run these on the machine hosting it, in the folder you cloned Isopod into:
+
+```bash
+git pull
+docker compose -f isopod-compose.yml up -d --build
+```
+
+On macOS, leave out `-f isopod-compose.yml`. Your servers and worlds are kept. **Update Now** only appears on setups where Isopod can run the update itself, such as development installs that have the compose file.
+
+Versions before v0.4.1 show **Update Now** on every install. There it only restarts the old version, even though the dashboard then reports the new one, so use the commands above.
+
 ## 🦀 Features at a Glance
 - **Instance Creation**: Quickly spin up new Minecraft servers. Pick a **Group** in the Add Instance window (or **+ New Group...**) to file the new server under it; right-click a server and choose **Move to Folder** to change it later.
 - **Modpacks**: Create a server from a **Modrinth** or **CurseForge** modpack. CurseForge needs a free API key, see [CurseForge Modpacks](#-curseforge-modpacks).
