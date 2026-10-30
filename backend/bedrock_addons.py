@@ -20,6 +20,8 @@ import zipfile
 from typing import Dict, List, Optional, Tuple
 
 ADDON_EXTENSIONS = (".mcpack", ".mcaddon")
+# The Resource Packs tab takes single packs only; a .mcaddon belongs in the Add-ons tab
+RESOURCE_PACK_EXTENSIONS = (".mcpack",)
 
 # Pack kind -> (folder under data/, world file that turns packs on)
 PACK_DIRS = {
@@ -430,22 +432,31 @@ def _folder_name(name: str, pack_id: str) -> str:
     return f"{slug}_{pack_id[:8]}"
 
 
-def install_addon(data_dir: str, archive_path: str, filename: str, env: Optional[dict] = None) -> List[dict]:
+def install_addon(data_dir: str, archive_path: str, filename: str, env: Optional[dict] = None,
+                  kind: Optional[str] = None) -> List[dict]:
     """Install every pack in an uploaded .mcpack or .mcaddon and turn it on for the world.
 
+    With kind="resource" (the Resource Packs tab), only a .mcpack of resource packs is accepted.
     A pack that's already installed (same uuid) is replaced. Returns the installed packs.
     """
-    if not filename.lower().endswith(ADDON_EXTENSIONS):
+    if kind == "resource":
+        if not filename.lower().endswith(RESOURCE_PACK_EXTENSIONS):
+            raise AddonError("Only .mcpack files can be installed here. Install a .mcaddon from the Add-ons tab.")
+    elif kind is not None:
+        raise AddonError("Unknown pack type.")
+    elif not filename.lower().endswith(ADDON_EXTENSIONS):
         raise AddonError("Only .mcpack and .mcaddon files can be installed.")
     level = level_name(data_dir, env)
     # Check the world files before touching anything, so a broken one doesn't leave packs half-installed
-    for kind in PACK_DIRS:
-        read_world_packs(data_dir, level, kind)
+    for world_kind in PACK_DIRS:
+        read_world_packs(data_dir, level, world_kind)
 
     existing = _scan_packs(data_dir)
     installed = []
     with tempfile.TemporaryDirectory(dir=data_dir if os.path.isdir(data_dir) else None) as work:
         packs = unpack_addon(archive_path, work, filename)
+        if kind and any(pack["kind"] != kind for pack in packs):
+            raise AddonError("It's a behavior pack, not a resource pack. Install it from the Add-ons tab.")
         for pack in packs:
             base = os.path.join(data_dir, PACK_DIRS[pack["kind"]][0])
             os.makedirs(base, exist_ok=True)

@@ -10,7 +10,7 @@ import { ResourceTotals, InstanceResources, type ResourceUsage } from "./compone
 import { BannedBadge, BannedPlayers, OnlineBadge, OnlinePlayers, PlayerCount, PlayerRowActions, type PlayerList } from "./components/OnlinePlayers";
 import { useBans } from "./components/usePlayerActions";
 import { BedrockVersionOptions, CrossplayCard } from "./components/Bedrock";
-import { BEDROCK_DEFAULT_PORT, BEDROCK_GAMEMODES, BEDROCK_LEVEL_TYPES, BEDROCK_NO_BAN_NOTE, BEDROCK_OPS_NOTE, BEDROCK_SERVER_NOTE, CROSSPLAY_ENV, isBedrockType, supportsCrossplay } from "./lib/bedrock";
+import { BEDROCK_DEFAULT_PORT, BEDROCK_GAMEMODES, BEDROCK_LEVEL_TYPES, BEDROCK_NO_BAN_NOTE, BEDROCK_OPS_NOTE, BEDROCK_SERVER_NOTE, BEDROCK_TEXTUREPACK_REQUIRED_ENV, CROSSPLAY_ENV, isBedrockType, supportsCrossplay } from "./lib/bedrock";
 import { fallbackAvatarUrl, formatBytes, playerAvatarUrl } from "./lib/utils";
 
 interface Instance {
@@ -58,8 +58,9 @@ const LOADER_VERSION_ENV: Record<string, string> = {
 // Server types that run plugins (in plugins/) instead of mods
 const PLUGIN_SERVER_TYPES = ["PAPER", "PURPUR", "FOLIA"];
 
-// Edit window tabs that only apply to Java servers. Bedrock servers show the "mods" tab as Add-ons.
-const BEDROCK_HIDDEN_TABS = ["loader", "resource-pack"];
+// Edit window tabs that only apply to Java servers. Bedrock servers show the "mods" tab as Add-ons,
+// and their "resource-pack" tab installs .mcpack files instead of bundling Modrinth packs.
+const BEDROCK_HIDDEN_TABS = ["loader"];
 // Matches DEFAULT_TIMEOUT_SECONDS in backend/autopause.py
 const AUTO_PAUSE_DEFAULT_MINUTES = 10;
 
@@ -2698,13 +2699,13 @@ export default function App() {
 
    // Debounced Resource Pack search
    useEffect(() => {
-      if (editTab === "resource-pack") {
+      if (editTab === "resource-pack" && !editingBedrock) {
          const timer = setTimeout(() => {
             handleResourcePackSearch(resourcePackQuery, resourcePackProvider);
          }, 500);
          return () => clearTimeout(timer);
       }
-   }, [resourcePackQuery, resourcePackProvider, editTab]);
+   }, [resourcePackQuery, resourcePackProvider, editTab, editingBedrock]);
 
    // Debounced search
    useEffect(() => {
@@ -4327,7 +4328,6 @@ export default function App() {
                               <Box className="w-4 h-4" />
                               {editingBedrock ? "Add-ons" : "Mods"}
                            </button>
-                           {!editingBedrock && (
                            <button
                               onClick={() => setEditTab("resource-pack")}
                               className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "resource-pack" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
@@ -4335,7 +4335,6 @@ export default function App() {
                               <Layers className="w-4 h-4" />
                               Resource Packs
                            </button>
-                           )}
                            <button
                               onClick={() => setEditTab("config")}
                               className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "config" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
@@ -5392,7 +5391,7 @@ export default function App() {
                            </div>
                         )}
                         {editTab === "mods" && editingBedrock && selectedId && (
-                           <BedrockAddonsPanel instanceId={selectedId} isRunning={!!selectedStatus?.is_running} showAlert={showAlert} showConfirm={showConfirm} />
+                           <BedrockAddonsPanel kind="behavior" instanceId={selectedId} isRunning={!!selectedStatus?.is_running} showAlert={showAlert} showConfirm={showConfirm} />
                         )}
 
                         {editTab === "mods" && !editingBedrock && (
@@ -5837,7 +5836,19 @@ export default function App() {
                               )}
                            </div>
                         )}
-                        {editTab === "resource-pack" && (
+                        {editTab === "resource-pack" && editingBedrock && selectedId && (
+                           <BedrockAddonsPanel
+                              kind="resource"
+                              instanceId={selectedId}
+                              isRunning={!!selectedStatus?.is_running}
+                              showAlert={showAlert}
+                              showConfirm={showConfirm}
+                              packRequired={(config.environment[BEDROCK_TEXTUREPACK_REQUIRED_ENV] || "").toLowerCase() === "true"}
+                              onPackRequiredChange={(required) => setConfig(prev => ({ ...prev, environment: { ...prev.environment, [BEDROCK_TEXTUREPACK_REQUIRED_ENV]: required ? "true" : "false" } }))}
+                           />
+                        )}
+
+                        {editTab === "resource-pack" && !editingBedrock && (
                            <div className="flex flex-col h-full overflow-hidden bg-[#1E1E1E]">
                               {resourcePackListView === "list" ? (
                                  /* INSTALLED RESOURCE PACKS LIST VIEW */

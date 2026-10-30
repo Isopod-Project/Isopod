@@ -182,11 +182,11 @@ class InstallTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def upload(self, files: dict, filename="addon.mcaddon"):
+    def upload(self, files: dict, filename="addon.mcaddon", kind=None):
         path = os.path.join(self.tmp.name, "upload")
         with open(path, "wb") as f:
             f.write(zip_bytes(files))
-        return addons.install_addon(self.data, path, filename)
+        return addons.install_addon(self.data, path, filename, kind=kind)
 
     def world_packs(self, kind, level="Bedrock level"):
         return addons.read_world_packs(self.data, level, kind)
@@ -252,6 +252,31 @@ class InstallTests(unittest.TestCase):
         addons.remove_addon(self.data, BP_UUID)
         self.assertEqual(self.world_packs("behavior"), [])
         self.assertEqual(addons.list_addons(self.data)["addons"], [])
+
+    def test_resource_pack_install_and_remove(self):
+        installed = self.upload({"manifest.json": manifest(RP_UUID, module="resources", name="Textures")}, "textures.mcpack", kind="resource")
+        self.assertEqual([p["type"] for p in installed], ["resource"])
+        folder = os.path.join(self.data, "resource_packs", f"Textures_{RP_UUID[:8]}")
+        self.assertTrue(os.path.isfile(os.path.join(folder, "manifest.json")))
+        self.assertEqual(self.world_packs("resource"), [{"pack_id": RP_UUID, "version": [1, 2, 3]}])
+        self.assertEqual([(a["name"], a["type"], a["enabled"]) for a in addons.list_addons(self.data)["addons"]], [("Textures", "resource", True)])
+
+        addons.remove_addon(self.data, RP_UUID)
+        self.assertFalse(os.path.exists(folder))
+        self.assertEqual(self.world_packs("resource"), [])
+        self.assertEqual(addons.list_addons(self.data)["addons"], [])
+
+    def test_resource_pack_upload_refuses_behavior_packs(self):
+        with self.assertRaisesRegex(addons.AddonError, "Add-ons tab"):
+            self.upload({"manifest.json": manifest()}, "pack.mcpack", kind="resource")
+        # A .mcaddon whose resource half would be fine is still refused as a whole
+        with self.assertRaisesRegex(addons.AddonError, "Add-ons tab"):
+            self.upload({"BP/manifest.json": manifest(), "RP/manifest.json": manifest(RP_UUID, module="resources")}, "both.mcpack", kind="resource")
+        self.assertEqual(os.listdir(self.data), [])
+
+    def test_resource_pack_upload_refuses_mcaddon(self):
+        with self.assertRaisesRegex(addons.AddonError, "Add-ons tab"):
+            self.upload({"manifest.json": manifest(RP_UUID, module="resources")}, "pack.mcaddon", kind="resource")
 
     def test_unknown_pack(self):
         with self.assertRaises(addons.AddonError):
@@ -324,6 +349,20 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(res.status_code, 400)
         self.assertIn("evil.mcpack wasn't installed", res.json()["detail"])
         self.assertIn("unsafe path", res.json()["detail"])
+
+    def test_resource_pack_upload(self):
+        res = self.client.post("/api/instances/pocket/addons/upload", data={"type": "resource"},
+                               files={"file": ("rp.mcpack", zip_bytes({"manifest.json": manifest(RP_UUID, module="resources")}))})
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual([a["type"] for a in self.client.get("/api/instances/pocket/addons").json()["addons"]], ["resource"])
+
+        res = self.client.post("/api/instances/pocket/addons/upload", data={"type": "resource"},
+                               files={"file": ("bp.mcpack", zip_bytes({"manifest.json": manifest()}))})
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("not a resource pack", res.json()["detail"])
+
+        res = self.client.post("/api/instances/pocket/addons/upload", data={"type": "resource"}, files={"file": ("both.mcaddon", b"x")})
+        self.assertEqual(res.status_code, 400)
 
     def test_wrong_extension_is_a_400(self):
         self.assertEqual(self.post_file("mod.jar", b"x").status_code, 400)
