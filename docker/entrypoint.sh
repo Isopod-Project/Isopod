@@ -59,7 +59,8 @@ if [ "$USE_EXTERNAL_DOCKER" = "false" ]; then
     DRIVERS="$DRIVERS vfs"
 
     # Isolated non-overlapping subnet to avoid collision with host bridge
-    DOCKERD_FLAGS="--bip=172.28.0.1/16"
+    # The long shutdown timeout gives servers time to save when an update stops the daemon
+    DOCKERD_FLAGS="--bip=172.28.0.1/16 --shutdown-timeout=60"
     DOCKER_READY=false
 
     for DRIVER in $DRIVERS; do
@@ -97,6 +98,39 @@ if [ "$USE_EXTERNAL_DOCKER" = "false" ]; then
         cat /var/log/dockerd.log || true
     fi
 fi
+
+# Self-update (docs/adr/0002-in-place-self-update.md): start from a version installed under
+# .isopod-app if it's newer than this image, and go back if a new version never reached startup.
+start_installed_version() {
+    local root="${SERVERS_DIR:-/servers}/.isopod-app"
+    [ -d "$root" ] || return 0
+
+    local tag=""
+    if [ -f "$root/pending" ]; then
+        if [ -f "$root/tried" ]; then
+            echo "⚠️  $(cat "$root/pending") didn't start. Going back to the previous version."
+            mv -f "$root/pending" "$root/failed"
+            rm -f "$root/tried"
+        else
+            tag="$(cat "$root/pending")"
+            touch "$root/tried"
+        fi
+    fi
+    [ -n "$tag" ] || [ ! -f "$root/active" ] || tag="$(cat "$root/active")"
+    [ -n "$tag" ] || return 0
+
+    local image_version newest
+    image_version="$(sed -n 's/^ISOPOD_VERSION = "\(.*\)".*/\1/p' /app/backend/main.py)"
+    newest="$(printf '%s\n%s\n' "$image_version" "$tag" | sort -V | tail -n 1)"
+    if [ "$tag" = "$image_version" ] || [ "$newest" != "$tag" ] || [ ! -f "$root/versions/$tag/backend/main.py" ]; then
+        return 0
+    fi
+
+    echo "📦 Starting installed version $tag"
+    cd "$root/versions/$tag"
+    export PYTHONPATH="$root/versions/$tag/deps"
+}
+start_installed_version
 
 echo "🚀 Starting Isopod Web Service..."
 echo "===================================================="

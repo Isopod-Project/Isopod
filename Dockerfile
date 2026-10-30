@@ -45,6 +45,10 @@ COPY backend/ backend/
 # Copy compiled frontend securely into place
 COPY --from=frontend-builder /app/dist /app/frontend/dist
 
+# Self-update bundles can't change this image. Raise docker/image-rev with any change to this
+# file, the entrypoint, or the compose file (docs/adr/0002-in-place-self-update.md).
+COPY docker/image-rev /etc/isopod-image-rev
+
 # Entrypoint for Docker-in-Docker isolation
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

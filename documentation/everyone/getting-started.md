@@ -48,16 +48,16 @@ To change the password or log out, open **Settings → Account**. Changing the p
 **Forgot the password?** Delete `.isopod_auth.json` from your servers folder (`/DATA/AppData/isopod/servers` on CasaOS, `data/servers` on macOS) and reload the dashboard to set up the account again. Your servers aren't affected.
 
 ## 🔄 Updating Isopod
-**Settings → Updates** tells you when a new release is out and shows its release notes. Isopod can't rebuild itself from inside its container, so on a standard install, run these on the machine hosting it, in the folder you cloned Isopod into:
+**Settings → Updates** tells you when a new release is out and shows its release notes. Click **Update Now** to install it. Running servers save and stop first, and servers set to restart come back afterwards. If the new version fails to start, Isopod goes back to the one you had and tells you.
+
+Some releases change the container itself, and installs from before v0.5.0 don't have this updater yet. In those cases the tab shows these commands instead, to run on the machine hosting Isopod, in the folder you cloned it into:
 
 ```bash
 git pull
 docker compose -f isopod-compose.yml up -d --build
 ```
 
-On macOS, leave out `-f isopod-compose.yml`. Your servers and worlds are kept. **Update Now** only appears on setups where Isopod can run the update itself, such as development installs that have the compose file.
-
-Versions before v0.4.1 show **Update Now** on every install. There it only restarts the old version, even though the dashboard then reports the new one, so use the commands above.
+On macOS, leave out `-f isopod-compose.yml`. Your servers and worlds are kept. Versions before v0.4.1 show **Update Now** on every install, but there it only restarts the old version, so use the commands.
 
 ## 🦀 Features at a Glance
 - **Instance Creation**: Quickly spin up new Minecraft servers. Pick a **Group** in the Add Instance window (or **+ New Group...**) to file the new server under it; right-click a server and choose **Move to Folder** to change it later.
