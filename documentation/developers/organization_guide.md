@@ -6,12 +6,16 @@ This document outlines the directory structure and organization standards for th
 
 | Directory | Purpose |
 | :--- | :--- |
-| `assets/` | Static assets like logos, icons, and diagrams. |
+| `assets/` | Logos and icons. This is the frontend's Vite `publicDir`, so everything here ships with the dashboard. |
 | `backend/` | Python/FastAPI source code for the Isopod service. |
 | `frontend/` | React/Vite source code for the dashboard UI. |
 | `documentation/` | Project documentation (split by audience). |
 | `documentation/everyone/` | General information, user guides, and FAQs for non-developers. |
 | `documentation/developers/` | Technical specs, API docs, and architecture diagrams. |
+| `docs/` | Contributor and agent docs: the security audit, agent workflow rules, and README images (`docs/images/`). |
+| `docker/` | Entrypoints, the dev image and compose file, and the macOS compose override. |
+| `scripts/` | Helper scripts (Windows launcher, skill sync). |
+| `.agent/skills/` | AI agent skills. `.claude/skills/` is a generated mirror; run `python scripts/sync_skills.py` after editing. |
 | `servers/` | Managed Minecraft server instances (Docker volumes/mappings). |
 | `build/` | Temporary build artifacts, exports, and deployment packages. |
 | `logs/` | Debug logs, temporary traces, and diagnostic files. |
@@ -20,7 +24,7 @@ This document outlines the directory structure and organization standards for th
 
 ### 1. File Placement
 - **No loose files in root:** Only essential configuration files (e.g., `.env`, `Dockerfile`, `docker-compose.yml`, `README.md`) should reside in the root directory.
-- **Assets:** All images, videos, and static design files must go into `assets/`.
+- **Assets:** Images the dashboard uses go into `assets/`. Images only used by docs go into `docs/images/`.
 - **Logs & Diffs:** Any output from debug sessions or temporary logs should be directed to `logs/` (and ignored by `.git` if possible).
 - **Builds:** Generated artifacts like `.tar` files or production bundles belong in `build/`.
 

@@ -10,6 +10,8 @@ export interface PlayerList {
    online: number;
    max: number;
    players: string[];
+   /** Bedrock only: gamertag -> XUID, taken from the server log. */
+   xuids?: Record<string, string | null>;
 }
 
 interface ManagedUser {
@@ -23,6 +25,8 @@ interface OnlinePlayersProps extends PlayerDialogs {
    instanceId: string;
    list: PlayerList | undefined;
    onChanged: () => void;
+   /** Names only, no actions: they're RCON commands, and Bedrock has no RCON. */
+   readOnly?: boolean;
 }
 
 const isOnline = (list: PlayerList | undefined, name: string) =>
@@ -38,8 +42,8 @@ export function PlayerCount({ list }: { list: PlayerList | undefined }) {
    );
 }
 
-/** Online players for the side panel, each with kick/ban/op/whitelist/message/teleport actions. */
-export function OnlinePlayers({ instanceId, list, onChanged, ...dialogs }: OnlinePlayersProps) {
+/** Online players for the side panel, each with kick/ban/op/whitelist/message/teleport actions unless `readOnly`. */
+export function OnlinePlayers({ instanceId, list, onChanged, readOnly, ...dialogs }: OnlinePlayersProps) {
    const [expanded, setExpanded] = useState<string | null>(null);
    // Op and whitelist state lives in User Management, not in the `list` output
    const [users, setUsers] = useState<ManagedUser[]>([]);
@@ -85,6 +89,14 @@ export function OnlinePlayers({ instanceId, list, onChanged, ...dialogs }: Onlin
                      const isOp = !!user && (user.is_op || user.level > 0);
                      const isWhitelisted = !!user?.whitelisted;
                      const isOpen = expanded === name;
+                     if (readOnly) {
+                        return (
+                           <li key={name} className="flex items-center justify-between px-1.5 py-1 text-xs text-neutral-300" title={list.xuids?.[name] ? `XUID ${list.xuids[name]}` : undefined}>
+                              <span className="truncate">{name}</span>
+                              {isOp && <span title="Operator"><Crown className="w-3 h-3 text-amber-400 flex-shrink-0" /></span>}
+                           </li>
+                        );
+                     }
                      return (
                         <li key={name} className="flex flex-col">
                            <button

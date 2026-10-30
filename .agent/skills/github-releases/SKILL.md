@@ -69,7 +69,7 @@ docker compose pull && docker compose up -d
 
 ### Step 3: Update Project Documentation
 Whenever tickets are closed with new features or fixed bugs, ensure repository documentation reflects the updates before creating the release:
-1. **Identify Affected Docs**: Check `README.md`, user guides in `Documentation/everyone/`, or developer guides in `Documentation/developers/` (or `docs/`).
+1. **Identify Affected Docs**: Check `README.md`, user guides in `documentation/everyone/`, or developer guides in `documentation/developers/` (or `docs/`).
 2. **Document New Features & Changes**:
    - Add new capabilities (e.g., UI interactions, context menus, drag-and-drop, new API endpoints, keyboard shortcuts).
    - Update configuration options, guides, or troubleshooting steps if changed.
