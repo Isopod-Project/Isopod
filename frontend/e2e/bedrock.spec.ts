@@ -125,18 +125,18 @@ test.describe("Bedrock User Management", () => {
     saves = []
     lookups = []
     await page.route("**/api/instances/alpha/config", (route) =>
-      route.fulfill({ json: { image: "itzg/minecraft-bedrock-server", environment: { TYPE: "BEDROCK", ALLOW_LIST: "true", ALLOW_LIST_USERS: "Tacoz YouTube" } } }),
+      route.fulfill({ json: { image: "itzg/minecraft-bedrock-server", environment: { TYPE: "BEDROCK", ALLOW_LIST: "true", ALLOW_LIST_USERS: "Blocky Builder" } } }),
     )
     await page.route("**/api/instances/alpha/users", (route) => {
       if (route.request().method() === "PUT") {
         saves.push(route.request().postDataJSON())
         return route.fulfill({
-          json: { message: "Users updated successfully", whitelist_enabled: true, environment: { ALLOW_LIST: "true", ALLOW_LIST_USERS: "Tacoz YouTube,Steve Two", OPS: "Steve Two" } },
+          json: { message: "Users updated successfully", whitelist_enabled: true, environment: { ALLOW_LIST: "true", ALLOW_LIST_USERS: "Blocky Builder,Steve Two", OPS: "Steve Two" } },
         })
       }
       return route.fulfill({
         headers: { "X-Whitelist-Enabled": "true" },
-        json: [{ name: "Tacoz YouTube", uuid: null, xuid: "2535400000000001", level: 0, is_op: false, whitelisted: true, active: true }],
+        json: [{ name: "Blocky Builder", uuid: null, xuid: "2535400000000001", level: 0, is_op: false, whitelisted: true, active: true }],
       })
     })
     await page.route(/playerdb\.co/, (route) => {
@@ -150,10 +150,10 @@ test.describe("Bedrock User Management", () => {
   })
 
   test("lists the allowlist by gamertag and hides the Java-only controls", async ({ page }) => {
-    await expect(page.getByText("Tacoz YouTube", { exact: true })).toBeVisible()
+    await expect(page.getByText("Blocky Builder", { exact: true })).toBeVisible()
     await expect(page.getByText("XUID 2535400000000001")).toBeVisible()
     await expect(page.getByRole("button", { name: "ALLOWLISTED", exact: true })).toBeVisible()
-    await expect(page.getByLabel("Permission for Tacoz YouTube")).toHaveValue("0")
+    await expect(page.getByLabel("Permission for Blocky Builder")).toHaveValue("0")
     await expect(page.getByRole("option", { name: /Level 2/ })).toHaveCount(0)
     await expect(page.getByText(/Banned Players \(/)).toHaveCount(0)
     await expect(page.getByRole("note").filter({ hasText: "no ban command" })).toBeVisible()
@@ -169,7 +169,7 @@ test.describe("Bedrock User Management", () => {
     expect(saves).toHaveLength(1)
     expect(saves[0].whitelist_enabled).toBe(true)
     expect(saves[0].users).toEqual([
-      expect.objectContaining({ name: "Tacoz YouTube", is_op: false, whitelisted: true }),
+      expect.objectContaining({ name: "Blocky Builder", is_op: false, whitelisted: true }),
       expect.objectContaining({ name: "Steve Two", is_op: true, level: 4, whitelisted: true }),
     ])
     // A gamertag isn't looked up as a Java account

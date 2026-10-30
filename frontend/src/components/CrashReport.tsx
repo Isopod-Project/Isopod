@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertCircle, ArrowLeft, RefreshCw, Skull } from "lucide-react";
+import { HelpButton } from "./HelpButton";
 import { crashLabel, crashSummary, type CrashInfo } from "../lib/crash";
 
 interface CrashReportData {
@@ -69,6 +70,7 @@ export function CrashReportPanel({ instanceId, onBack }: { instanceId: string; o
                <div className="flex items-center gap-2">
                   <Skull className="w-5 h-5 text-red-400" />
                   <span className="text-base font-bold text-white">Crash Report</span>
+                  <HelpButton topic="crash-report" />
                </div>
             </div>
             <button type="button" onClick={load} className="flex items-center gap-1.5 text-xs text-neutral-400 hover:text-white transition-colors">

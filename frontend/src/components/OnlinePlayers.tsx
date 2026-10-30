@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Ban, Crown, LogOut, MessageSquare, Navigation, RefreshCw, ShieldCheck, ShieldOff, Undo2, Users } from "lucide-react";
+import { HelpButton } from "./HelpButton";
 import { usePlayerActions, type BannedPlayer, type PlayerDialogs } from "./usePlayerActions";
 import { fallbackAvatarUrl, playerAvatarUrl } from "../lib/utils";
 
@@ -76,7 +77,7 @@ export function OnlinePlayers({ instanceId, list, onChanged, readOnly, ...dialog
       <div className="w-full mt-3 px-4" data-testid="online-players">
          <div className="w-full bg-[#1A1A1A] border border-[#323232] p-2 rounded flex flex-col gap-1.5 shadow-inner">
             <div className="flex justify-between text-[10px] text-neutral-400 font-mono">
-               <span className="flex items-center gap-1"><Users className="w-3 h-3" /> Players</span>
+               <span className="flex items-center gap-1"><Users className="w-3 h-3" /> Players <HelpButton topic="online-players" iconClassName="w-3 h-3" /></span>
                <span>{list.online}/{list.max}</span>
             </div>
             {list.players.length === 0 ? (

@@ -13,7 +13,7 @@ import yaml
 
 from backend import bedrock, bedrock_users
 
-XUID_TACO = "2535400000000001"
+XUID_BUILDER = "2535400000000001"
 XUID_ALEX = "2535400000000002"
 
 
@@ -23,8 +23,8 @@ def no_lookup(name):
 
 class GamertagTests(unittest.TestCase):
     def test_spaces_inside_a_gamertag_are_kept(self):
-        self.assertTrue(bedrock_users.is_valid_gamertag("Tacoz YouTube"))
-        self.assertEqual(bedrock_users.split_env_list("Tacoz YouTube,Alex\nSteve Two"), ["Tacoz YouTube", "Alex", "Steve Two"])
+        self.assertTrue(bedrock_users.is_valid_gamertag("Blocky Builder"))
+        self.assertEqual(bedrock_users.split_env_list("Blocky Builder,Alex\nSteve Two"), ["Blocky Builder", "Alex", "Steve Two"])
 
     def test_characters_that_break_the_list_or_command_are_rejected(self):
         for name in ['Bad"Name', "a,b", "a:b", " Leading", "Trailing ", "line\nbreak", "", "x" * 33]:
@@ -32,8 +32,8 @@ class GamertagTests(unittest.TestCase):
 
     def test_allow_list_users_with_xuids(self):
         self.assertEqual(
-            bedrock_users.parse_allow_list_users(f"Tacoz YouTube:{XUID_TACO},Alex"),
-            [("Tacoz YouTube", XUID_TACO), ("Alex", None)],
+            bedrock_users.parse_allow_list_users(f"Blocky Builder:{XUID_BUILDER},Alex"),
+            [("Blocky Builder", XUID_BUILDER), ("Alex", None)],
         )
 
     def test_allowlist_is_on_when_the_entrypoint_would_turn_it_on(self):
@@ -52,23 +52,23 @@ class LoadUsersTests(unittest.TestCase):
 
     def test_players_only_the_server_knows_about_are_added(self):
         self.write("allowlist.json", [{"name": "Alex", "xuid": XUID_ALEX, "ignoresPlayerLimit": False}])
-        env = {"ALLOW_LIST_USERS": "Tacoz YouTube", "OPS": f"Steve,{XUID_ALEX},{'9' * 16}"}
+        env = {"ALLOW_LIST_USERS": "Blocky Builder", "OPS": f"Steve,{XUID_ALEX},{'9' * 16}"}
         users, changed = bedrock_users.load_users([], self.data_dir, env)
         by_name = {u["name"]: u for u in users}
         self.assertTrue(changed)
-        self.assertEqual(set(by_name), {"Tacoz YouTube", "Alex", "Steve"})
+        self.assertEqual(set(by_name), {"Blocky Builder", "Alex", "Steve"})
         self.assertTrue(by_name["Alex"]["is_op"])
         self.assertEqual(by_name["Alex"]["xuid"], XUID_ALEX)
         self.assertTrue(by_name["Steve"]["is_op"])
         self.assertFalse(by_name["Steve"]["whitelisted"])
-        self.assertFalse(by_name["Tacoz YouTube"]["is_op"])
+        self.assertFalse(by_name["Blocky Builder"]["is_op"])
 
     def test_xuid_written_by_the_server_is_filled_in(self):
-        self.write("allowlist.json", [{"name": "Tacoz YouTube", "xuid": XUID_TACO}])
-        saved = [bedrock_users.new_user("Tacoz YouTube")]
+        self.write("allowlist.json", [{"name": "Blocky Builder", "xuid": XUID_BUILDER}])
+        saved = [bedrock_users.new_user("Blocky Builder")]
         users, changed = bedrock_users.load_users(saved, self.data_dir, {})
         self.assertTrue(changed)
-        self.assertEqual(users[0]["xuid"], XUID_TACO)
+        self.assertEqual(users[0]["xuid"], XUID_BUILDER)
 
     def test_users_json_alone_is_unchanged(self):
         saved = [bedrock_users.new_user("Alex", whitelisted=False)]
@@ -84,14 +84,14 @@ class NormalizeTests(unittest.TestCase):
 
         def lookup(name):
             lookups.append(name)
-            return XUID_TACO
+            return XUID_BUILDER
 
         users = bedrock_users.normalize(
-            [{"name": "Alex", "is_op": True}, {"name": "Tacoz YouTube", "level": 4}, {"name": "Steve"}],
+            [{"name": "Alex", "is_op": True}, {"name": "Blocky Builder", "level": 4}, {"name": "Steve"}],
             known, lookup,
         )
-        self.assertEqual([u["xuid"] for u in users], [XUID_ALEX, XUID_TACO, None])
-        self.assertEqual(lookups, ["Tacoz YouTube"])
+        self.assertEqual([u["xuid"] for u in users], [XUID_ALEX, XUID_BUILDER, None])
+        self.assertEqual(lookups, ["Blocky Builder"])
         self.assertTrue(all(u["level"] in (0, 4) for u in users))
 
     def test_bad_gamertag_is_rejected(self):
@@ -107,7 +107,7 @@ class AccessTests(unittest.TestCase):
     def setUp(self):
         self.data_dir = tempfile.mkdtemp()
         self.users = [
-            bedrock_users.new_user("Tacoz YouTube", XUID_TACO, is_op=True),
+            bedrock_users.new_user("Blocky Builder", XUID_BUILDER, is_op=True),
             bedrock_users.new_user("Alex"),
             {**bedrock_users.new_user("Gone"), "active": False},
             bedrock_users.new_user("Steve", is_op=True, whitelisted=False),
@@ -117,8 +117,8 @@ class AccessTests(unittest.TestCase):
         env = bedrock_users.access_env(self.users, True, {}, [])
         self.assertEqual(env, {
             "ALLOW_LIST": "true",
-            "ALLOW_LIST_USERS": "Tacoz YouTube,Alex",
-            "OPS": f"{XUID_TACO},Steve",
+            "ALLOW_LIST_USERS": "Blocky Builder,Alex",
+            "OPS": f"{XUID_BUILDER},Steve",
         })
 
     def test_env_while_allowlist_is_off_leaves_the_names_out(self):
@@ -128,7 +128,7 @@ class AccessTests(unittest.TestCase):
 
     def test_hand_added_operator_xuid_is_kept(self):
         other = "9" * 16
-        env = bedrock_users.access_env([], True, {"OPS": f"{other},{XUID_TACO}"}, [bedrock_users.new_user("Tacoz YouTube", XUID_TACO)])
+        env = bedrock_users.access_env([], True, {"OPS": f"{other},{XUID_BUILDER}"}, [bedrock_users.new_user("Blocky Builder", XUID_BUILDER)])
         self.assertEqual(env["OPS"], other)
 
     def test_access_files(self):
@@ -141,12 +141,12 @@ class AccessTests(unittest.TestCase):
         with open(os.path.join(self.data_dir, "allowlist.json")) as f:
             allowlist = json.load(f)
         self.assertEqual(allowlist, [
-            {"ignoresPlayerLimit": False, "name": "Tacoz YouTube", "xuid": XUID_TACO},
+            {"ignoresPlayerLimit": False, "name": "Blocky Builder", "xuid": XUID_BUILDER},
             {"ignoresPlayerLimit": False, "name": "Alex"},
         ])
         with open(os.path.join(self.data_dir, "permissions.json")) as f:
             permissions = json.load(f)
-        self.assertEqual(permissions, [other, {"permission": "operator", "xuid": XUID_TACO}])
+        self.assertEqual(permissions, [other, {"permission": "operator", "xuid": XUID_BUILDER}])
 
     def test_last_operator_removed_empties_permissions(self):
         old = [bedrock_users.new_user("Alex", XUID_ALEX, is_op=True)]
@@ -156,13 +156,13 @@ class AccessTests(unittest.TestCase):
 
     def test_live_commands_quote_gamertags(self):
         old = [bedrock_users.new_user("Alex", is_op=True), bedrock_users.new_user("Old Friend")]
-        new = [bedrock_users.new_user("Alex"), bedrock_users.new_user("Tacoz YouTube", is_op=True)]
+        new = [bedrock_users.new_user("Alex"), bedrock_users.new_user("Blocky Builder", is_op=True)]
         self.assertEqual(bedrock_users.live_commands(old, False, new, True), [
             'allowlist remove "Old Friend"',
-            'allowlist add "Tacoz YouTube"',
+            'allowlist add "Blocky Builder"',
             "allowlist on",
             'deop "Alex"',
-            'op "Tacoz YouTube"',
+            'op "Blocky Builder"',
         ])
         self.assertEqual(bedrock_users.live_commands(new, True, new, True), [])
 
@@ -180,11 +180,11 @@ class EndpointTests(unittest.TestCase):
     def setUp(self):
         self.path = tempfile.mkdtemp()
         os.makedirs(os.path.join(self.path, "data"))
-        service = bedrock.compose_service("pocket", "Pocket", 19132, None, None, None, None, None, False, ["Tacoz YouTube"])
+        service = bedrock.compose_service("pocket", "Pocket", 19132, None, None, None, None, None, False, ["Blocky Builder"])
         with open(os.path.join(self.path, "docker-compose.yml"), "w") as f:
             yaml.dump({"services": {"mc": service}}, f)
         with open(os.path.join(self.path, "data", "users.json"), "w") as f:
-            json.dump([bedrock_users.new_user("Tacoz YouTube")], f)
+            json.dump([bedrock_users.new_user("Blocky Builder")], f)
         self.sent = []
         self.running = True
         patches = [
@@ -209,28 +209,28 @@ class EndpointTests(unittest.TestCase):
         self.assertNotIn("ALLOW_LIST_USERS", self.env())
         users, enabled = main.get_instance_users_internal("pocket")
         self.assertFalse(enabled)
-        self.assertEqual([u["name"] for u in users], ["Tacoz YouTube"])
+        self.assertEqual([u["name"] for u in users], ["Blocky Builder"])
 
     def test_add_op_and_remove_on_a_running_server_persist(self):
         result = self.save([
-            {"name": "Tacoz YouTube", "whitelisted": True},
+            {"name": "Blocky Builder", "whitelisted": True},
             {"name": "Steve Two", "whitelisted": True, "is_op": True, "level": 4},
         ])
         self.assertTrue(result["whitelist_enabled"])
         self.assertEqual(self.sent, ['allowlist add "Steve Two"', "allowlist on", 'op "Steve Two"'])
         env = self.env()
-        self.assertEqual(env["ALLOW_LIST_USERS"], "Tacoz YouTube,Steve Two")
+        self.assertEqual(env["ALLOW_LIST_USERS"], "Blocky Builder,Steve Two")
         self.assertEqual(env["OPS"], "Steve Two")
         self.assertEqual(result["environment"]["OPS"], "Steve Two")
 
         # What the tab shows after a restart comes back from users.json
         users, enabled = main.get_instance_users_internal("pocket")
         self.assertTrue(enabled)
-        self.assertEqual({u["name"]: u["is_op"] for u in users}, {"Tacoz YouTube": False, "Steve Two": True})
+        self.assertEqual({u["name"]: u["is_op"] for u in users}, {"Blocky Builder": False, "Steve Two": True})
 
         self.sent.clear()
         self.save([{"name": "Steve Two", "whitelisted": True, "is_op": False}])
-        self.assertEqual(self.sent, ['allowlist remove "Tacoz YouTube"', 'deop "Steve Two"'])
+        self.assertEqual(self.sent, ['allowlist remove "Blocky Builder"', 'deop "Steve Two"'])
         self.assertEqual(self.env()["ALLOW_LIST_USERS"], "Steve Two")
         self.assertEqual(self.env()["OPS"], "")
         with open(os.path.join(self.path, "data", "allowlist.json")) as f:
@@ -238,9 +238,9 @@ class EndpointTests(unittest.TestCase):
 
     def test_stopped_server_gets_no_commands(self):
         self.running = False
-        self.save([{"name": "Tacoz YouTube", "whitelisted": True, "is_op": True}])
+        self.save([{"name": "Blocky Builder", "whitelisted": True, "is_op": True}])
         self.assertEqual(self.sent, [])
-        self.assertEqual(self.env()["OPS"], "Tacoz YouTube")
+        self.assertEqual(self.env()["OPS"], "Blocky Builder")
 
     def test_bad_gamertag_is_a_400(self):
         with self.assertRaises(main.HTTPException) as ctx:
