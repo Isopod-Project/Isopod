@@ -4070,17 +4070,24 @@ def list_bedrock_addons(instance_id: str):
 
 
 @app.post("/api/instances/{instance_id}/addons/upload")
-def upload_bedrock_addon(instance_id: str, file: UploadFile = File(...)):
-    """Install a .mcpack or .mcaddon and turn its packs on for the world."""
+def upload_bedrock_addon(instance_id: str, file: UploadFile = File(...), type: Optional[str] = Form(None)):
+    """Install a .mcpack or .mcaddon and turn its packs on for the world.
+
+    type="resource" is the Resource Packs tab: only a .mcpack holding resource packs is installed.
+    """
     path, data_dir, env = bedrock_addon_context(instance_id)
     filename = os.path.basename(file.filename or "")
-    if not filename.lower().endswith(bedrock_addons.ADDON_EXTENSIONS):
-        raise HTTPException(status_code=400, detail="Only .mcpack and .mcaddon files can be installed.")
+    if type not in (None, "resource"):
+        raise HTTPException(status_code=400, detail="type must be resource or left out.")
+    extensions = bedrock_addons.RESOURCE_PACK_EXTENSIONS if type == "resource" else bedrock_addons.ADDON_EXTENSIONS
+    if not filename.lower().endswith(extensions):
+        detail = "Only .mcpack files can be installed as resource packs." if type == "resource" else "Only .mcpack and .mcaddon files can be installed."
+        raise HTTPException(status_code=400, detail=detail)
     take_pre_update_snapshot(path, "Before changing add-ons")
     with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
         shutil.copyfileobj(file.file, tmp)
     try:
-        installed = bedrock_addons.install_addon(data_dir, tmp.name, filename, env)
+        installed = bedrock_addons.install_addon(data_dir, tmp.name, filename, env, kind=type)
     except bedrock_addons.AddonError as e:
         raise HTTPException(status_code=400, detail=f"{filename} wasn't installed. {e}")
     finally:
