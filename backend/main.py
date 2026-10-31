@@ -487,6 +487,7 @@ async def get_instance_status(instance_id: str):
     bedrock_port = None
     server_type = "VANILLA"
     last_online = 0
+    modpack_update = None
     try:
         path = get_instance_path(instance_id)
         # Try to pull version from docker-compose.yml
@@ -514,7 +515,9 @@ async def get_instance_status(instance_id: str):
                    p_str = str(ports[0]).split(":")[0]
                    port = int(p_str)
                bedrock_port = bedrock.bedrock_port(mc_config)
-        
+               if isinstance(env, dict):
+                   modpack_update = modpacks.cached_update(os.path.join(path, "data"), env.get("MODRINTH_MODPACK"), env.get("MODRINTH_VERSION") or None)
+
         # Last online from docker-compose.yml mod date
         last_online = os.path.getmtime(compose_path)
     except Exception as e:
@@ -1715,36 +1718,6 @@ def get_java_tag_for_mc_version(mc_version: str) -> str:
     
     return "java21"
 
-def is_client_only_mod(filename: str) -> bool:
-    fn = filename.lower()
-    if fn.endswith(".jar"):
-        fn = fn[:-4]
-    
-    # Normalize: strip all non-alphanumeric chars
-    import re
-    norm = re.sub(r'[^a-z0-9]', '', fn)
-    
-    # Common client-side indicators
-    client_indicators = [
-        "sodium", "rubidium", "embeddium", "iris", "oculus", "modmenu", "continuity",
-        "entityculling", "immediatelyfast", "dynamicfps", "e4mc", "controlify",
-        "reesessodiumoptions", "sodiumextra", "bettergrassify", "cubeswithoutborders",
-        "animatica", "skyboxify", "puzzle", "presencefootsteps", "soundphysics",
-        "borderlessfullscreen", "languagereload", "morechathistory", "mainmenucredits",
-        "crashassistant", "bettermounthud", "capeprovider", "zoomify", "debugify",
-        "fastquit", "nochatreports", "optigui", "litematica", "minihud", "tweakeroo",
-        "lambdynamiclights", "bobby", "distanthorizons", "fancymenu", "konkrete",
-        "controlling", "searchables", "customskinloader", "fabrishot", "perspectivemod",
-        "chunkfade", "shulboxtooltip", "itemphysics", "ambience", "visuality",
-        "skinlayers", "3dskinlayers", "wavesurfer", "legendarytooltips"
-    ]
-    
-    for indicator in client_indicators:
-        if norm.startswith(indicator):
-            return True
-            
-    return False
-
 @app.get("/api/mods/modrinth/{project_id}/versions")
 async def get_modrinth_project_versions(project_id: str):
     project_id = url_segment(project_id, "project ID")
@@ -2145,14 +2118,7 @@ async def create_instance(req: CreateInstanceRequest):
                                         if dep_key in pack_deps:
                                             env.append(f"ISOPOD_MODPACK_LOADER={loader_type}")
                                             break
-                                    excludes = []
-                                    for f in index_data.get("files", []):
-                                        env_cfg = f.get("env", {})
-                                        filename = f.get("path", "").split("/")[-1]
-                                        if filename:
-                                            if env_cfg.get("server") == "unsupported" or is_client_only_mod(filename):
-                                                excludes.append(filename)
-                                    
+                                    excludes = modpacks.client_excludes(index_data)
                                     if excludes:
                                         exclude_str = ",".join(excludes)
                                         env.append(f"MODRINTH_EXCLUDE_FILES={exclude_str}")
@@ -3011,22 +2977,25 @@ def describe_update(old_env: dict, new_env: dict) -> Optional[str]:
             labels.append(label)
     return "Before changing " + ", ".join(labels)
 
-def take_pre_update_snapshot(path: str, reason: str) -> Optional[dict]:
-    """Snapshot the instance before an update, unless snapshots are off or one was just taken."""
+def take_pre_update_snapshot(path: str, reason: str, requested: bool = False) -> Optional[dict]:
+    """Snapshot the instance before an update, unless snapshots are off or one was just taken.
+
+    A snapshot the user asked for by name is always taken fresh and kept, whatever those settings say.
+    """
     keep = backups.get_settings(get_instance_meta(path))["snapshot_keep"]
-    if keep <= 0:
+    if keep <= 0 and not requested:
         return None
-    snapshot = backups.recent_snapshot(path)
+    snapshot = None if requested else backups.recent_snapshot(path)
     if not snapshot:
         try:
             snapshot = backups.create_snapshot(path, reason)
         except Exception as e:
+            skip_hint = "To update without one, untick the backup option." if requested else "To skip snapshots, set Snapshots to keep to 0 in the Backups tab."
             raise HTTPException(
                 status_code=500,
-                detail=f"Couldn't take a snapshot before the change, so nothing was changed: {e}. "
-                       "To skip snapshots, set Snapshots to keep to 0 in the Backups tab.",
+                detail=f"Couldn't take a snapshot before the change, so nothing was changed: {e}. {skip_hint}",
             )
-        backups.prune_snapshots(path, keep)
+        backups.prune_snapshots(path, max(keep, 1) if requested else keep)
     # 'changed' is when this change happened; the offer stays until the server starts fine after it.
     save_instance_meta(path, {"pending_snapshot": {
         "name": snapshot["name"], "reason": snapshot.get("reason") or reason, "changed": time.time(),
@@ -3149,6 +3118,140 @@ async def backup_schedule_loop():
         except Exception as e:
             print(f"Backup scheduler error: {e}")
         await asyncio.sleep(60)
+
+async def modpack_update_loop():
+    """Background task that keeps every modpack's version list recent, for the Update Available badges."""
+    while True:
+        try:
+            for inst in list_instances():
+                modpack = read_compose_env(inst.path).get("MODRINTH_MODPACK", "").strip()
+                if modpack:
+                    try:
+                        await modpacks.get_project(modpack)
+                    except modpacks.ModpackError as e:
+                        print(f"Modpack update check failed for {inst.id}: {e}")
+        except Exception as e:
+            print(f"Modpack update check error: {e}")
+        await asyncio.sleep(1800)
+
+def modpack_env(path: str) -> Tuple[dict, str]:
+    """An instance's compose environment and modpack project. A 404 if it isn't a modpack instance."""
+    env = read_compose_env(path)
+    modpack = env.get("MODRINTH_MODPACK", "").strip()
+    if not modpack:
+        raise HTTPException(status_code=404, detail="This server wasn't created from a Modrinth modpack.")
+    return env, modpack
+
+def image_for_mc_version(image: str, mc_version: str) -> str:
+    """The itzg image tag with the Java that Minecraft version needs. Other images and tags for that Java stay."""
+    repo, _, tag = image.partition(":")
+    if repo != "itzg/minecraft-server":
+        return image
+    java_tag = get_java_tag_for_mc_version(mc_version)
+    return image if tag.startswith(java_tag) else f"{repo}:{java_tag}"
+
+def set_compose_image(instance_path: str, image: str) -> None:
+    compose_path = os.path.join(instance_path, "docker-compose.yml")
+    with open(compose_path, "r") as f:
+        cdata = yaml.safe_load(f) or {}
+    services = cdata.get("services") or {}
+    if services:
+        (services.get("mc") or list(services.values())[0])["image"] = image
+        with open(compose_path, "w") as f:
+            yaml.dump(cdata, f, default_flow_style=False)
+
+def compose_image(instance_path: str) -> str:
+    with open(os.path.join(instance_path, "docker-compose.yml"), "r") as f:
+        services = (yaml.safe_load(f) or {}).get("services") or {}
+    return (services.get("mc") or list(services.values())[0]).get("image", "") if services else ""
+
+def is_instance_up(instance_path: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["docker", "compose", "ps", "-q", "--status", "running", "--status", "restarting"],
+            cwd=instance_path, capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+class ModpackUpdateRequest(BaseModel):
+    version_id: str
+    # Takes a snapshot first, so the whole instance can be rolled back
+    backup: bool = True
+    # Only applies if the server is running; otherwise the update happens on its next start
+    restart: bool = True
+
+@app.get("/api/instances/{instance_id}/modpack/status")
+async def get_modpack_status(instance_id: str, force: bool = False):
+    path = get_instance_path(instance_id)
+    env, modpack = modpack_env(path)
+    try:
+        return await modpacks.get_status(os.path.join(path, "data"), modpack, env.get("MODRINTH_VERSION") or None, force)
+    except modpacks.ModpackError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+
+@app.post("/api/instances/{instance_id}/modpack/update")
+async def update_modpack(instance_id: str, req: ModpackUpdateRequest):
+    path = get_instance_path(instance_id)
+    env, modpack = modpack_env(path)
+    version_id = url_segment(req.version_id, "modpack version")
+    if not version_id:
+        raise HTTPException(status_code=400, detail="Invalid modpack version")
+    try:
+        target = await modpacks.load_target(modpack, version_id)
+    except modpacks.ModpackError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+
+    version, mc_version = target["version"], target["minecraft_version"]
+    index_data, new_mods = target["index_data"], target["mods"]
+    snapshot = None
+    if req.backup:
+        reason = f"Before switching the modpack to {version.get('version_number')}"
+        snapshot = await asyncio.to_thread(take_pre_update_snapshot, path, reason, True)
+
+    saved = modpacks.load_saved(path, None)
+    old_mods = saved.get("mods", []) if saved else []
+    previous = [x.strip() for x in env.get("MODRINTH_EXCLUDE_FILES", "").split(",") if x.strip()]
+    values = {
+        "MODRINTH_VERSION": version["id"],
+        "MODRINTH_EXCLUDE_FILES": ",".join(modpacks.merge_excludes(index_data, previous, old_mods, new_mods)),
+        "MODRINTH_FORCE_SYNCHRONIZE": "true",
+    }
+    pack_deps = index_data.get("dependencies", {})
+    for dep_key, loader_type in MRPACK_LOADER_DEPENDENCIES.items():
+        if dep_key in pack_deps:
+            values["ISOPOD_MODPACK_LOADER"] = loader_type
+            break
+    image = compose_image(path)
+    if mc_version:
+        values["VERSION"] = mc_version
+        image = image_for_mc_version(image, mc_version)
+        set_compose_image(path, image)
+    set_compose_env(path, values)
+
+    modpacks.carry_removed(old_mods, new_mods)
+    modpacks.save(path, modpack, version["id"], new_mods)
+
+    restarted = False
+    restart_error = None
+    if req.restart and is_instance_up(path):
+        # Stop then start, like the dashboard's Restart: 'up' alone wouldn't wake a sleeping server first
+        try:
+            await asyncio.to_thread(stop_instance, instance_id)
+            await start_instance(instance_id)
+            restarted = True
+        except HTTPException as e:
+            restart_error = e.detail
+
+    return {
+        "version_number": version.get("version_number"),
+        "image": image,
+        "environment": values,
+        "snapshot": snapshot,
+        "restarted": restarted,
+        "restart_error": restart_error,
+    }
 
 @app.get("/api/mods/metadata")
 async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = "", modrinth_modpack: str = "", cf_modpack: str = ""):
@@ -4564,6 +4667,7 @@ async def startup_event():
     # Start the periodic update check in the background
     asyncio.create_task(update_check_loop())
     asyncio.create_task(backup_schedule_loop())
+    asyncio.create_task(modpack_update_loop())
     threading.Thread(target=crash_watchdog.run, args=(get_docker_client,), daemon=True, name="crash-watchdog").start()
 
 @app.get("/api/system/check-updates", response_model=UpdateInfo)

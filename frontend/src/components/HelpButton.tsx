@@ -25,6 +25,7 @@ const HELP_TOPICS = {
    world: "world-settings",
    backups: "backups",
    mods: "mod-management",
+   modpack: "dashboard-guide/modpack-updates",
    "resource-pack": "mod-management/resource-packs",
    config: "server-tuning",
 

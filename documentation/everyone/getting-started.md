@@ -61,7 +61,7 @@ On macOS, leave out `-f isopod-compose.yml`. Your servers and worlds are kept. V
 
 ## 🦀 Features at a Glance
 - **Instance Creation**: Quickly spin up new Minecraft servers. Pick a **Group** in the Add Instance window (or **+ New Group...**) to file the new server under it; right-click a server and choose **Move to Folder** to change it later.
-- **Modpacks**: Create a server from a **Modrinth** or **CurseForge** modpack. CurseForge needs a free API key, see [CurseForge Modpacks](#-curseforge-modpacks).
+- **Modpacks**: Create a server from a **Modrinth** or **CurseForge** modpack. CurseForge needs a free API key, see [CurseForge Modpacks](#-curseforge-modpacks). Modrinth packs can be updated from the dashboard, see [Updating a Modrinth Modpack](#-updating-a-modrinth-modpack).
 - **Mod Management**: Search and install mods directly from Modrinth. Mods install as soon as you click **Add**.
 - **Desktop-Grade File Explorer**: Right-click context menus, drag-and-drop file moves & direct OS uploads, breadcrumb navigation, inline renaming/creation, multi-select, and conflict resolution.
 - **Live Console**: Watch your server logs in real-time.
@@ -85,6 +85,24 @@ Pick a server type when you add an instance, or change it later in the Edit wind
   - **Paper** runs Paper, Spigot, and Bukkit plugins.
   - **Purpur** is a Paper fork with extra gameplay and config options. It runs the same plugins as Paper, plus Purpur-only ones.
   - **Folia** runs each region of the world on its own thread, for large servers on machines with many CPU cores. Most Paper plugins don't work on Folia, so the plugin search only shows plugins marked Folia-compatible. Folia only exists for some Minecraft versions (1.19.4 and newer), and all its builds are experimental; Isopod warns you if the version you picked has no Folia build.
+
+## 📦 Updating a Modrinth Modpack
+Servers created from a Modrinth modpack get a **Modpack** tab in the Edit window. It shows the pack, the version the server is on, and every version with its changelog.
+
+Isopod checks Modrinth about once an hour. When a newer version is out, the server's tile shows **Update Available**, and the side panel shows a **View Update** button that opens the tab. **Check Now** in the tab checks right away.
+
+To update:
+1. Click **Update to Latest**, or **Switch** next to any version in the list. You can go to an older version the same way.
+2. Read the confirmation. It warns you if the Minecraft version changes.
+3. Keep **Create backup before updating** ticked. It saves the worlds, the `mods`, `config`, and `plugins` folders, `server.properties`, and the Docker settings, so you can roll back with **Restore previous state** in the side panel or from the **Backups** tab.
+4. If the server is running, keep **Restart the server now** ticked to install the new version straight away. Otherwise it installs the next time the server starts.
+
+Isopod sets the pack version, the Minecraft version, and the Java version for you. Client-only mods in the new version are excluded, and mods you removed or disabled stay that way.
+
+- A pack on a release version is only offered newer releases, and a pack on a beta isn't offered alphas. You can still pick those versions from the list.
+- Worlds can't be moved to an older Minecraft version safely. To undo an update that changed the Minecraft version, restore the backup.
+- CurseForge modpacks don't have this tab yet.
+- If `MODRINTH_MODPACK` holds a URL or a file path instead of a project ID, the tab says it can't check that pack.
 
 ## 🔥 CurseForge Modpacks
 Isopod can create a server from any CurseForge modpack. CurseForge only serves its API to apps with a key, so you set one up once.
