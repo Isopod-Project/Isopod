@@ -3,6 +3,7 @@ import { AlertTriangle, Folder, Play, Square, Settings, Plus, RefreshCw, Layers,
 import { HelpButton } from "./components/HelpButton";
 import { AccountSettings } from "./components/AuthGate";
 import { BackupsPanel } from "./components/BackupsPanel";
+import { ConsoleLogo, IsopodLogo } from "./components/IsopodLogo";
 import { BedrockAddonsPanel } from "./components/BedrockAddons";
 import { CrashBadge, CrashReportPanel } from "./components/CrashReport";
 import { ServerProgressBar } from "./components/ServerProgressBar";
@@ -3036,7 +3037,7 @@ export default function App() {
                   </div>
                ) : instances.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full text-neutral-500">
-                     <AlertCircle className="w-12 h-12 mb-4 opacity-50" />
+                     <div className="mb-4"><IsopodLogo /></div>
                      <p>No instances found. Create folders in your servers directory.</p>
                   </div>
                ) : (
@@ -4486,6 +4487,8 @@ export default function App() {
                                     </button>
                                  </div>
                               </div>
+
+                              <ConsoleLogo />
 
                               {/* Console Log Pre View */}
                               <pre

@@ -62,6 +62,16 @@ test.describe("Minecraft Log tab", () => {
     await expect(logBox(page)).not.toContainText("Preparing spawn area")
   })
 
+  test("The logo stays above the log in both views and out of it", async ({ page }) => {
+    const logo = page.getByTestId("console-logo")
+    await expect(logo).toBeVisible()
+    await expect(logBox(page).locator("svg")).toHaveCount(0)
+    await page.getByRole("button", { name: "Verbose" }).click()
+    await expect(logo).toBeVisible()
+    await page.getByPlaceholder("Search", { exact: true }).fill("Isopod")
+    await expect(page.getByText("No match")).toBeVisible()
+  })
+
   test("Wrap lines switches between wrapping and horizontal scrolling", async ({ page }) => {
     await expect(logBox(page)).toHaveClass(/whitespace-pre-wrap/)
     await page.getByLabel("Wrap lines").uncheck()
