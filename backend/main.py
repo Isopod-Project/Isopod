@@ -32,6 +32,7 @@ from . import bedrock_addons
 from . import security
 from . import autopause
 from . import auth
+from . import banner
 from . import self_update
 import threading
 
@@ -4563,6 +4564,7 @@ async def update_check_loop():
 
 @app.on_event("startup")
 async def startup_event():
+    banner.print_banner(ISOPOD_VERSION)
     self_update.mark_started(SERVERS_DIR, ISOPOD_VERSION)
     # Start the periodic update check in the background
     asyncio.create_task(update_check_loop())

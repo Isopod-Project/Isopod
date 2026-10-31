@@ -19,6 +19,8 @@ Welcome to **Isopod**! This guide will help you get your Minecraft Instance Mana
 3. **Open the Dashboard:**
    Navigate to [http://localhost:8000](http://localhost:8000) in your web browser.
 
+Isopod prints its logo and version to the logs when it starts. If your log viewer shows codes like `[38;5;137m` around the logo, set the environment variable `NO_COLOR=1` to print it without color. The logo also stays pinned to the top of each server's console, in both Simplified and Verbose.
+
 ## 🍎 Running on macOS
 `isopod-compose.yml` stores data under `/DATA/AppData/isopod`, a CasaOS path that doesn't exist on a Mac. Docker Desktop can only mount folders it shares with containers (your home folder by default). The macOS overlay `docker/isopod-compose.macos.yml` swaps in Mac-friendly locations.
 
