@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useRef, useMemo } from "react";
-import { AlertTriangle, Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Archive, Cat, History, Flame } from "lucide-react";
+import { AlertTriangle, Folder, Play, Square, Settings, Plus, RefreshCw, Layers, Gamepad2, AlertCircle, Edit, Trash2, Database, Cpu, Box, Terminal, X, Search, Check, ExternalLink, Save, ChevronRight, FileText, ArrowLeft, Monitor, Shield, Sun, Moon, Languages, Users, Pencil, Tag, Copy, List, Share, HelpCircle, Globe, Image, ArrowDown, RotateCcw, Skull, Download, Upload, FolderPlus, FilePlus, Scissors, Clipboard, Archive, Cat, History, Flame, Package } from "lucide-react";
 import { HelpButton } from "./components/HelpButton";
 import { AccountSettings } from "./components/AuthGate";
 import { BackupsPanel } from "./components/BackupsPanel";
 import { ConsoleLogo, IsopodLogo } from "./components/IsopodLogo";
 import { BedrockAddonsPanel } from "./components/BedrockAddons";
 import { CrashBadge, CrashReportPanel } from "./components/CrashReport";
+import { ModpackPanel, ModpackUpdateBadge, type ModpackUpdate, type ModpackUpdateResult } from "./components/ModpackPanel";
 import { ServerProgressBar } from "./components/ServerProgressBar";
 import { crashLabel, crashSummary, type CrashInfo } from "./lib/crash";
 import { ResourceTotals, InstanceResources, type ResourceUsage } from "./components/ResourceUsage";
@@ -44,6 +45,8 @@ interface InstanceStatus {
    // Snapshot taken before the last update, offered for rollback until the server starts fine
    pending_snapshot?: PendingSnapshot | null;
    crash?: CrashInfo | null;
+   // A newer version of the Modrinth modpack this server runs
+   modpack_update?: ModpackUpdate | null;
 }
 
 // Server TYPE -> the variable that pins its loader version or build (matches LOADER_VERSION_ENV in the backend)
@@ -238,12 +241,13 @@ export default function App() {
    const [originalConfig, setOriginalConfig] = useState<any>(null);
    // Applies an environment change the backend already saved, to both the live and the saved config,
    // so it doesn't show up as an unsaved change
-   const applySavedEnv = (transform: (env: Record<string, string>) => Record<string, string>) => {
-      setConfig(prev => prev.environment ? { ...prev, environment: transform(prev.environment) } : prev);
+   const applySavedEnv = (transform: (env: Record<string, string>) => Record<string, string>, image?: string) => {
+      const withImage = image ? { image } : {};
+      setConfig(prev => prev.environment ? { ...prev, ...withImage, environment: transform(prev.environment) } : prev);
       setOriginalConfig((prev: string | null) => {
          if (!prev) return prev;
          const saved = JSON.parse(prev);
-         return saved.environment ? JSON.stringify({ ...saved, environment: transform(saved.environment) }) : prev;
+         return saved.environment ? JSON.stringify({ ...saved, ...withImage, environment: transform(saved.environment) }) : prev;
       });
    };
    const [isSaving, setIsSaving] = useState(false);
@@ -2475,6 +2479,18 @@ export default function App() {
       fetchInstanceMods(selectedId, true);
    };
 
+   const openModpackTab = () => {
+      openEditModal();
+      setEditTab("modpack");
+   };
+
+   // The update already changed docker-compose.yml, so a later Save must not write the old values back
+   const handleModpackUpdated = (id: string, result: ModpackUpdateResult) => {
+      applySavedEnv(env => ({ ...env, ...result.environment }), result.image);
+      fetchStatus(id);
+      fetchInstanceMods(id, true);
+   };
+
    const openCrashReport = () => {
       openEditModal();
       setLogView("crash");
@@ -3094,6 +3110,7 @@ export default function App() {
                                           )}
                                           {isRunning && <PlayerCount list={playerLists[inst.id]} />}
                                           {!connectionLost && <CrashBadge crash={statuses[inst.id]?.crash} />}
+                                          {!connectionLost && <ModpackUpdateBadge update={statuses[inst.id]?.modpack_update} />}
                                        </div>
                                     );
                                  })}
@@ -3178,6 +3195,7 @@ export default function App() {
                                           )}
                                           {isRunning && <PlayerCount list={playerLists[inst.id]} />}
                                           {!connectionLost && <CrashBadge crash={statuses[inst.id]?.crash} />}
+                                          {!connectionLost && <ModpackUpdateBadge update={statuses[inst.id]?.modpack_update} />}
                                        </div>
                                     );
                                  })}
@@ -3326,6 +3344,28 @@ export default function App() {
                                     Dismiss
                                  </button>
                               </div>
+                           </div>
+                        </div>
+                     )}
+
+                     {!connectionLost && selectedStatus?.modpack_update && (
+                        <div role="region" aria-label="Modpack update" className="w-full mt-3 px-4">
+                           <div className="w-full bg-emerald-500/5 border border-emerald-500/30 p-3 rounded flex flex-col gap-2">
+                              <div className="flex items-start gap-2 text-xs text-emerald-300">
+                                 <Package className="w-4 h-4 shrink-0 mt-px" />
+                                 <span className="flex-1 break-words min-w-0">
+                                    Update available: modpack version {selectedStatus.modpack_update.latest}. This server is on {selectedStatus.modpack_update.current}.
+                                 </span>
+                                 <HelpButton topic="modpack" iconClassName="w-3.5 h-3.5" />
+                              </div>
+                              <button
+                                 type="button"
+                                 onClick={openModpackTab}
+                                 className="flex items-center justify-center gap-1.5 px-2 py-1.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 transition-all font-bold text-xs"
+                              >
+                                 <Package className="w-3.5 h-3.5" />
+                                 View Update
+                              </button>
                            </div>
                         </div>
                      )}
@@ -4339,6 +4379,15 @@ export default function App() {
                               <Box className="w-4 h-4" />
                               {editingBedrock ? "Add-ons" : "Mods"}
                            </button>
+                           {!!config.environment?.["MODRINTH_MODPACK"] && (
+                           <button
+                              onClick={() => setEditTab("modpack")}
+                              className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "modpack" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
+                           >
+                              <Package className="w-4 h-4" />
+                              Modpack
+                           </button>
+                           )}
                            <button
                               onClick={() => setEditTab("resource-pack")}
                               className={`flex items-center gap-3 px-3 py-2.5 rounded text-left font-medium transition-all ${editTab === "resource-pack" ? 'bg-[#3E8ED0] text-white shadow-lg' : 'text-neutral-400 hover:bg-[#323232] hover:text-neutral-200'}`}
@@ -5278,6 +5327,16 @@ export default function App() {
 
                         {editTab === "backups" && selectedId && (
                            <BackupsPanel instanceId={selectedId} showAlert={showAlert} showConfirm={showConfirm} />
+                        )}
+
+                        {editTab === "modpack" && selectedId && (
+                           <ModpackPanel
+                              key={selectedId}
+                              instanceId={selectedId}
+                              isRunning={!!selectedStatus?.is_running}
+                              showAlert={showAlert}
+                              onUpdated={(result) => handleModpackUpdated(selectedId, result)}
+                           />
                         )}
 
                         {editTab === "world" && (
