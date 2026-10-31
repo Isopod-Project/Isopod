@@ -339,3 +339,12 @@ html[data-theme="light"] .bg-black\/75 {
 @keyframes fadeIn {
     to { opacity: 1; }
 }
+
+.animate-indeterminate {
+  animation: indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes indeterminate {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}
