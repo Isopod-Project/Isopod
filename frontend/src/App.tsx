@@ -76,7 +76,21 @@ interface ModSearchHit {
    latest_version?: string;
    summary?: string | null;
    url?: string | null;
+   // False for CurseForge mods whose author only allows downloads through the CurseForge app
+   downloadable?: boolean;
 }
+
+type ModProvider = "modrinth" | "curseforge";
+
+// The compose variables that list each provider's enabled mods and the ones Isopod keeps disabled
+const MOD_ENV_KEYS: Record<ModProvider, { enabled: string; disabled: string }> = {
+   modrinth: { enabled: "MODRINTH_PROJECTS", disabled: "MODRINTH_DISABLED" },
+   curseforge: { enabled: "CURSEFORGE_FILES", disabled: "CURSEFORGE_DISABLED" },
+};
+const MOD_PROVIDERS: { id: ModProvider; name: string }[] = [
+   { id: "modrinth", name: "Modrinth" },
+   { id: "curseforge", name: "CurseForge" },
+];
 
 interface PendingSnapshot {
    name: string;
@@ -263,7 +277,7 @@ export default function App() {
 
    // Mod Search States
    const [modSearchQuery, setModSearchQuery] = useState("");
-   const [modSearchProvider, setModSearchProvider] = useState<"modrinth">("modrinth");
+   const [modSearchProvider, setModSearchProvider] = useState<ModProvider>("modrinth");
    const [modSearchResults, setModSearchResults] = useState<any[]>([]);
    const [isModSearching, setIsModSearching] = useState(false);
    const [modSearchVersion, setModSearchVersion] = useState("");
@@ -295,6 +309,8 @@ export default function App() {
    const [modSelectionAnchor, setModSelectionAnchor] = useState<string | null>(null);
    const [modFilterQuery, setModFilterQuery] = useState("");
    const modFileInputRef = useRef<HTMLInputElement>(null);
+   // The newest mod search, so a slower older one can't replace its results
+   const latestModSearchRef = useRef(0);
    const [consoleCommand, setConsoleCommand] = useState("");
    const [commandHistory, setCommandHistory] = useState<string[]>([]);
    const [historyIndex, setHistoryIndex] = useState<number>(-1);
@@ -1363,8 +1379,9 @@ export default function App() {
       setCompatibility({ compatible: [], incompatible: [] });
 
       try {
-         const loader = environment["TYPE"] || "VANILLA";
+         const loader = getInstanceModLoader(environment) || "VANILLA";
          const modrinthIds = (environment["MODRINTH_PROJECTS"] || "").split(',').filter(Boolean);
+         const curseforgeIds = (environment["CURSEFORGE_FILES"] || "").split(',').filter(Boolean);
 
          const res = await fetch("/api/mods/check-compatibility", {
             method: "POST",
@@ -1372,7 +1389,8 @@ export default function App() {
             body: JSON.stringify({
                mc_version: vId,
                loader: loader,
-               modrinth_ids: modrinthIds
+               modrinth_ids: modrinthIds,
+               curseforge_ids: curseforgeIds
             })
          });
          const data = await res.json();
@@ -1413,9 +1431,10 @@ export default function App() {
 
       if (updateMods) {
          // Keep only compatible ones
-         const compModrinth = compatibility.compatible.filter((m: any) => m.provider === 'modrinth').map((m: any) => m.id);
+         const compatibleIds = (provider: ModProvider) => compatibility.compatible.filter((m: any) => m.provider === provider).map((m: any) => m.id).join(',');
 
-         newEnv["MODRINTH_PROJECTS"] = compModrinth.join(',');
+         newEnv["MODRINTH_PROJECTS"] = compatibleIds("modrinth");
+         if (newEnv["CURSEFORGE_FILES"]) newEnv["CURSEFORGE_FILES"] = compatibleIds("curseforge");
       }
 
       if (updateLoader) {
@@ -1687,6 +1706,7 @@ export default function App() {
       env["TYPE"] === "MODRINTH" ? (env["ISOPOD_MODPACK_LOADER"] || "") : (env["TYPE"] || "");
 
    const handleModSearch = async (query: string, provider: string, forceVersion?: string, forceLoader?: string) => {
+      const searchId = ++latestModSearchRef.current;
       setIsModSearching(true);
       try {
          // Default to what's in the search inputs, or fallback to instance configuration
@@ -1698,8 +1718,9 @@ export default function App() {
          if (raw_loader === "undefined") raw_loader = "";
 
          const res = await fetch(`/api/mods/search/${provider}?q=${encodeURIComponent(query)}&mc_version=${mc_version}&loader=${raw_loader}`);
-         if (!res.ok) throw new Error(`Server returned ${res.status}`);
+         if (!res.ok) throw await responseError(res, `Server returned ${res.status}`);
          const data = await res.json();
+         if (searchId !== latestModSearchRef.current) return;
          setModSearchResults(data);
          if (Array.isArray(data)) {
             setModMetaCache(prev => {
@@ -1718,9 +1739,9 @@ export default function App() {
          }
       } catch (e: any) {
          console.error("Mod search failed", e);
-         await showAlert("Search Error: " + e.message, "Search Failed");
+         if (searchId === latestModSearchRef.current) await showAlert("Search Error: " + e.message, "Search Failed");
       } finally {
-         setIsModSearching(false);
+         if (searchId === latestModSearchRef.current) setIsModSearching(false);
       }
    };
 
@@ -1835,32 +1856,38 @@ export default function App() {
 
    const splitEnvList = (value?: string) => (value || "").split(',').map(s => s.trim()).filter(Boolean);
 
-   // Moves each mod's id between MODRINTH_PROJECTS and MODRINTH_DISABLED; mods not already listed are added only when includeUnlisted allows it
-   const moveModsInEnv = (env: Record<string, string>, mods: InstanceModItem[], targetEnabled: boolean, includeUnlisted: (mod: InstanceModItem) => boolean) => {
-      let enList = splitEnvList(env["MODRINTH_PROJECTS"]);
-      let disList = splitEnvList(env["MODRINTH_DISABLED"]);
-      let changed = false;
-      for (const mod of mods) {
-         const targetId = mod.id.toLowerCase();
-         const matched = enList.find(x => x.toLowerCase() === targetId)
-            || disList.find(x => x.toLowerCase() === targetId)
-            || (includeUnlisted(mod) ? mod.id : null);
-         if (!matched) continue;
-         enList = enList.filter(x => x.toLowerCase() !== targetId);
-         disList = disList.filter(x => x.toLowerCase() !== targetId);
-         (targetEnabled ? enList : disList).push(matched);
-         changed = true;
+   // Moves each mod's id between its provider's enabled and disabled lists (e.g. MODRINTH_PROJECTS and MODRINTH_DISABLED).
+   // A mod not already listed is added only when it came from that provider.
+   const moveModsInEnv = (env: Record<string, string>, mods: InstanceModItem[], targetEnabled: boolean) => {
+      let next = env;
+      for (const [provider, keys] of Object.entries(MOD_ENV_KEYS)) {
+         let enList = splitEnvList(next[keys.enabled]);
+         let disList = splitEnvList(next[keys.disabled]);
+         let changed = false;
+         for (const mod of mods) {
+            const targetId = mod.id.toLowerCase();
+            const matched = enList.find(x => x.toLowerCase() === targetId)
+               || disList.find(x => x.toLowerCase() === targetId)
+               || (mod.provider === provider ? mod.id : null);
+            if (!matched) continue;
+            enList = enList.filter(x => x.toLowerCase() !== targetId);
+            disList = disList.filter(x => x.toLowerCase() !== targetId);
+            (targetEnabled ? enList : disList).push(matched);
+            changed = true;
+         }
+         if (changed) next = { ...next, [keys.enabled]: enList.join(','), [keys.disabled]: disList.join(',') };
       }
-      if (!changed) return env;
-      return { ...env, MODRINTH_PROJECTS: enList.join(','), MODRINTH_DISABLED: disList.join(',') };
+      return next;
    };
 
    const removeModsFromEnv = (env: Record<string, string>, mods: InstanceModItem[]) => {
       const targets = new Set(mods.flatMap(m => [m.id.toLowerCase(), m.filename.toLowerCase()]));
       const next = { ...env };
-      for (const key of ["MODRINTH_PROJECTS", "MODRINTH_DISABLED"]) {
-         if (next[key]) {
-            next[key] = splitEnvList(next[key]).filter(x => !targets.has(x.toLowerCase())).join(',');
+      for (const keys of Object.values(MOD_ENV_KEYS)) {
+         for (const key of [keys.enabled, keys.disabled]) {
+            if (next[key]) {
+               next[key] = splitEnvList(next[key]).filter(x => !targets.has(x.toLowerCase())).join(',');
+            }
          }
       }
       return next;
@@ -1912,7 +1939,7 @@ export default function App() {
       }
 
       if (toggled.length > 0) {
-         applySavedEnv(env => moveModsInEnv(env, toggled, targetEnabled, m => m.provider === 'modrinth'));
+         applySavedEnv(env => moveModsInEnv(env, toggled, targetEnabled));
       }
 
       fetchInstanceMods(selectedId);
@@ -2305,12 +2332,12 @@ export default function App() {
    };
 
    // A row shown while a mod from search downloads
-   const installingModItem = (id: string, res: ModSearchHit, provider: string): InstanceModItem => {
+   const installingModItem = (id: string, res: ModSearchHit, provider: ModProvider): InstanceModItem => {
       const isMain = id === res.id;
       return {
          filename: `${id}.jar`,
          id,
-         name: isMain ? (res.name || id) : id,
+         name: isMain ? (res.name || id) : (modMetaCache[id.toLowerCase()]?.name || id),
          version: isMain ? (res.latest_version || "-") : "-",
          enabled: true,
          size: 0,
@@ -2325,16 +2352,17 @@ export default function App() {
    };
 
    // Adds mods to the instance's saved config and downloads them now. Other unsaved edits stay unsaved.
-   const installModsNow = async (ids: string[], res: ModSearchHit, provider: string) => {
+   const installModsNow = async (ids: string[], res: ModSearchHit, provider: ModProvider) => {
       if (!selectedId || !originalConfig) return;
       const id = selectedId;
       const wanted = new Set(ids.map(x => x.toLowerCase()));
+      const keys = MOD_ENV_KEYS[provider];
       const addIds = (env: Record<string, string>) => {
-         const enabled = splitEnvList(env["MODRINTH_PROJECTS"]);
+         const enabled = splitEnvList(env[keys.enabled]);
          const listed = new Set(enabled.map(x => x.toLowerCase()));
-         const next: Record<string, string> = { ...env, MODRINTH_PROJECTS: [...enabled, ...ids.filter(x => !listed.has(x.toLowerCase()))].join(',') };
-         if (next["MODRINTH_DISABLED"]) {
-            next["MODRINTH_DISABLED"] = splitEnvList(next["MODRINTH_DISABLED"]).filter(x => !wanted.has(x.toLowerCase())).join(',');
+         const next: Record<string, string> = { ...env, [keys.enabled]: [...enabled, ...ids.filter(x => !listed.has(x.toLowerCase()))].join(',') };
+         if (next[keys.disabled]) {
+            next[keys.disabled] = splitEnvList(next[keys.disabled]).filter(x => !wanted.has(x.toLowerCase())).join(',');
          }
          return next;
       };
@@ -2367,22 +2395,30 @@ export default function App() {
       }
    };
 
-   const handleAddMod = (res: any, provider: string = "modrinth") => {
+   const handleAddMod = (res: any, provider: ModProvider = "modrinth") => {
       cacheModMeta(res);
       return installModsNow([res.id], res, provider);
    };
 
-   const addWithDependencies = async (res: any, provider: string = "modrinth") => {
+   const addWithDependencies = async (res: any, provider: ModProvider = "modrinth") => {
       cacheModMeta(res);
       let toAdd = [res.id];
       try {
-         const depRes = await fetch(`/api/mods/dependencies?provider=${provider}&project_id=${res.id}`);
-         if (depRes.ok) {
-            const depIds: string[] = await depRes.json();
-            toAdd = [...new Set([res.id, ...depIds])];
-         }
+         // CurseForge dependencies depend on which file fits the server, so send its version and loader
+         const params = new URLSearchParams({
+            provider,
+            project_id: res.id,
+            mc_version: config.environment?.["VERSION"] || "",
+            loader: getInstanceModLoader(config.environment || {}),
+         });
+         const depRes = await fetch(`/api/mods/dependencies?${params}`);
+         if (!depRes.ok) throw await responseError(depRes, "Failed to fetch dependencies");
+         const depIds: string[] = await depRes.json();
+         toAdd = [...new Set([res.id, ...depIds])];
       } catch (e) {
          console.error("Failed to fetch dependencies", e);
+         const install = await showConfirm(`Couldn't look up what ${res.name || res.id} needs: ${errorMessage(e)}\n\nInstall it without its dependencies?`, "Dependencies Unavailable");
+         if (!install) return;
       }
       return installModsNow(toAdd, res, provider);
    };
@@ -5716,9 +5752,28 @@ export default function App() {
                                           <ArrowLeft className="w-4 h-4" /> Back to Mods
                                        </button>
                                        <h3 className="text-xl font-bold flex items-center gap-2">
-                                          Mod Search (Modrinth)
+                                          Mod Search
                                           {isModSearching && <RefreshCw className="w-4 h-4 animate-spin text-[#3E8ED0]" />}
                                        </h3>
+                                       <div className="ml-auto flex rounded border border-[#383838] overflow-hidden" role="group" aria-label="Mod source">
+                                          {MOD_PROVIDERS.map(p => (
+                                             <button
+                                                key={p.id}
+                                                onClick={() => {
+                                                   if (p.id === modSearchProvider) return;
+                                                   // Drop any search still running: its results belong to the other source
+                                                   latestModSearchRef.current++;
+                                                   setModSearchResults([]);
+                                                   setModSearchProvider(p.id);
+                                                }}
+                                                aria-pressed={modSearchProvider === p.id}
+                                                className={`px-3 py-1.5 text-xs font-semibold transition-colors ${modSearchProvider === p.id ? 'bg-[#3E8ED0] text-white' : 'bg-[#1A1A1A] text-neutral-400 hover:text-white hover:bg-[#333]'}`}
+                                             >
+                                                {p.name}
+                                             </button>
+                                          ))}
+                                       </div>
+                                       <HelpButton topic="mod-search" />
                                     </div>
 
                                     <div className="p-6 bg-[#242424] border-b border-[#323232] flex flex-col gap-4">
@@ -5783,9 +5838,10 @@ export default function App() {
                                              </div>
                                           ) : (
                                              modSearchResults.map((res) => {
-                                                const envKey = "MODRINTH_PROJECTS";
+                                                const envKey = MOD_ENV_KEYS[modSearchProvider].enabled;
                                                 const currentList: string = config.environment[envKey] || "";
                                                 const isAdded = currentList.split(',').map(s => s.trim().toLowerCase()).includes(res.id.toLowerCase()) || instanceMods.some(m => m.id.toLowerCase() === res.id.toLowerCase());
+                                                const blockedReason = res.downloadable === false ? "The author only allows downloads through the CurseForge app, so Isopod can't install this mod." : undefined;
 
                                                 return (
                                                    <div key={res.id} className="flex gap-4 p-3 rounded-lg border border-[#333] bg-[#222] hover:bg-[#282828] transition-colors group">
@@ -5821,6 +5877,10 @@ export default function App() {
                                                                <div className="flex items-center gap-1 text-emerald-400 text-[10px] font-bold bg-emerald-400/10 px-2 py-0.5 rounded border border-emerald-400/20">
                                                                   <Check className="w-3 h-3" /> Added
                                                                </div>
+                                                            ) : blockedReason ? (
+                                                               <div title={blockedReason} className="flex items-center gap-1 text-neutral-500 text-[10px] font-bold bg-[#2A2A2A] px-2 py-0.5 rounded border border-[#383838]">
+                                                                  <AlertCircle className="w-3 h-3" /> CurseForge app only
+                                                               </div>
                                                             ) : (
                                                                <div className="flex gap-2">
                                                                   <button
@@ -5831,6 +5891,7 @@ export default function App() {
                                                                   </button>
                                                                   <button
                                                                      onClick={() => addWithDependencies(res, modSearchProvider)}
+                                                                     title="Also installs every mod this one requires"
                                                                      className="flex items-center gap-1.5 px-3 py-1 bg-[#3E8ED0]/10 hover:bg-[#3E8ED0] text-[#3E8ED0] hover:text-white rounded border border-[#3E8ED0]/30 transition-all text-[11px] font-bold"
                                                                   >
                                                                      <RefreshCw className="w-3 h-3" /> Add with Deps
@@ -7226,8 +7287,8 @@ export default function App() {
                                  </p>
                                  <div className="flex flex-wrap gap-2 pt-2">
                                     {compatibility.incompatible.map((m: any) => (
-                                       <span key={m.id} className="text-[10px] px-2 py-1 bg-red-500/20 text-red-300 rounded-md border border-red-500/20 font-bold">
-                                          {m.id}
+                                       <span key={`${m.provider}:${m.id}`} className="text-[10px] px-2 py-1 bg-red-500/20 text-red-300 rounded-md border border-red-500/20 font-bold">
+                                          {m.name || m.id}
                                        </span>
                                     ))}
                                  </div>
