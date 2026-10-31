@@ -5,6 +5,7 @@ import { AccountSettings } from "./components/AuthGate";
 import { BackupsPanel } from "./components/BackupsPanel";
 import { BedrockAddonsPanel } from "./components/BedrockAddons";
 import { CrashBadge, CrashReportPanel } from "./components/CrashReport";
+import { ServerProgressBar } from "./components/ServerProgressBar";
 import { crashLabel, crashSummary, type CrashInfo } from "./lib/crash";
 import { ResourceTotals, InstanceResources, type ResourceUsage } from "./components/ResourceUsage";
 import { BannedBadge, BannedPlayers, OnlineBadge, OnlinePlayers, PlayerCount, PlayerRowActions, type PlayerList } from "./components/OnlinePlayers";
@@ -562,7 +563,7 @@ export default function App() {
       try {
          setStatuses((prev: Record<string, InstanceStatus>) => ({
             ...prev,
-            [id]: { ...prev[id], is_running: true, is_ready: false, startup_status: "Starting...", startup_percent: 5 } // Optimistic update
+            [id]: { ...prev[id], is_running: true, is_ready: false, startup_status: "Starting...", startup_percent: 0 } // Optimistic update
          }));
          const res = await fetch(`/api/instances/${id}/start`, { method: "POST" });
          if (!res.ok) {
@@ -572,7 +573,7 @@ export default function App() {
          setTimeout(() => fetchStatus(id), 2000);
       } catch (e) {
          console.error(e);
-         await showAlert(`Launch Error: ${e instanceof Error ? e.message : String(e)}`, "Launch Failed");
+         await showAlert(`Start Error: ${e instanceof Error ? e.message : String(e)}`, "Start Failed");
          fetchStatus(id);
       }
    };
@@ -582,7 +583,7 @@ export default function App() {
       try {
          setStatuses((prev: Record<string, InstanceStatus>) => ({
             ...prev,
-            [id]: { ...prev[id], is_running: false, is_ready: false, startup_status: "Stopping...", startup_percent: 50 } // Optimistic update
+            [id]: { ...prev[id], is_running: false, is_ready: false, startup_status: "Stopping...", startup_percent: 0 } // Optimistic update
          }));
          const res = await fetch(`/api/instances/${id}/stop`, { method: "POST" });
          if (!res.ok) {
@@ -599,12 +600,12 @@ export default function App() {
 
    const handleKill = async (id: string, e: React.MouseEvent) => {
       e.stopPropagation();
-      const confirmed = await showConfirm("Stopping the server is better, only use if it's hung. Are you sure you want to forcefully kill this server?", "Kill Server");
+      const confirmed = await showConfirm("Stopping the server is better, only use if it's hung. Are you sure you want to forcefully kill this server?", "Force Kill Server");
       if (!confirmed) return;
       try {
          setStatuses((prev: Record<string, InstanceStatus>) => ({
             ...prev,
-            [id]: { ...prev[id], is_running: false, is_ready: false, startup_status: "Stopping...", startup_percent: 80 } // Optimistic update
+            [id]: { ...prev[id], is_running: false, is_ready: false, startup_status: "Stopping...", startup_percent: 0 } // Optimistic update
          }));
          const res = await fetch(`/api/instances/${id}/kill`, { method: "POST" });
          if (!res.ok) {
@@ -614,7 +615,7 @@ export default function App() {
          setTimeout(() => fetchStatus(id), 1000);
       } catch (e) {
          console.error(e);
-         await showAlert(`Kill Error: ${e instanceof Error ? e.message : String(e)}`, "Kill Failed");
+         await showAlert(`Force Kill Error: ${e instanceof Error ? e.message : String(e)}`, "Force Kill Failed");
          fetchStatus(id);
       }
    };
@@ -1306,14 +1307,14 @@ export default function App() {
       try {
          setStatuses((prev: Record<string, InstanceStatus>) => ({
             ...prev,
-            [id]: { ...prev[id], is_running: true, is_ready: false, startup_status: "Restarting...", startup_percent: 20 }
+            [id]: { ...prev[id], is_running: true, is_ready: false, startup_status: "Restarting...", startup_percent: 0 }
          }));
          // We use stop then start for a clean reload of compose
          const stopRes = await fetch(`/api/instances/${id}/stop`, { method: "POST" });
          if (!stopRes.ok) throw await responseError(stopRes, "Failed to stop container");
          setStatuses((prev: Record<string, InstanceStatus>) => ({
             ...prev,
-            [id]: { ...prev[id], is_running: true, is_ready: false, startup_status: "Starting...", startup_percent: 40 }
+            [id]: { ...prev[id], is_running: true, is_ready: false, startup_status: "Starting...", startup_percent: 0 }
          }));
          const startRes = await fetch(`/api/instances/${id}/start`, { method: "POST" });
          if (!startRes.ok) {
@@ -3243,8 +3244,8 @@ export default function App() {
                         (() => {
                            const showProgress = (selectedStatus.is_running && !selectedStatus.is_ready) ||
                               (selectedStatus.startup_status === "Stopping..." || selectedStatus.startup_status === "Restarting...");
-                           const pct = selectedStatus.startup_percent || (selectedStatus.startup_status === "Stopping..." ? 50 : 0);
-                           const isStopping = selectedStatus.startup_status === "Stopping..." || selectedStatus.startup_status === "Killing...";
+                           const pct = selectedStatus.startup_percent;
+                           const isStopping = selectedStatus.startup_status === "Stopping...";
 
                            if (!showProgress) return null;
 
@@ -3253,14 +3254,13 @@ export default function App() {
                                  <div className="w-full bg-[#1A1A1A] border border-[#323232] p-2 rounded flex flex-col gap-1.5 shadow-inner">
                                     <div className="flex justify-between text-[10px] text-neutral-400 font-mono">
                                        <span className="truncate max-w-[150px]">{selectedStatus.startup_status || "Starting..."}</span>
-                                       <span>{pct}%</span>
+                                       {!!pct && <span>{pct}%</span>}
                                     </div>
-                                    <div className="w-full bg-[#323232] rounded-full h-1.5 overflow-hidden">
-                                       <div
-                                          className={`h-1.5 rounded-full transition-all duration-500 ease-out animate-pulse ${isStopping ? 'bg-amber-600' : 'bg-[#3E8ED0]'}`}
-                                          style={{ width: `${pct}%` }}
-                                       ></div>
-                                    </div>
+                                    <ServerProgressBar
+                                       percent={pct}
+                                       trackClassName="bg-[#323232] h-1.5"
+                                       fillClassName={isStopping ? 'bg-amber-600' : 'bg-[#3E8ED0]'}
+                                    />
                                  </div>
                               </div>
                            );
@@ -3350,22 +3350,32 @@ export default function App() {
 
                   <div className="p-4 flex flex-col gap-1.5 flex-1 overflow-auto">
                      {selectedStatus?.is_running ? (
-                        <div className="flex gap-1.5">
-                           <button
-                              onClick={(e: React.MouseEvent) => handleStop(selectedInstance.id, e)}
-                              className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-500 transition-all font-bold text-sm"
-                              title="Safe Stop (Sends /stop, saves world progress)"
-                           >
-                              <Square className="w-3.5 h-3.5 fill-current" />
-                              Stop
-                           </button>
+                        <div className="flex flex-col gap-1.5">
+                           <div className="flex gap-1.5">
+                              <button
+                                 onClick={() => handleRestart(selectedInstance.id)}
+                                 className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded bg-[#2A2A2A] hover:bg-[#333] border border-[#3E3E3E] text-neutral-200 transition-all font-bold text-sm"
+                                 title="Stops the server safely, then starts it again"
+                              >
+                                 <RotateCcw className="w-3.5 h-3.5" />
+                                 Restart
+                              </button>
+                              <button
+                                 onClick={(e: React.MouseEvent) => handleStop(selectedInstance.id, e)}
+                                 className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-500 transition-all font-bold text-sm"
+                                 title="Saves the world, then stops the server"
+                              >
+                                 <Square className="w-3.5 h-3.5 fill-current" />
+                                 Stop
+                              </button>
+                           </div>
                            <button
                               onClick={(e: React.MouseEvent) => handleKill(selectedInstance.id, e)}
-                              className="flex items-center justify-center px-4 py-2.5 rounded bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-500 transition-all font-bold text-sm"
-                              title="Force Kill (Immediate power-off, UNSAFE)"
+                              className="flex items-center justify-center gap-2 px-3 py-2 rounded bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-500 transition-all font-bold text-sm"
+                              title="Powers the server off at once without saving. Use only if it's stuck"
                            >
-                              <X className="w-4 h-4" />
-                              Kill
+                              <Skull className="w-3.5 h-3.5" />
+                              Force Kill
                            </button>
                         </div>
                      ) : (
@@ -3374,7 +3384,7 @@ export default function App() {
                            className="flex items-center gap-3 px-3 py-2.5 rounded bg-[#1A3A22] hover:bg-[#204A2A] border border-[#2A5030] text-emerald-400 transition-colors"
                         >
                            <Play className="w-4 h-4 fill-current" />
-                           <span className="font-semibold">Launch</span>
+                           <span className="font-semibold">Start</span>
                         </button>
                      )}
 
@@ -6979,11 +6989,11 @@ export default function App() {
                      const isRunning = status?.is_running;
                      const isReady = status?.is_ready;
                      const isPaused = isRunning && status?.is_paused;
-                     const isStopping = status?.startup_status === "Stopping..." || status?.startup_status === "Killing...";
+                     const isStopping = status?.startup_status === "Stopping...";
                      const isRestarting = status?.startup_status === "Restarting...";
                      const isStarting = isRunning && !isReady && !isStopping;
                      const showProgress = isStarting || isStopping || isRestarting;
-                     const pct = status?.startup_percent || (isStopping ? 70 : (isRestarting ? 25 : 10));
+                     const pct = status?.startup_percent;
 
                      const version = config.environment?.["VERSION"] || status?.version || "Unknown";
                      const loader = config.environment?.["TYPE"] || "VANILLA";
@@ -6991,7 +7001,7 @@ export default function App() {
                      const address = status?.public_ip ? `${status.public_ip}:${port}` : `localhost:${port}`;
 
                      return (
-                        <div className="bg-[#1C1C1C] border-t border-[#3A3A3A] px-5 py-2.5 flex flex-col gap-2 select-none shadow-2xl z-20">
+                        <div role="region" aria-label="Server controls" className="bg-[#1C1C1C] border-t border-[#3A3A3A] px-5 py-2.5 flex flex-col gap-2 select-none shadow-2xl z-20">
                            {/* Progress Bar Section (Visible during Starting, Stopping, or Restarting) */}
                            {showProgress && (
                               <div className="w-full bg-[#141414] border border-[#2F2F2F] rounded-lg p-2.5 flex flex-col gap-1.5 shadow-inner animate-in fade-in slide-in-from-bottom-1 duration-200">
@@ -7002,19 +7012,19 @@ export default function App() {
                                           {status?.startup_status || (isStopping ? "Stopping server..." : "Starting server...")}
                                        </span>
                                     </div>
-                                    <span className="font-bold text-neutral-300 bg-[#242424] px-2 py-0.5 rounded border border-[#383838] text-[10px]">
-                                       {pct}%
-                                    </span>
+                                    {!!pct && (
+                                       <span className="font-bold text-neutral-300 bg-[#242424] px-2 py-0.5 rounded border border-[#383838] text-[10px]">
+                                          {pct}%
+                                       </span>
+                                    )}
                                  </div>
-                                 <div className="w-full bg-[#262626] rounded-full h-1.5 overflow-hidden">
-                                    <div
-                                       className={`h-full rounded-full transition-all duration-300 ease-out ${isStopping
-                                             ? 'bg-gradient-to-r from-amber-600 to-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.5)]'
-                                             : 'bg-gradient-to-r from-[#3E8ED0] to-cyan-400 shadow-[0_0_8px_rgba(62,142,208,0.5)]'
-                                          }`}
-                                       style={{ width: `${Math.max(5, Math.min(100, pct))}%` }}
-                                    />
-                                 </div>
+                                 <ServerProgressBar
+                                    percent={pct}
+                                    trackClassName="bg-[#262626] h-1.5"
+                                    fillClassName={isStopping
+                                       ? 'bg-gradient-to-r from-amber-600 to-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.5)]'
+                                       : 'bg-gradient-to-r from-[#3E8ED0] to-cyan-400 shadow-[0_0_8px_rgba(62,142,208,0.5)]'}
+                                 />
                               </div>
                            )}
 
@@ -7104,14 +7114,14 @@ export default function App() {
                                        className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all"
                                     >
                                        <Play className="w-3.5 h-3.5 fill-current" />
-                                       <span>Start Server</span>
+                                       <span>Start</span>
                                     </button>
                                  ) : (
                                     <>
                                        <button
                                           onClick={() => handleRestart(selectedInstance.id)}
                                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#2A2A2A] hover:bg-[#333] text-neutral-200 font-bold text-xs border border-[#3E3E3E] transition-all"
-                                          title="Restart Minecraft server"
+                                          title="Stops the server safely, then starts it again"
                                        >
                                           <RotateCcw className="w-3.5 h-3.5 text-neutral-400" />
                                           <span>Restart</span>
@@ -7119,16 +7129,18 @@ export default function App() {
                                        <button
                                           onClick={(e) => handleStop(selectedInstance.id, e)}
                                           className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-md shadow-amber-600/20 transition-all"
+                                          title="Saves the world, then stops the server"
                                        >
                                           <Square className="w-3.5 h-3.5 fill-current" />
-                                          <span>Stop Server</span>
+                                          <span>Stop</span>
                                        </button>
                                        <button
                                           onClick={(e) => handleKill(selectedInstance.id, e)}
-                                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-950/40 hover:bg-red-900/60 text-red-400 hover:text-red-300 font-bold text-xs border border-red-900/40 transition-all"
-                                          title="Force kill server if unresponsive"
+                                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-950/40 hover:bg-red-900/60 text-red-400 hover:text-red-300 font-bold text-xs border border-red-900/40 transition-all"
+                                          title="Powers the server off at once without saving. Use only if it's stuck"
                                        >
                                           <Skull className="w-3.5 h-3.5" />
+                                          <span>Force Kill</span>
                                        </button>
                                     </>
                                  )}
@@ -7812,9 +7824,20 @@ export default function App() {
                               }`}
                         >
                            <div className="flex items-center gap-3">
-                              <Play className="w-4 h-4" /> Launch
+                              <Play className="w-4 h-4" /> Start
                            </div>
                            <ChevronRight className="w-3.5 h-3.5 opacity-50" />
+                        </button>
+                        <button
+                           disabled={!isRunning}
+                           onClick={() => { handleRestart(contextMenu.instanceId); setContextMenu(null); }}
+                           className={`w-full flex items-center gap-3 px-3 py-2 text-sm transition-colors text-left ${!isRunning
+                                 ? 'text-neutral-600 cursor-not-allowed opacity-40'
+                                 : 'text-neutral-300 hover:bg-[#3E8ED0] hover:text-white'
+                              }`}
+                           title={isRunning ? "Stops the server safely, then starts it again" : "Server is offline"}
+                        >
+                           <RotateCcw className="w-4 h-4" /> Restart
                         </button>
                         <button
                            disabled={!isRunning}
@@ -7823,9 +7846,9 @@ export default function App() {
                                  ? 'text-neutral-600 cursor-not-allowed opacity-40'
                                  : 'text-amber-500 hover:bg-amber-500 hover:text-white'
                               }`}
-                           title={isRunning ? "Saves world first" : "Server is offline"}
+                           title={isRunning ? "Saves the world, then stops the server" : "Server is offline"}
                         >
-                           <Square className="w-4 h-4" /> Stop (Safe)
+                           <Square className="w-4 h-4" /> Stop
                         </button>
                         <button
                            disabled={!isRunning}
@@ -7834,9 +7857,9 @@ export default function App() {
                                  ? 'text-neutral-600 cursor-not-allowed opacity-40'
                                  : 'text-red-400 hover:bg-red-600 hover:text-white'
                               }`}
-                           title={isRunning ? "Force immediate stop" : "Server is offline"}
+                           title={isRunning ? "Powers the server off at once without saving. Use only if it's stuck" : "Server is offline"}
                         >
-                           <X className="w-4 h-4" /> Kill (Unsafe)
+                           <Skull className="w-4 h-4" /> Force Kill
                         </button>
                      </>
                   );
