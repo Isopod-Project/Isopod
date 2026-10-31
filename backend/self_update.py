@@ -29,6 +29,7 @@ APP_DIR_NAME = ".isopod-app"
 IMAGE_REV_FILE = "/etc/isopod-image-rev"
 DOCKERD_PID_FILE = "/var/run/docker.pid"
 TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
+STABLE_VERSION_RE = re.compile(r"v?([0-9]+)\.([0-9]+)\.([0-9]+)")
 ARCHES = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
 MAX_BUNDLE_BYTES = 512 * 1024 * 1024
 # Same as dockerd's --shutdown-timeout in the entrypoint, plus some room
@@ -52,6 +53,17 @@ def image_rev() -> Optional[int]:
             return int(f.read().strip())
     except (OSError, ValueError):
         return None
+
+
+def is_newer_release(latest: str, current: str) -> bool:
+    """Compare stable versions numerically; unrecognized formats are not updates."""
+    latest_match = STABLE_VERSION_RE.fullmatch(latest)
+    current_match = STABLE_VERSION_RE.fullmatch(current)
+    if latest_match is None or current_match is None:
+        return False
+    latest_parts = tuple(int(part) for part in latest_match.groups())
+    current_parts = tuple(int(part) for part in current_match.groups())
+    return latest_parts > current_parts
 
 
 def bundle_name(tag: str, arch: str) -> str:

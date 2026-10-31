@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+import httpx
+
 from fastapi.testclient import TestClient
 
 from backend import main
@@ -26,6 +28,61 @@ class UpdateTests(unittest.TestCase):
         with open(os.path.join(self.tmp.name, ".isopod_version"), "w", encoding="utf-8") as f:
             f.write("v99.0.0")
         self.assertEqual(self.client.get("/api/system/info").json()["version"], main.ISOPOD_VERSION)
+
+    def test_update_check_only_offers_newer_releases(self):
+        cases = [
+            ("v0.5.0", "v0.4.1", False),
+            ("v0.5.0", "v0.5.0", False),
+            ("v0.5.0", "v0.5.1", True),
+            ("v0.5.0", "v0.6.0", True),
+            ("v0.5.0", "v1.0.0", True),
+            ("v0.9.0", "v0.10.0", True),
+            ("v0.10.0", "v0.9.0", False),
+            ("v1.2.9", "v1.2.10", True),
+            ("v1.2.10", "v1.2.9", False),
+            ("v0.5.0", "0.5.0", False),
+            ("0.5.0", "v0.5.1", True),
+            ("v0.5.0", "Unknown", False),
+            ("v0.5.0", "v0.6.0-rc.1", False),
+            ("Unknown", "v0.6.0", False),
+        ]
+        for current, latest, expected in cases:
+            with self.subTest(current=current, latest=latest):
+                response = httpx.Response(200, json={"tag_name": latest, "assets": []})
+                with mock.patch.object(main, "get_current_version", return_value=current), \
+                        mock.patch.object(main, "cached_update_info", None), \
+                        mock.patch.object(main.httpx, "AsyncClient") as client:
+                    client.return_value.__aenter__.return_value.get.return_value = response
+                    result = self.client.get("/api/system/check-updates?force=true")
+                self.assertEqual(result.status_code, 200)
+                info = result.json()
+                self.assertEqual(info["current_version"], current)
+                self.assertEqual(info["latest_version"], latest)
+                self.assertEqual(info["has_update"], expected)
+
+    def test_update_refuses_an_older_release_even_with_a_bundle(self):
+        tag = "v0.4.1"
+        name = main.self_update.bundle_name(tag, "amd64")
+        prefix = f"https://github.com/{main.GITHUB_REPO}/releases/download/{tag}/"
+        response = httpx.Response(200, json={
+            "tag_name": tag,
+            "assets": [
+                {"name": asset, "browser_download_url": prefix + asset}
+                for asset in (name, name + ".sha256")
+            ],
+        })
+        with mock.patch.object(main, "get_current_version", return_value="v0.5.0"), \
+                mock.patch.object(main, "self_update_compose_file", return_value=None), \
+                mock.patch.object(main.httpx, "AsyncClient") as client, \
+                mock.patch.object(main.self_update.platform, "machine", return_value="x86_64"), \
+                mock.patch.object(main.self_update, "image_rev", return_value=1), \
+                mock.patch.object(main.self_update, "stop_docker_daemon"), \
+                mock.patch.object(main.os, "_exit"), \
+                mock.patch.object(main.self_update, "install") as install:
+            client.return_value.__aenter__.return_value.get.return_value = response
+            result = self.client.post("/api/system/update")
+        self.assertEqual(result.status_code, 409)
+        install.assert_not_called()
 
     def post_update(self, latest, install_error=None):
         async def latest_release():
