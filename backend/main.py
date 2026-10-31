@@ -416,10 +416,10 @@ async def get_instance_status(instance_id: str):
     is_ready = False
     is_paused = False
     startup_status = "Offline"
+    # 0 means no real progress to report; the dashboard shows an indeterminate bar.
     startup_percent = 0
     if is_running:
         startup_status = "Starting..."
-        startup_percent = 10
         try:
             # Check most recent logs for Minecraft heartbeats
             log_result = subprocess.run(
@@ -434,7 +434,6 @@ async def get_instance_status(instance_id: str):
                 if any(x in line for x in ["Stopping server", "Stopping the server", "Closing Server"]):
                     is_ready = False
                     startup_status = "Stopping..."
-                    startup_percent = 70
                     break
                 # Check for online / ready
                 if "Done (" in line or "Done!" in line or bedrock.READY_MARKER in line:
@@ -480,10 +479,8 @@ async def get_instance_status(instance_id: str):
         is_restarting = any(c.status == "restarting" for c in containers)
         if is_restarting:
             startup_status = "Restarting..."
-            startup_percent = 20
         else:
             startup_status = "Offline"
-            startup_percent = 0
 
     # Get metadata like version and last active
     version = "Unknown"
