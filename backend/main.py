@@ -4529,7 +4529,7 @@ async def get_latest_release():
                 return {
                     "current_version": curr_v,
                     "latest_version": latest_v,
-                    "has_update": latest_v != curr_v,
+                    "has_update": self_update.is_newer_release(latest_v, curr_v),
                     "release_notes": data.get("body", "No release notes available."),
                     "published_at": data.get("published_at"),
                     "can_self_update": self_update_compose_file() is not None or self_update.can_install(data, GITHUB_REPO),
