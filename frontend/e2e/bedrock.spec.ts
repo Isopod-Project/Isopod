@@ -178,6 +178,15 @@ test.describe("Bedrock User Management", () => {
     expect(lookups).toEqual([])
   })
 
+  test("reports that toggling the allowlist requires a restart", async ({ page }) => {
+    await page.route("**/api/instances/alpha/users", (route) =>
+      route.fulfill({ json: { whitelist_enabled: false, restart_required: true, environment: { ALLOW_LIST: "false", ALLOW_LIST_USERS: "", OPS: "" } } }),
+    )
+    await page.getByRole("button", { name: "Toggle Allowlist" }).click()
+    await page.getByRole("button", { name: "Save User Configuration" }).click()
+    await expect(page.getByText("Allowlist and operators saved. Restart the server to apply the allowlist on/off change.")).toBeVisible()
+  })
+
   test("shows the server's error when a gamertag is rejected", async ({ page, errors }) => {
     await page.unroute("**/api/instances/alpha/users")
     await page.route("**/api/instances/alpha/users", (route) =>

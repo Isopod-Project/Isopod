@@ -1072,7 +1072,7 @@ export default function App() {
             setSavedUsers({ users: instanceUsers, whitelistOn: isWlOn });
             // Bedrock saves return the ALLOW_LIST, ALLOW_LIST_USERS and OPS they wrote
             applySavedEnv(env => data.environment ? { ...env, ...data.environment } : { ...env, ENABLE_WHITELIST: isWlOn ? "true" : "false" });
-            await showAlert(isBedrockType(config.environment?.["TYPE"]) ? "Allowlist and operators saved." : "User management and whitelist saved successfully.", "Success");
+            await showAlert(isBedrockType(config.environment?.["TYPE"]) ? (data.restart_required ? "Allowlist and operators saved. Restart the server to apply the allowlist on/off change." : "Allowlist and operators saved.") : "User management and whitelist saved successfully.", "Success");
          } else {
             const data = await res.json().catch(() => null);
             throw new Error(data?.detail || "Failed to save user configuration");
