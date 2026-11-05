@@ -176,6 +176,25 @@ The Isopod container publishes UDP `19132-19152` for these ports next to TCP `25
 
 ---
 
+## 📦 Modrinth Modpack Updates
+`backend/modpacks.py` checks Modrinth for newer versions of a pack; the endpoints are in `backend/main.py`.
+
+**Checking.** `modpacks.get_project()` caches each project's versions in memory for an hour. `modpack_update_loop` refreshes them every 30 minutes, and the instance status endpoint reads only the cache (`modpacks.cached_update()`), so status polling never calls Modrinth. Comparing against the compose file on each poll means the badge clears as soon as an update is applied. The cache starts empty, so badges appear shortly after Isopod starts.
+
+**Endpoints:**
+- `GET /api/instances/{id}/modpack/status?force=` returns the project, the `current` and `latest` versions, `update_available`, and all `versions` with changelogs. `404` if the instance has no `MODRINTH_MODPACK`, `400` if it isn't a project ID or slug, `502` if Modrinth can't be reached and nothing is cached.
+- `POST /api/instances/{id}/modpack/update` takes `version_id`, `backup`, and `restart`. It downloads the target `.mrpack` first, so a failed download changes nothing. Then it takes the snapshot, writes `MODRINTH_VERSION`, `VERSION`, `MODRINTH_EXCLUDE_FILES`, `MODRINTH_FORCE_SYNCHRONIZE`, `ISOPOD_MODPACK_LOADER`, and the image's Java tag, saves the new mod list, and restarts if the server was up. A failed restart is returned as `restart_error` with a `200`, because the update itself was applied.
+
+**Decisions worth knowing:**
+- `latest` is the newest version at least as stable as the current one. A version counts as newer by `date_published`, so a pack on an older branch isn't offered a version number that only looks higher.
+- The backup is a snapshot, not a world backup, because it has to cover mods and config. It's always taken fresh and survives `snapshot_keep: 0`, since the user asked for it.
+- `merge_excludes()` follows user-excluded mods by Modrinth project, because filenames change between versions. `.jar` entries the new version doesn't have are dropped so the list doesn't grow; anything else is a partial match the user typed, and stays.
+- The response carries the changed `image` and `environment` so the Edit window can update its loaded config. Otherwise a later **Save Changes** would write the old version back.
+
+**Not covered yet:** CurseForge modpacks.
+
+---
+
 ## 🔥 CurseForge Support
 CurseForge modpacks go through the official API at `https://api.curseforge.com/v1`, which needs a key from [console.curseforge.com](https://console.curseforge.com). Set it as `CURSEFORGE_API_KEY` (the compose files pass it into the container; `backend/main.py` also accepts `CF_API_KEY`). Without a key the CurseForge endpoints return `503`.
 
