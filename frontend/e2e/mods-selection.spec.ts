@@ -107,4 +107,28 @@ test.describe("Mods tab multi-selection", () => {
     await expect(row(page, "Banana Mod")).toBeVisible()
     expect(deleted.sort()).toEqual(["applemod.jar", "damsonmod.jar"])
   })
+
+  test("right-click opens the mod menu and applies its batch action", async ({ page }) => {
+    await row(page, "Cherry Mod").click({ button: "right" })
+    await expect(page.getByRole("menu")).toBeVisible()
+    await expect(row(page, "Cherry Mod")).toHaveAttribute("aria-selected", "true")
+    await expect(page.locator('tr[aria-selected="true"]')).toHaveCount(1)
+    await page.keyboard.press("Escape")
+    await expect(page.getByRole("menu")).toHaveCount(0)
+
+    await row(page, "Apple Mod").click()
+    await row(page, "Banana Mod").click({ modifiers: ["ControlOrMeta"] })
+    await row(page, "Apple Mod").click({ button: "right" })
+
+    const menu = page.getByRole("menu")
+    await expect(menu).toBeVisible()
+    await expect(menu.getByRole("button", { name: "Disable (2)" })).toBeVisible()
+    await expect(menu.getByRole("button", { name: "Remove (2)" })).toBeVisible()
+    await expect(menu.getByRole("button", { name: "View Homepage" })).toBeDisabled()
+
+    await menu.getByRole("button", { name: "Disable (2)" }).click()
+    await expect.poll(() => toggled.length).toBe(2)
+    expect(toggled.every((t) => !t.enabled)).toBe(true)
+    await expect(menu).toHaveCount(0)
+  })
 })
