@@ -32,6 +32,7 @@ from . import bedrock_addons
 from . import security
 from . import autopause
 from . import auth
+from . import banner
 from . import self_update
 import threading
 
@@ -415,10 +416,10 @@ async def get_instance_status(instance_id: str):
     is_ready = False
     is_paused = False
     startup_status = "Offline"
+    # 0 means no real progress to report; the dashboard shows an indeterminate bar.
     startup_percent = 0
     if is_running:
         startup_status = "Starting..."
-        startup_percent = 10
         try:
             # Check most recent logs for Minecraft heartbeats
             log_result = subprocess.run(
@@ -433,7 +434,6 @@ async def get_instance_status(instance_id: str):
                 if any(x in line for x in ["Stopping server", "Stopping the server", "Closing Server"]):
                     is_ready = False
                     startup_status = "Stopping..."
-                    startup_percent = 70
                     break
                 # Check for online / ready
                 if "Done (" in line or "Done!" in line or bedrock.READY_MARKER in line:
@@ -479,10 +479,8 @@ async def get_instance_status(instance_id: str):
         is_restarting = any(c.status == "restarting" for c in containers)
         if is_restarting:
             startup_status = "Restarting..."
-            startup_percent = 20
         else:
             startup_status = "Offline"
-            startup_percent = 0
 
     # Get metadata like version and last active
     version = "Unknown"
@@ -4747,7 +4745,7 @@ async def get_latest_release():
                 return {
                     "current_version": curr_v,
                     "latest_version": latest_v,
-                    "has_update": latest_v != curr_v,
+                    "has_update": self_update.is_newer_release(latest_v, curr_v),
                     "release_notes": data.get("body", "No release notes available."),
                     "published_at": data.get("published_at"),
                     "can_self_update": self_update_compose_file() is not None or self_update.can_install(data, GITHUB_REPO),
@@ -4779,6 +4777,7 @@ async def update_check_loop():
 
 @app.on_event("startup")
 async def startup_event():
+    banner.print_banner(ISOPOD_VERSION)
     self_update.mark_started(SERVERS_DIR, ISOPOD_VERSION)
     # Start the periodic update check in the background
     asyncio.create_task(update_check_loop())

@@ -62,6 +62,16 @@ test.describe("Minecraft Log tab", () => {
     await expect(logBox(page)).not.toContainText("Preparing spawn area")
   })
 
+  test("The logo stays above the log in both views and out of it", async ({ page }) => {
+    const logo = page.getByTestId("console-logo")
+    await expect(logo).toBeVisible()
+    await expect(logBox(page).locator("svg")).toHaveCount(0)
+    await page.getByRole("button", { name: "Verbose" }).click()
+    await expect(logo).toBeVisible()
+    await page.getByPlaceholder("Search", { exact: true }).fill("Isopod")
+    await expect(page.getByText("No match")).toBeVisible()
+  })
+
   test("Wrap lines switches between wrapping and horizontal scrolling", async ({ page }) => {
     await expect(logBox(page)).toHaveClass(/whitespace-pre-wrap/)
     await page.getByLabel("Wrap lines").uncheck()
@@ -173,13 +183,13 @@ test.describe("Minecraft Log console", () => {
       stopped = true
       return route.fulfill({ json: {} })
     })
-    await page.getByRole("button", { name: "Stop Server" }).click()
+    await page.getByRole("region", { name: "Server controls" }).getByRole("button", { name: "Stop", exact: true }).click()
     await expect.poll(() => stopped).toBe(true)
   })
 })
 
 test.describe("Edit footer on a stopped server", () => {
-  test("Start Server launches it, and Console returns to the log", async ({ page }) => {
+  test("Start launches it, and Console returns to the log", async ({ page }) => {
     let started = false
     await page.route("**/api/instances/alpha/start", (route) => {
       started = true
@@ -189,7 +199,7 @@ test.describe("Edit footer on a stopped server", () => {
     await page.getByRole("button", { name: "World", exact: true }).click()
     await page.getByRole("button", { name: "Console" }).click()
     await expect(page.getByPlaceholder("Type a command (whitelist, op, kick...)")).toBeVisible()
-    await page.getByRole("button", { name: "Start Server" }).click()
+    await page.getByRole("region", { name: "Server controls" }).getByRole("button", { name: "Start", exact: true }).click()
     await expect.poll(() => started).toBe(true)
   })
 })

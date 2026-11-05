@@ -59,7 +59,7 @@ test.describe("Instance actions report failures", () => {
         startCalled = true
         return route.fulfill({ json: {} })
       })
-      await page.getByRole("button", { name: "Restart", exact: true }).click()
+      await page.getByRole("region", { name: "Server controls" }).getByRole("button", { name: "Restart", exact: true }).click()
       await expect(page.getByText("Restart Error: docker compose down timed out")).toBeVisible()
       expect(startCalled).toBe(false)
     })

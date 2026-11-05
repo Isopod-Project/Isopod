@@ -19,6 +19,8 @@ Welcome to **Isopod**! This guide will help you get your Minecraft Instance Mana
 3. **Open the Dashboard:**
    Navigate to [http://localhost:8000](http://localhost:8000) in your web browser.
 
+Isopod prints its logo and version to the logs when it starts. If your log viewer shows codes like `[38;5;137m` around the logo, set the environment variable `NO_COLOR=1` to print it without color. The logo also stays pinned to the top of each server's console, in both Simplified and Verbose.
+
 ## 🍎 Running on macOS
 `isopod-compose.yml` stores data under `/DATA/AppData/isopod`, a CasaOS path that doesn't exist on a Mac. Docker Desktop can only mount folders it shares with containers (your home folder by default). The macOS overlay `docker/isopod-compose.macos.yml` swaps in Mac-friendly locations.
 
@@ -193,7 +195,7 @@ Isopod watches for servers that stop on their own. Stopping or killing a server 
   - **Always** (default): restarts after a crash, after a clean stop from inside the game, and when your computer or Docker restarts.
   - **Only after a crash**: restarts only when the server crashes.
   - **Never**: the server stays stopped until you start it.
-- **Crash loops**: Docker waits a little longer before each quick restart. If a server still crashes 3 times within 2 minutes, Isopod stops it so a broken mod or world can't restart it forever, and the side panel says **Crash loop stopped**. Fix the problem, then press **Launch** to start it again.
+- **Crash loops**: Docker waits a little longer before each quick restart. If a server still crashes 3 times within 2 minutes, Isopod stops it so a broken mod or world can't restart it forever, and the side panel says **Crash loop stopped**. Fix the problem, then press **Start** to start it again.
 - A server that crashed and came back on its own shows a note in the side panel until you **Dismiss** it or start it yourself.
 - **View Crash Report** (or **Crash Report** in the Edit window's **Logs** tab) opens the newest file from `crash-reports/`. It shows what crashed, the root cause (the last `Caused by:` line), and any mods the report names as suspects, with the full report below it. Crashes that write no report, such as running out of memory or a port already in use, show the last log lines instead.
 

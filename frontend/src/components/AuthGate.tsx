@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { AlertCircle, Lock, LogOut, RefreshCw } from "lucide-react";
 import { AuthContext, useAuth } from "../lib/auth";
+import { IsopodLogo } from "./IsopodLogo";
 
 // Dashboard login (#143). The backend answers every /api call without a session with 401,
 // so the gate checks /api/auth/status first and shows setup or login until there is one.
@@ -139,7 +140,7 @@ function LoginForm({ setup, onDone }: { setup: boolean; onDone: () => void }) {
       <Screen>
          <form onSubmit={submit} className="flex flex-col gap-4">
             <div className="flex flex-col items-center gap-2 mb-2 text-center">
-               <img src="/logo.png" alt="" className="w-14 h-14" />
+               <IsopodLogo />
                <h1 className="text-xl font-bold text-white">{setup ? "Set up Isopod" : "Log in to Isopod"}</h1>
                {setup && <p className="text-sm text-neutral-400">Create the admin account. You'll use it to log in to this dashboard.</p>}
             </div>

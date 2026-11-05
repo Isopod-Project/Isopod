@@ -25,20 +25,20 @@ test.describe("Sidebar actions on a stopped server", () => {
     await page.getByRole("main").getByText("Alpha Server").click()
   })
 
-  test("Launch starts the server and shows it starting", async ({ page }) => {
+  test("Start starts the server and shows it starting", async ({ page }) => {
     const starts = recordPosts(page, "**/api/instances/alpha/start")
-    await sidebar(page).getByRole("button", { name: "Launch" }).click()
+    await sidebar(page).getByRole("button", { name: "Start" }).click()
     await expect.poll(() => starts.length).toBe(1)
     await expect(sidebar(page).getByText("Starting...").first()).toBeVisible()
   })
 
-  test("a failed launch explains why", async ({ page, errors }) => {
+  test("a failed start explains why", async ({ page, errors }) => {
     errors.expect(/Failed to load resource/, /Port 25565 is taken/)
     await page.route("**/api/instances/alpha/start", (route) =>
       route.fulfill({ status: 409, json: { detail: "Port 25565 is taken" } }),
     )
-    await sidebar(page).getByRole("button", { name: "Launch" }).click()
-    await expect(page.getByText("Launch Error: Port 25565 is taken")).toBeVisible()
+    await sidebar(page).getByRole("button", { name: "Start" }).click()
+    await expect(page.getByText("Start Error: Port 25565 is taken")).toBeVisible()
     await page.getByRole("button", { name: "OK" }).click()
   })
 
@@ -125,16 +125,62 @@ test.describe("Sidebar actions on a running server", () => {
     await expect.poll(() => stops.length).toBe(1)
   })
 
-  test("Kill asks for confirmation before killing", async ({ page }) => {
+  test("Restart stops the server, then starts it again", async ({ page }) => {
+    const calls: string[] = []
+    for (const action of ["stop", "start"]) {
+      await page.route(`**/api/instances/alpha/${action}`, (route) => {
+        calls.push(action)
+        return route.fulfill({ json: {} })
+      })
+    }
+    await sidebar(page).getByRole("button", { name: "Restart" }).click()
+    await expect.poll(() => calls).toEqual(["stop", "start"])
+  })
+
+  test("Force Kill asks for confirmation before killing", async ({ page }) => {
     const kills = recordPosts(page, "**/api/instances/alpha/kill")
-    await sidebar(page).getByRole("button", { name: "Kill" }).click()
+    await sidebar(page).getByRole("button", { name: "Force Kill" }).click()
     await expect(page.getByText("Are you sure you want to forcefully kill this server?")).toBeVisible()
     await page.getByRole("button", { name: "Cancel" }).click()
     expect(kills).toHaveLength(0)
 
-    await sidebar(page).getByRole("button", { name: "Kill" }).click()
+    await sidebar(page).getByRole("button", { name: "Force Kill" }).click()
     await page.getByRole("button", { name: "OK" }).click()
     await expect.poll(() => kills.length).toBe(1)
+  })
+
+  test("the sidebar and Edit footer offer the same controls", async ({ page }) => {
+    const footer = page.getByRole("region", { name: "Server controls" })
+    await sidebar(page).getByRole("button", { name: "Edit" }).click()
+    for (const name of ["Restart", "Stop", "Force Kill"]) {
+      await expect(sidebar(page).getByRole("button", { name, exact: true })).toBeAttached()
+      await expect(footer.getByRole("button", { name, exact: true })).toBeVisible()
+    }
+  })
+
+  for (const action of ["Stop", "Force Kill", "Restart"]) {
+    test(`${action} shows an indeterminate bar with no percentage`, async ({ page }) => {
+      // Never answers, so the server stays mid-transition.
+      await page.route(/\/api\/instances\/alpha\/(stop|kill)$/, () => {})
+      await sidebar(page).getByRole("button", { name: action, exact: true }).click()
+      if (action === "Force Kill") await page.getByRole("button", { name: "OK" }).click()
+      const bar = sidebar(page).getByRole("progressbar")
+      await expect(bar).toBeVisible()
+      await expect(bar).not.toHaveAttribute("aria-valuenow")
+      await expect(sidebar(page).getByText(/\d+%$/)).toHaveCount(0)
+    })
+  }
+
+  test("a percentage reported by the server is shown", async ({ page }) => {
+    await page.route("**/api/instances/*/status", (route) =>
+      route.fulfill({
+        json: { instance_id: "alpha", is_running: true, is_ready: false, startup_status: "Loading mods...", startup_percent: 30, containers: [] },
+      }),
+    )
+    await page.reload()
+    await page.getByRole("main").getByText("Alpha Server").click()
+    await expect(sidebar(page).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "30")
+    await expect(sidebar(page).getByText("30%")).toBeVisible()
   })
 })
 
@@ -200,11 +246,12 @@ test.describe("Instance context menu", () => {
     expect((await chooser).isMultiple()).toBe(false)
   })
 
-  test("Launch starts the server; Stop and Kill are disabled while it is offline", async ({ page }) => {
+  test("Start starts the server; Restart, Stop and Force Kill are disabled while it is offline", async ({ page }) => {
     const starts = recordPosts(page, "**/api/instances/alpha/start")
-    await expect(menu(page).getByRole("button", { name: "Stop (Safe)" })).toBeDisabled()
-    await expect(menu(page).getByRole("button", { name: "Kill (Unsafe)" })).toBeDisabled()
-    await menu(page).getByRole("button", { name: "Launch" }).click()
+    await expect(menu(page).getByRole("button", { name: "Restart" })).toBeDisabled()
+    await expect(menu(page).getByRole("button", { name: "Stop" })).toBeDisabled()
+    await expect(menu(page).getByRole("button", { name: "Force Kill" })).toBeDisabled()
+    await menu(page).getByRole("button", { name: "Start", exact: true }).click()
     await expect.poll(() => starts.length).toBe(1)
     await expect(menu(page)).toBeHidden()
   })
@@ -239,7 +286,7 @@ test.describe("Instance context menu", () => {
 })
 
 test.describe("Instance context menu on a running server", () => {
-  test("Stop and Kill are offered, Launch is disabled", async ({ page }) => {
+  test("Restart, Stop and Force Kill are offered, Start is disabled", async ({ page }) => {
     await page.route("**/api/instances/*/status", (route) =>
       route.fulfill({ json: { instance_id: "alpha", is_running: true, is_ready: true, containers: [] } }),
     )
@@ -250,9 +297,10 @@ test.describe("Instance context menu on a running server", () => {
     await openDashboard(page)
     await page.getByRole("main").getByText(MOCK_INSTANCES[0].name).click({ button: "right" })
     const menu = page.locator(".z-\\[1000\\]").filter({ hasText: "Rename" })
-    await expect(menu.getByRole("button", { name: "Launch" })).toBeDisabled()
-    await expect(menu.getByRole("button", { name: "Kill (Unsafe)" })).toBeEnabled()
-    await menu.getByRole("button", { name: "Stop (Safe)" }).click()
+    await expect(menu.getByRole("button", { name: "Start", exact: true })).toBeDisabled()
+    await expect(menu.getByRole("button", { name: "Restart" })).toBeEnabled()
+    await expect(menu.getByRole("button", { name: "Force Kill" })).toBeEnabled()
+    await menu.getByRole("button", { name: "Stop" }).click()
     await expect.poll(() => stops.length).toBe(1)
   })
 })
