@@ -3084,7 +3084,7 @@ export default function App() {
                                                    : 'bg-neutral-500'
                                                 }`} title={isRunning && statuses[inst.id]?.is_paused ? "Sleeping" : undefined}></div>
                                           </div>
-                                          <span className="text-xs text-center font-medium line-clamp-2 leading-tight break-all">
+                                          <span className="w-full min-w-0 text-xs text-center font-medium line-clamp-2 leading-tight [overflow-wrap:anywhere]" title={inst.name}>
                                              {inst.name}
                                           </span>
                                           {isRunning && resourceUsage?.instances[inst.id] && (
@@ -3168,7 +3168,7 @@ export default function App() {
                                                    : 'bg-neutral-500'
                                                 }`} title={isRunning && statuses[inst.id]?.is_paused ? "Sleeping" : undefined}></div>
                                           </div>
-                                          <span className="text-xs text-center font-medium line-clamp-2 leading-tight break-all">
+                                          <span className="w-full min-w-0 text-xs text-center font-medium line-clamp-2 leading-tight [overflow-wrap:anywhere]" title={inst.name}>
                                              {inst.name}
                                           </span>
                                           {isRunning && resourceUsage?.instances[inst.id] && (
@@ -3232,7 +3232,7 @@ export default function App() {
                            </span>
                         )}
                      </div>
-                     <h2 className="text-lg font-bold text-center leading-tight mb-1 break-all">{selectedInstance.name}</h2>
+                     <h2 className="w-full min-w-0 text-lg font-bold text-center leading-tight mb-1 [overflow-wrap:anywhere]" title={selectedInstance.name}>{selectedInstance.name}</h2>
                      <p className="text-xs text-neutral-400 text-center">
                         {connectionLost ? 'Unknown' : !selectedStatus?.is_running
                            ? (selectedStatus?.startup_status === "Stopping..." ? 'Stopping...'
