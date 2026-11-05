@@ -332,6 +332,7 @@ export default function App() {
    const [selectedFileNames, setSelectedFileNames] = useState<string[]>([]);
    const [fileClipboard, setFileClipboard] = useState<{ action: "cut" | "copy", files: string[], sourceDir: string, instanceId: string | null } | null>(null);
    const [fileContextMenu, setFileContextMenu] = useState<{ x: number, y: number, target: any | null } | null>(null);
+   const [modContextMenu, setModContextMenu] = useState<{ x: number, y: number } | null>(null);
    const [inlineEditing, setInlineEditing] = useState<{ type: "rename" | "new_file" | "new_folder", targetName?: string, value: string } | null>(null);
    const [draggedFileNames, setDraggedFileNames] = useState<string[] | null>(null);
    const [dragTargetFolder, setDragTargetFolder] = useState<string | null>(null);
@@ -1624,6 +1625,7 @@ export default function App() {
    useEffect(() => {
       const handleGlobalClick = () => {
          setFileContextMenu(null);
+         setModContextMenu(null);
       };
       window.addEventListener('click', handleGlobalClick);
       return () => window.removeEventListener('click', handleGlobalClick);
@@ -2021,6 +2023,9 @@ export default function App() {
    const selectedMod = selectedMods.length === 1 ? selectedMods[0] : null;
    const selectedEnabledMods = selectedMods.filter(m => m.enabled);
    const selectedDisabledMods = selectedMods.filter(m => !m.enabled);
+   const selectedModHomepage = selectedMod
+      ? selectedMod.url || (selectedMod.id ? `https://modrinth.com/mod/${selectedMod.id}` : null)
+      : null;
 
    const clearModSelection = () => {
       setSelectedModKeys([]);
@@ -2046,6 +2051,16 @@ export default function App() {
          setSelectedModKeys([key]);
       }
       setModSelectionAnchor(key);
+   };
+
+   const handleModRowContextMenu = (e: React.MouseEvent, mod: InstanceModItem) => {
+      e.preventDefault();
+      const key = modKey(mod);
+      if (!selectedModKeys.includes(key)) {
+         setSelectedModKeys([key]);
+         setModSelectionAnchor(key);
+      }
+      setModContextMenu({ x: e.clientX, y: e.clientY });
    };
 
    useEffect(() => {
@@ -2439,6 +2454,7 @@ export default function App() {
          if (dialog) { dialog.onResult(null); return; }
          if (fileConflictModal || updateProgressState) return;
          if (contextMenu) { setContextMenu(null); return; }
+         if (modContextMenu) { setModContextMenu(null); return; }
          if (isExportModalOpen) { setIsExportModalOpen(false); return; }
          if (isSettingsModalOpen) { closeSettings(); return; }
          if (isVersionModalOpen) { setIsVersionModalOpen(false); return; }
@@ -5502,6 +5518,7 @@ export default function App() {
                                                             <tr
                                                                key={mod.filename || mod.id}
                                                                onClick={(e) => handleModRowClick(e, mod)}
+                                                               onContextMenu={(e) => handleModRowContextMenu(e, mod)}
                                                                onDoubleClick={() => toggleMods([mod], !mod.enabled)}
                                                                aria-selected={isSelected}
                                                                className={`cursor-pointer transition-colors text-xs ${
@@ -5660,13 +5677,11 @@ export default function App() {
                                           <div className="h-px bg-[#303030] my-1" />
 
                                           <button
-                                             disabled={!selectedMod || (!selectedMod.url && !selectedMod.id)}
+                                             disabled={!selectedModHomepage}
                                              onClick={() => {
-                                                if (!selectedMod) return;
-                                                const url = selectedMod.url || (selectedMod.id ? `https://modrinth.com/mod/${selectedMod.id}` : null);
-                                                if (url) window.open(url, '_blank');
+                                                if (selectedModHomepage) window.open(selectedModHomepage, '_blank');
                                              }}
-                                             className={`w-full text-left px-3 py-1.5 rounded text-xs font-medium transition-colors ${selectedMod && (selectedMod.url || selectedMod.id)
+                                             className={`w-full text-left px-3 py-1.5 rounded text-xs font-medium transition-colors ${selectedModHomepage
                                                    ? 'bg-[#2A2A2A] hover:bg-[#343434] text-neutral-200 border border-[#383838]'
                                                    : 'text-neutral-600 bg-[#222222] border border-[#2A2A2A] cursor-not-allowed'
                                                 }`}
@@ -7779,6 +7794,61 @@ export default function App() {
                      </div>
                   </div>
                </div>
+            </div>
+         )}
+         {modContextMenu && isEditModalOpen && editTab === "mods" && (
+            <div
+               role="menu"
+               className="fixed z-[1000] w-[220px] max-h-[calc(100vh-16px)] overflow-y-auto bg-[#2A2A2A] border border-[#3A3A3A] rounded-lg shadow-2xl py-1 text-xs text-neutral-200 animate-in fade-in zoom-in duration-150"
+               style={{
+                  top: Math.min(modContextMenu.y, Math.max(8, window.innerHeight - 250)),
+                  left: Math.min(modContextMenu.x, Math.max(8, window.innerWidth - 228))
+               }}
+               onClick={(e) => e.stopPropagation()}
+            >
+               <div className="px-3 py-1.5 text-[10px] font-bold text-neutral-500 uppercase tracking-widest border-b border-[#3A3A3A] mb-1">
+                  {selectedMods.length} {selectedMods.length === 1 ? "mod" : "mods"} selected
+               </div>
+               <button
+                  disabled={selectedDisabledMods.length === 0}
+                  onClick={() => { setModContextMenu(null); toggleMods(selectedDisabledMods, true); }}
+                  className={`w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors ${selectedDisabledMods.length > 0
+                     ? 'hover:bg-[#3E8ED0] hover:text-white'
+                     : 'text-neutral-600 cursor-not-allowed'}`}
+               >
+                  <Check className="w-3.5 h-3.5" /> {selectedMods.length > 1 ? `Enable (${selectedDisabledMods.length})` : "Enable"}
+               </button>
+               <button
+                  disabled={selectedEnabledMods.length === 0}
+                  onClick={() => { setModContextMenu(null); toggleMods(selectedEnabledMods, false); }}
+                  className={`w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors ${selectedEnabledMods.length > 0
+                     ? 'hover:bg-[#3E8ED0] hover:text-white'
+                     : 'text-neutral-600 cursor-not-allowed'}`}
+               >
+                  <Check className="w-3.5 h-3.5" /> {selectedMods.length > 1 ? `Disable (${selectedEnabledMods.length})` : "Disable"}
+               </button>
+               <button
+                  disabled={selectedMods.length === 0}
+                  onClick={() => { setModContextMenu(null); deleteMods(selectedMods); }}
+                  className={`w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors ${selectedMods.length > 0
+                     ? 'text-red-400 hover:bg-red-600 hover:text-white'
+                     : 'text-neutral-600 cursor-not-allowed'}`}
+               >
+                  <Trash2 className="w-3.5 h-3.5" /> {selectedMods.length > 1 ? `Remove (${selectedMods.length})` : "Remove"}
+               </button>
+               <div className="h-px bg-[#3A3A3A] my-1" />
+               <button
+                  disabled={!selectedModHomepage}
+                  onClick={() => {
+                     if (selectedModHomepage) window.open(selectedModHomepage, "_blank");
+                     setModContextMenu(null);
+                  }}
+                  className={`w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors ${selectedModHomepage
+                     ? 'hover:bg-[#3E8ED0] hover:text-white'
+                     : 'text-neutral-600 cursor-not-allowed'}`}
+               >
+                  <ExternalLink className="w-3.5 h-3.5" /> View Homepage
+               </button>
             </div>
          )}
          {contextMenu && (
