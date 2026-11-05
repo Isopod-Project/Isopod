@@ -78,8 +78,11 @@ Do NOT close or modify any parent issue.
 
 - [ ] Acceptance criterion 1
 - [ ] Acceptance criterion 2
+- [ ] Wiki updated (or N/A: small bug fix or internal change)
 
 </local-ticket-template>
+
+Every ticket that changes something users can see or configure carries the wiki criterion; drop it only for small bug fixes and internal changes. The rule is in `docs/agents/wiki.md`.
 
 <issue-template>
 
@@ -95,6 +98,7 @@ The end-to-end behaviour this ticket makes work, from the user's perspective, no
 
 - [ ] Criterion 1
 - [ ] Criterion 2
+- [ ] Wiki updated (or N/A: small bug fix or internal change)
 
 ## Blocked by
 

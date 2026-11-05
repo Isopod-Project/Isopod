@@ -1,7 +1,8 @@
 """Online players and per-player moderation commands, sent through the server's RCON.
 
-The player list comes from the vanilla `list` command, which every server type supports.
-Its output is cached briefly so the dashboard, side panel and edit view can all poll
+The player list comes from the vanilla `list` command, which every Java server type supports.
+Bedrock has no RCON, so its list is rebuilt from the server log instead (see bedrock.py).
+Either result is cached briefly so the dashboard, side panel and edit view can all poll
 without each one opening a new RCON session.
 """
 import json
@@ -11,6 +12,8 @@ import subprocess
 import threading
 import time
 from typing import Dict, List, Optional, Tuple
+
+from . import bedrock
 
 # How long a `list` result is reused before RCON is asked again.
 CACHE_SECONDS = 3
@@ -82,16 +85,19 @@ def rcon(path: str, command: str, timeout: int = 5) -> Tuple[bool, str]:
     return result.returncode == 0 and not output.startswith(FAILURE_PREFIXES), output
 
 
-def online_players(instance_id: str, path: str) -> dict:
-    """Current player list. `available` is false when RCON couldn't be reached."""
+def online_players(instance_id: str, path: str, is_bedrock: bool = False) -> dict:
+    """Current player list. `available` is false when RCON (or, on Bedrock, the log) couldn't be reached."""
     now = time.time()
     with _cache_lock:
         cached = _cache.get(instance_id)
         if cached and now - cached[0] < CACHE_SECONDS:
             return cached[1]
 
-    ok, output = rcon(path, "list")
-    parsed = parse_list(output) if ok else None
+    if is_bedrock:
+        parsed = bedrock.online_players(path)
+    else:
+        ok, output = rcon(path, "list")
+        parsed = parse_list(output) if ok else None
     result = {"available": True, **parsed} if parsed else {"available": False, "online": 0, "max": 0, "players": []}
 
     with _cache_lock:

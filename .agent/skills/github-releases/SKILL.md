@@ -69,7 +69,7 @@ docker compose pull && docker compose up -d
 
 ### Step 3: Update Project Documentation
 Whenever tickets are closed with new features or fixed bugs, ensure repository documentation reflects the updates before creating the release:
-1. **Identify Affected Docs**: Check `README.md`, user guides in `Documentation/everyone/`, or developer guides in `Documentation/developers/` (or `docs/`).
+1. **Identify Affected Docs**: Check `README.md`, user guides in `documentation/everyone/`, or developer guides in `documentation/developers/` (or `docs/`).
 2. **Document New Features & Changes**:
    - Add new capabilities (e.g., UI interactions, context menus, drag-and-drop, new API endpoints, keyboard shortcuts).
    - Update configuration options, guides, or troubleshooting steps if changed.
@@ -121,6 +121,7 @@ gh release create <TAG> --draft --title "<TAG> - <TITLE>" --notes "<MARKDOWN_NOT
    ```bash
    gh release view <TAG>
    ```
+   Publishing starts the **Release Bundles** workflow, which attaches the self-update bundles. Confirm both architectures and their `.sha256` files are on the release, because **Update Now** isn't offered without them. If the release changes the `Dockerfile`, `docker/entrypoint.sh`, or the compose file, `docker/image-rev` must be raised first, and the release notes must give the manual commands.
 2. Verify the backend update endpoint triggers the notification:
    - Query `/api/system/check-updates?force=true`.
    - Confirm `has_update: true` is returned for running instances on older versions.

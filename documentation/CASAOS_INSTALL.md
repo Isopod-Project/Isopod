@@ -29,7 +29,17 @@ services:
   isopod:
     image: isopod:latest
     container_name: isopod
-    privileged: true
+    # Runs its own Docker daemon without privileged mode. See docs/adr/0001 in the Isopod repo.
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    devices:
+      - /dev/fuse
+    cgroup: private
     restart: unless-stopped
     network_mode: bridge
     ports:
@@ -42,8 +52,10 @@ services:
       - /DATA/AppData/isopod/docker:/var/lib/docker
     environment:
       - SERVERS_DIR=/servers
+      # Optional: CurseForge API key (console.curseforge.com). Write every `$` in the key as `$$`.
+      - CURSEFORGE_API_KEY=
     labels:
-      icon: "https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png"
+      icon: "https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/logo.png"
       title: "Isopod"
       description: "Modern Minecraft Server Manager"
       casaos_app_id: "isopod"
@@ -53,13 +65,13 @@ x-casaos:
     - amd64
     - arm64
   main: isopod
-  author: Tacoz234
+  author: Isopod-Project
   category: Utilities
   description:
     en_us: Modern, lightweight Minecraft instance manager with a sleek web dashboard.
-  developer: Tacoz234
-  icon: https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png
-  thumbnail: https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png
+  developer: Isopod-Project
+  icon: https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/logo.png
+  thumbnail: https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/logo.png
   title:
     en_us: Isopod
   port_map: "8000"
@@ -67,13 +79,21 @@ x-casaos:
 ```
 
 6. Click **Submit**.
-7. For Icon URL, replace what's autofilled from CasaOS with `https://raw.githubusercontent.com/Isopod-Project/Isopod-Website/main/public/Isopod_logo.png`
+7. For Icon URL, replace what's autofilled from CasaOS with `https://raw.githubusercontent.com/Isopod-Project/Isopod/main/assets/logo.png`
 8. Click **Install**.
 
 ## 3. Configuration Details (Manual Check)
 If you prefer to fill out the form manually, ensure these settings are correct:
 
-- **Privileged Mode**: `Enabled` (Required for internal Docker-in-Docker isolation)
+- **Privileged Mode**: `Disabled`. Isopod's internal Docker daemon only needs:
+    - **Capabilities**: `SYS_ADMIN`, `NET_ADMIN`, `SYS_PTRACE`
+    - **Security options**: `seccomp:unconfined`, `apparmor:unconfined`
+    - **Devices**: `/dev/fuse`
+    - **Cgroup namespace**: `private`
+
+  The CasaOS form may not show all of these. Use the import above when you can.
+
+  Installs from older versions of this guide used `privileged: true`. They keep working, but to drop privileged mode, open the app's settings in CasaOS and replace `privileged: true` with the `cap_add` through `cgroup` lines above.
 - **Web UI Port**: `8000` (Host `8000` -> Container `8000`)
 - **Game Server Ports**: Host `25565-25585` -> Container `25565-25585` (Allows up to 21 concurrent server instances)
 - **Bedrock Ports (UDP)**: Host `19132-19152` -> Container `19132-19152`, protocol UDP (Bedrock servers and Java servers with Bedrock cross-play)
@@ -82,6 +102,7 @@ If you prefer to fill out the form manually, ensure these settings are correct:
     - `/DATA/AppData/isopod/docker` -> `/var/lib/docker` (Persists downloaded server images and caches)
 - **Environment Variables**:
     - `SERVERS_DIR`: `/servers`
+    - `CURSEFORGE_API_KEY` (optional): your CurseForge API key from [console.curseforge.com](https://console.curseforge.com). Needed to search and install CurseForge modpacks. If you paste it into the compose YAML, write every `$` in the key as `$$`.
 
 > [!NOTE]
 > **Single App Dashboard Experience**:

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Wiki
+    url: https://isopod-project.github.io/Isopod-Website/#/wiki
+    about: Setup guides, feature docs, and troubleshooting.
+  - name: Report a security vulnerability
+    url: https://github.com/Isopod-Project/Isopod/security/advisories/new
+    about: Report security problems privately, not in a public issue.

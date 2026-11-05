@@ -9,9 +9,10 @@ adds Geyser and Floodgate from GeyserMC's download API to the PLUGINS or MODS li
 publishes a UDP port (ISOPOD_BEDROCK_PORT) for Geyser's Bedrock listener.
 """
 import os
+import re
 import subprocess
 import time
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 BEDROCK_IMAGE = "itzg/minecraft-bedrock-server"
 BEDROCK_CONTAINER_PORT = 19132
@@ -39,6 +40,16 @@ GAMEMODES = {"survival", "creative", "adventure"}
 
 # Bedrock Dedicated Server logs this once players can join.
 READY_MARKER = "Server started."
+
+# BDS logs this at the start of every run. Players listed before it belong to an earlier run.
+START_MARKER = "Starting Server"
+
+# "Player connected: Tacoz YouTube, xuid: 2535400000000001"
+# "Player disconnected: Tacoz YouTube, xuid: 2535400000000001, pfid: 7f3c..."
+PLAYER_EVENT = re.compile(r"Player (connected|disconnected): (.+?), xuid: ?(\d*)")
+
+# BDS's own default when server.properties has no max-players.
+DEFAULT_MAX_PLAYERS = 10
 
 
 def is_bedrock(server_type: Optional[str]) -> bool:
@@ -212,6 +223,63 @@ def find_world_dirs(data_dir: str) -> List[str]:
     return ["worlds"] if has_world else []
 
 
+def parse_online_players(log: str) -> Dict[str, Optional[str]]:
+    """Gamertag -> XUID (None if the log had none) for the players online at the end of a BDS log.
+
+    Rebuilt from connect/disconnect lines, starting over at each server start, so players
+    still listed when the server stopped or crashed don't carry over into the next run.
+    """
+    online: Dict[str, Optional[str]] = {}
+    for line in (log or "").splitlines():
+        if START_MARKER in line:
+            online.clear()
+            continue
+        m = PLAYER_EVENT.search(line)
+        if not m:
+            continue
+        name = m.group(2).strip()
+        # Gamertags are case-insensitive, so a rejoin with different casing replaces the old entry
+        for known in [n for n in online if n.lower() == name.lower()]:
+            del online[known]
+        if m.group(1) == "connected" and name:
+            online[name] = m.group(3) or None
+    return online
+
+
+def read_max_players(data_dir: str) -> int:
+    """max-players from server.properties, or BDS's default if it's missing or unreadable."""
+    try:
+        with open(os.path.join(data_dir, "server.properties")) as f:
+            for line in f:
+                key, sep, value = line.partition("=")
+                if sep and key.strip() == "max-players":
+                    return int(value.strip())
+    except (OSError, ValueError):
+        pass
+    return DEFAULT_MAX_PLAYERS
+
+
+def online_players(instance_path: str) -> Optional[dict]:
+    """Online players of a running BDS instance, read from its container log. None if the log can't be read."""
+    try:
+        result = subprocess.run(
+            ["docker", "compose", "logs", "--no-log-prefix", "mc"],
+            cwd=instance_path, capture_output=True, text=True, timeout=10,
+        )
+    except Exception as e:
+        print(f"Couldn't read the Bedrock server log: {e}")
+        return None
+    if result.returncode != 0:
+        return None
+    online = parse_online_players(result.stdout)
+    return {
+        "online": len(online),
+        "max": read_max_players(os.path.join(instance_path, "data")),
+        "players": list(online),
+        "xuids": online,
+    }
+
+
 def send_command(instance_path: str, command: str, timeout: int = 10) -> Tuple[bool, str]:
     """Type a command into the Bedrock server console. The output only shows up in the log."""
     try:
@@ -225,6 +293,83 @@ def send_command(instance_path: str, command: str, timeout: int = 10) -> Tuple[b
         print(f"Bedrock send-command failed: {e}")
         return False, "Couldn't send the command to the server."
     return result.returncode == 0, (result.stdout + result.stderr).strip()
+
+
+# How long to wait for a command's reply in the log. BDS answers within a fraction of a
+# second, so a command that prints nothing gives up after COMMAND_REPLY_WAIT.
+COMMAND_REPLY_WAIT = 1.5
+COMMAND_REPLY_QUIET = 0.3
+COMMAND_POLL_INTERVAL = 0.1
+
+# Log lines BDS writes on its own, which can land between a command and its reply
+UNRELATED_LINE = re.compile(r"^(Player (connected|disconnected|Spawned): |Running AutoCompaction)")
+
+# "[2024-01-01 12:00:00:123 INFO] " in front of BDS's own log lines
+BDS_LINE_PREFIX = re.compile(r"^\[\d{4}-\d{2}-\d{2} [\d:]+ \w+\] ")
+
+
+def _log_lines_after(instance_path: str, after: Optional[str]) -> Optional[List[Tuple[str, str]]]:
+    """(docker timestamp, text) for each log line, newer than `after` if given. None if the log can't be read."""
+    args = ["docker", "compose", "logs", "--no-log-prefix", "--timestamps"]
+    args += ["--since", after] if after else ["--tail=1"]
+    try:
+        result = subprocess.run(args + ["mc"], cwd=instance_path, capture_output=True, text=True, timeout=5)
+    except Exception as e:
+        print(f"Couldn't read the Bedrock server log: {e}")
+        return None
+    if result.returncode != 0:
+        return None
+    lines = []
+    for line in result.stdout.splitlines():
+        stamp, _, text = line.partition(" ")
+        if after is None or _timestamp_key(stamp) > _timestamp_key(after):
+            lines.append((stamp, text))
+    return lines
+
+
+def _timestamp_key(stamp: str) -> str:
+    """Docker trims trailing zeros from its nanosecond timestamps, so pad them before comparing."""
+    base, dot, rest = stamp.rstrip("Z").partition(".")
+    return f"{base}.{rest.ljust(9, '0')}" if dot else f"{base}.{'0' * 9}"
+
+
+def command_reply(command: str, lines: List[str]) -> str:
+    """The reply to a command, from the log lines written after it was sent."""
+    reply = []
+    for line in lines:
+        text = BDS_LINE_PREFIX.sub("", line.rstrip())
+        # The console's TTY echoes the command itself into the log
+        if text and text != command.strip() and not UNRELATED_LINE.search(text):
+            reply.append(text)
+    return "\n".join(reply)
+
+
+def run_command(instance_path: str, command: str) -> Tuple[bool, str]:
+    """Send a console command and return its reply, read from the log lines that follow it.
+
+    Bedrock has no RCON, so send-command prints nothing; the reply only reaches the log.
+    Waits until the reply stops growing, or COMMAND_REPLY_WAIT if nothing shows up.
+    """
+    before = _log_lines_after(instance_path, None)
+    ok, output = send_command(instance_path, command)
+    if not ok or before is None:
+        return ok, output
+    # An empty log means everything written from here on is new
+    marker = before[-1][0] if before else "1970-01-01T00:00:00Z"
+
+    lines: List[Tuple[str, str]] = []
+    start = last_change = time.monotonic()
+    while True:
+        time.sleep(COMMAND_POLL_INTERVAL)
+        now = time.monotonic()
+        latest = _log_lines_after(instance_path, marker)
+        if latest is not None and len(latest) > len(lines):
+            lines, last_change = latest, now
+        if command_reply(command, [text for _, text in lines]) and now - last_change >= COMMAND_REPLY_QUIET:
+            break
+        if now - start >= COMMAND_REPLY_WAIT:
+            break
+    return True, command_reply(command, [text for _, text in lines])
 
 
 # BDS finishes writing pending chunks within a few seconds of `save hold`.

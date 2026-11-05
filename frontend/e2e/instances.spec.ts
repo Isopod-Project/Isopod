@@ -18,14 +18,6 @@ test.describe("Instance selection and sidebar", () => {
     await page.getByText("Alpha Server").first().click()
     await expect(page.getByRole("heading", { name: "Alpha Server" })).toBeVisible()
   })
-
-  // TODO(#71): the app has no Escape handler for modals yet; enable once implemented.
-  test.fixme("Escape closes the Settings modal", async ({ page }) => {
-    await page.getByRole("button", { name: /^Settings$/ }).click()
-    await expect(page.getByText("Application Settings")).toBeVisible()
-    await page.keyboard.press("Escape")
-    await expect(page.getByText("Application Settings")).toBeHidden()
-  })
 })
 
 test.describe("Dashboard groups", () => {

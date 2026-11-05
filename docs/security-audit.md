@@ -42,8 +42,10 @@ Review everything since the previous release, `git diff <last-tag>..main`, with 
   - URLs come from the expected hosts.
   - Hashes are checked where the API provides them.
   - Archives are extracted with path checks, not with a bare `extractall` (zip slip).
-- [ ] **`isopod-compose*.yml`, `Dockerfile`, `docker/`:** no new ports, mounts, capabilities, or privileges without a reason in the PR.
-- [ ] **Network exposure:** no new unauthenticated surface, and no CORS or bind-address changes.
+  - The CurseForge API key (`CURSEFORGE_API_KEY`) is only sent to `api.curseforge.com`, per request, and never written to an instance's `docker-compose.yml`. IDs placed in CurseForge URLs are checked to be numeric.
+- [ ] **`isopod-compose*.yml`, `Dockerfile`, `docker/`:** no new ports, mounts, capabilities, or privileges without a reason in the PR, and no `privileged: true`. New capabilities go in the table in [ADR 0001](adr/0001-unprivileged-docker-in-docker.md).
+- [ ] **Network exposure:** no new routes in `auth.PUBLIC_PATHS` or outside `/api` that skip the login, and no CORS or bind-address changes.
+- [ ] **Self-update:** bundles only come from this repo's release assets and pass their checksum. Changes to the `Dockerfile`, `docker/entrypoint.sh`, or the compose file raise `docker/image-rev`.
 - [ ] **New dependencies:** maintained, widely used, and spelled correctly (no typosquats).
 - [ ] **No secrets,** tokens, or personal paths committed.
 
@@ -53,8 +55,12 @@ Add the result to the release notes, for example: `Security audit: passed (0 hig
 
 These are by design for now and are tracked separately:
 
-- The API has no authentication.
-- CORS allows every origin (`allow_origins=["*"]`).
-- The container runs `privileged: true` with its own Docker daemon.
+- First-run setup is open: until the admin account exists, anyone who can reach port 8000 can create it.
+- Isopod serves plain HTTP, so logins and session cookies aren't encrypted in transit.
+- The container runs its own Docker daemon. Since #145 it isn't privileged, but `SYS_ADMIN` with seccomp and AppArmor off is still enough to reach the host. See [ADR 0001](adr/0001-unprivileged-docker-in-docker.md).
 
 `SECURITY.md` tells users not to expose port 8000 for these reasons.
+
+Cross-origin access is off by default: there are no CORS headers unless `ISOPOD_CORS_ORIGINS` lists extra origins, and state-changing requests and WebSocket upgrades from a foreign `Origin` get `403` (`backend/security.py`, #144). This doesn't stop DNS rebinding, where the attacker's page and the API share an origin; the login covers that, since the attacker's origin never gets the session cookie.
+
+Every `/api` route and WebSocket needs a session from the dashboard login (`backend/auth.py`, #143). The password is stored as an argon2 hash.

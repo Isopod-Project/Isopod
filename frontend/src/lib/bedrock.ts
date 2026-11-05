@@ -25,3 +25,16 @@ export const BEDROCK_SERVER_NOTE = "Bedrock Dedicated Server is Mojang's server 
 export const BEDROCK_OPS_NOTE = "Turning the allowlist on or off requires a server restart. Adding or removing players takes effect on the running server straight away. Making someone an operator takes effect right away only if they're online; otherwise it applies the next time the server starts.";
 
 export const BEDROCK_NO_BAN_NOTE = "Bedrock Dedicated Server has no ban command, so there's no Banned Players list. To keep someone out, turn the allowlist on and remove them from it.";
+
+// Add-ons tab (the Mods tab on a Bedrock server). Matches backend/bedrock_addons.py.
+export const BEDROCK_ADDON_EXTENSIONS = [".mcpack", ".mcaddon"];
+
+export const BEDROCK_ADDONS_NOTE = "Upload a .mcpack or .mcaddon to install it and turn it on for the world. A .mcaddon's resource pack is installed with it and listed in the Resource Packs tab. Changes apply the next time the server starts. Marketplace content can't be installed.";
+
+// Resource Packs tab on a Bedrock server. Matches RESOURCE_PACK_EXTENSIONS in backend/bedrock_addons.py.
+export const BEDROCK_RESOURCE_PACK_EXTENSIONS = [".mcpack"];
+
+export const BEDROCK_RESOURCE_PACKS_NOTE = "Upload a resource pack .mcpack to install it and turn it on for the world. Players download it when they join after the next restart. Behavior packs and .mcaddon files go in the Add-ons tab.";
+
+// itzg/minecraft-bedrock-server writes this to texturepack-required in server.properties
+export const BEDROCK_TEXTUREPACK_REQUIRED_ENV = "TEXTUREPACK_REQUIRED";
