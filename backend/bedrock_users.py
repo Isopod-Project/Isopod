@@ -227,8 +227,8 @@ def live_commands(old_users: List[dict], old_enabled: bool, users: List[dict], e
     old_allowed, new_allowed = names(allowed(old_users)), names(allowed(users))
     commands += [f'allowlist remove "{n}"' for k, n in old_allowed.items() if k not in new_allowed]
     commands += [f'allowlist add "{n}"' for k, n in new_allowed.items() if k not in old_allowed]
-    if enabled != old_enabled:
-        commands.append(f"allowlist {'on' if enabled else 'off'}")
+    # Enforcement is a server property; Bedrock has no allowlist on/off command.
+    # The saved ALLOW_LIST environment applies when Compose recreates the container.
 
     old_ops, new_ops = names(operators(old_users)), names(operators(users))
     commands += [f'deop "{n}"' for k, n in old_ops.items() if k not in new_ops]

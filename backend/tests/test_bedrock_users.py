@@ -154,13 +154,16 @@ class AccessTests(unittest.TestCase):
         with open(os.path.join(self.data_dir, "permissions.json")) as f:
             self.assertEqual(json.load(f), [])
 
+    def test_allowlist_toggle_does_not_send_unsupported_commands(self):
+        for old, new in [(False, True), (True, False)]:
+            self.assertEqual(bedrock_users.live_commands([], old, [], new), [])
+
     def test_live_commands_quote_gamertags(self):
         old = [bedrock_users.new_user("Alex", is_op=True), bedrock_users.new_user("Old Friend")]
         new = [bedrock_users.new_user("Alex"), bedrock_users.new_user("Tacoz YouTube", is_op=True)]
         self.assertEqual(bedrock_users.live_commands(old, False, new, True), [
             'allowlist remove "Old Friend"',
             'allowlist add "Tacoz YouTube"',
-            "allowlist on",
             'deop "Alex"',
             'op "Tacoz YouTube"',
         ])
@@ -217,7 +220,8 @@ class EndpointTests(unittest.TestCase):
             {"name": "Steve Two", "whitelisted": True, "is_op": True, "level": 4},
         ])
         self.assertTrue(result["whitelist_enabled"])
-        self.assertEqual(self.sent, ['allowlist add "Steve Two"', "allowlist on", 'op "Steve Two"'])
+        self.assertTrue(result["restart_required"])
+        self.assertEqual(self.sent, ['allowlist add "Steve Two"', 'op "Steve Two"'])
         env = self.env()
         self.assertEqual(env["ALLOW_LIST_USERS"], "Tacoz YouTube,Steve Two")
         self.assertEqual(env["OPS"], "Steve Two")
@@ -236,9 +240,20 @@ class EndpointTests(unittest.TestCase):
         with open(os.path.join(self.path, "data", "allowlist.json")) as f:
             self.assertEqual([e["name"] for e in json.load(f)], ["Steve Two"])
 
+    def test_disabling_allowlist_requires_restart_without_live_toggle(self):
+        self.save([{"name": "Tacoz YouTube"}])
+        self.sent.clear()
+        result = self.save([{"name": "Tacoz YouTube"}], enabled=False)
+        self.assertTrue(result["restart_required"])
+        self.assertEqual(self.env()["ALLOW_LIST"], "false")
+        self.assertEqual(self.sent, [])
+        result = self.save([{"name": "Tacoz YouTube"}], enabled=False)
+        self.assertFalse(result["restart_required"])
+
     def test_stopped_server_gets_no_commands(self):
         self.running = False
-        self.save([{"name": "Tacoz YouTube", "whitelisted": True, "is_op": True}])
+        result = self.save([{"name": "Tacoz YouTube", "whitelisted": True, "is_op": True}])
+        self.assertFalse(result["restart_required"])
         self.assertEqual(self.sent, [])
         self.assertEqual(self.env()["OPS"], "Tacoz YouTube")
 

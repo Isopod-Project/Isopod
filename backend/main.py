@@ -1282,7 +1282,8 @@ def update_bedrock_users(path: str, users: List[WhitelistUser], wl_enabled: Opti
 
     # Players who aren't online can't be opped live; OPS applies to them on the next start
     commands = bedrock_users.live_commands(old_users, old_enabled, new_users, enabled)
-    if commands and is_instance_running(path):
+    running = is_instance_running(path)
+    if commands and running:
         for command in commands:
             ok, output = bedrock.send_command(path, command)
             if not ok:
@@ -1290,7 +1291,7 @@ def update_bedrock_users(path: str, users: List[WhitelistUser], wl_enabled: Opti
 
     if response:
         response.headers["X-Whitelist-Enabled"] = "true" if enabled else "false"
-    return {"message": "Users updated successfully", "whitelist_enabled": enabled, "environment": env_updates}
+    return {"message": "Users updated successfully", "whitelist_enabled": enabled, "environment": env_updates, "restart_required": running and enabled != old_enabled}
 
 
 # ==========================================
