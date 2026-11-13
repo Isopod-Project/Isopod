@@ -8,7 +8,7 @@ COPY assets/ ../assets/
 RUN npm run build
 
 # Stage 2: Serve via Python FastAPI
-FROM python:3.11-slim
+FROM python:3.15-slim
 WORKDIR /app
 
 # Install Docker CLI, Docker Daemon (docker.io), iptables, and Docker Compose v2 for DinD invocation.
