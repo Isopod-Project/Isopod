@@ -340,11 +340,54 @@ html[data-theme="light"] .bg-black\/75 {
     to { opacity: 1; }
 }
 
-.animate-indeterminate {
-  animation: indeterminate 1.4s ease-in-out infinite;
+/* Long-lived indicators (server starting, online, busy) use stepped or finite
+   animations. A smooth infinite animation makes the browser draw a frame on every
+   display refresh (240/s on a 240 Hz monitor) for as long as it runs; steps() only
+   draws when the picture actually changes, so these cost a handful of frames per
+   second. Don't use smooth infinite animations for anything that can stay on screen. */
+
+/* Halo that rings three times when something becomes active, then stays invisible. */
+@keyframes iso-ping {
+  from { transform: scale(1); opacity: 0.75; }
+  to { transform: scale(2.2); opacity: 0; }
+}
+.anim-ping-once {
+  animation: iso-ping 1s cubic-bezier(0, 0, 0.2, 1) 3 both;
 }
 
-@keyframes indeterminate {
+/* ~8 frames/s */
+@keyframes iso-pulse {
+  50% { opacity: 0.35; }
+}
+.anim-pulse-stepped {
+  animation: iso-pulse 2s steps(8) infinite;
+}
+
+/* ~8 frames/s, matches an 8-spoke loader icon */
+@keyframes iso-spin {
+  to { transform: rotate(360deg); }
+}
+.anim-spin-stepped {
+  animation: iso-spin 1s steps(8) infinite;
+}
+
+/* Indeterminate progress bar, ~8 frames/s */
+@keyframes iso-slide {
   from { transform: translateX(-100%); }
   to { transform: translateX(300%); }
+}
+.anim-slide-stepped {
+  animation: iso-slide 1.6s steps(13) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin,
+  .anim-pulse-stepped,
+  .anim-spin-stepped,
+  .anim-slide-stepped {
+    animation: none;
+  }
+  .anim-ping-once {
+    display: none;
+  }
 }
