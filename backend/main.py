@@ -51,6 +51,13 @@ CF_API_KEY = (os.getenv("CURSEFORGE_API_KEY") or os.getenv("CF_API_KEY") or "").
 if CF_API_KEY:
     os.environ["CF_API_KEY"] = CF_API_KEY
 
+def cf_numeric_id(value: str, label: str) -> int:
+    """Only ASCII decimal IDs may occupy CurseForge URL path segments."""
+    if not re.fullmatch(r"[0-9]{1,20}", str(value)):
+        raise HTTPException(status_code=400, detail=f"Invalid CurseForge {label} ID")
+    return int(value)
+
+
 def cf_api_headers() -> Dict[str, str]:
     """Per-request headers for api.curseforge.com. Never set these as client defaults: several
     handlers share one client between Modrinth and CurseForge, and the key must only go to CurseForge."""
@@ -2107,6 +2114,10 @@ ICON_URL_RE = re.compile(r"https://(?:cdn\.modrinth\.com|media\.forgecdn\.net)/[
 
 @app.post("/api/instances")
 async def create_instance(req: CreateInstanceRequest):
+    # Validate before creating files or making any outbound request.
+    cf_project_id = cf_numeric_id(req.cf_id, "project") if req.cf_id is not None else None
+    cf_file_id = (cf_numeric_id(req.modpack_version, "file")
+                  if req.cf_id is not None and req.modpack_version is not None else None)
     slug = generate_slug(req.name)
     path = instance_dir(slug)
     if path is None:
@@ -2253,35 +2264,32 @@ async def create_instance(req: CreateInstanceRequest):
 
     if req.cf_id:
         file_id = None
-        if not str(req.cf_id).isdigit():
-            shutil.rmtree(path, ignore_errors=True)
-            raise HTTPException(status_code=400, detail="Invalid CurseForge project ID")
-        cf_slug = str(req.cf_id)
+        cf_slug = str(cf_project_id)
         # If curseforge, req.modpack_version is the file ID
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(follow_redirects=False) as client:
                 # itzg's CF_SLUG needs the slug, but the frontend sends the numeric project ID
-                res = await client.get(f"{CF_API_BASE}/mods/{req.cf_id}", headers=cf_api_headers(), timeout=20.0)
+                res = await client.get(f"{CF_API_BASE}/mods/{cf_project_id}", headers=cf_api_headers(), timeout=20.0)
                 if res.status_code != 200:
-                    raise HTTPException(status_code=502, detail=f"CurseForge API returned {res.status_code} while resolving modpack {req.cf_id}")
+                    raise HTTPException(status_code=502, detail=f"CurseForge API returned {res.status_code} while resolving modpack {cf_project_id}")
                 cf_slug = res.json().get("data", {}).get("slug") or cf_slug
                 if req.modpack_version:
-                    file_id = req.modpack_version
+                    file_id = cf_file_id
                 else:
-                    res = await client.get(f"{CF_API_BASE}/mods/{req.cf_id}", headers=cf_api_headers(), timeout=20.0)
+                    res = await client.get(f"{CF_API_BASE}/mods/{cf_project_id}", headers=cf_api_headers(), timeout=20.0)
                     if res.status_code == 200:
                         data = res.json().get("data", {})
                         latest_files = data.get("latestFiles", [])
                         if latest_files:
-                            file_id = str(latest_files[0]["id"])
-                            req.modpack_version = file_id
+                            file_id = cf_numeric_id(latest_files[0]["id"], "file")
+                            req.modpack_version = str(file_id)
                             for ver in latest_files[0].get("gameVersions", []):
                                 if ver and ver[0].isdigit():
                                     mc_version = ver
                                     break
                 
                 if file_id and not mc_version:
-                    res = await client.get(f"{CF_API_BASE}/mods/{req.cf_id}/files/{file_id}", headers=cf_api_headers(), timeout=20.0)
+                    res = await client.get(f"{CF_API_BASE}/mods/{cf_project_id}/files/{file_id}", headers=cf_api_headers(), timeout=20.0)
                     if res.status_code == 200:
                         fdata = res.json().get("data", {})
                         for ver in fdata.get("gameVersions", []):
