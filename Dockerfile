@@ -14,9 +14,11 @@ WORKDIR /app
 # Install Docker CLI, Docker Daemon (docker.io), iptables, and Docker Compose v2 for DinD invocation.
 # Downloads match the build arch (x86_64 or aarch64) so arm64 hosts like Apple Silicon don't need emulation.
 # Keep DOCKER_CLI_VERSION current: older static CLIs are built with Go releases that have known CVEs.
+# apt-get upgrade pulls Debian security fixes the python base image hasn't picked up yet.
 ARG DOCKER_CLI_VERSION=29.9.2
 RUN ARCH="$(uname -m)" && \
     apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
         docker.io \
         fuse-overlayfs \

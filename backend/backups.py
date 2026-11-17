@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 import zipfile
 from datetime import datetime
@@ -262,6 +263,60 @@ def _check_members(members: List[str], base: str) -> None:
             raise ValueError("Backup contains an unsafe path.")
 
 
+def _top_level(member: str, nested: str = "") -> str:
+    """The folder or file a member belongs to, e.g. "data/world" for "data/world/level.dat" when nested is "data"."""
+    parts = member.replace("\\", "/").strip("/").split("/")
+    if nested and parts[0] == nested and len(parts) > 1:
+        return f"{parts[0]}/{parts[1]}"
+    return parts[0]
+
+
+def _staged_restore(zipf: zipfile.ZipFile, members: List[str], base: str, replace: List[str]) -> None:
+    """Extract members under base, replacing each path in replace (relative to base).
+
+    Everything is extracted to a staging folder first, so a corrupt archive fails before
+    anything live is touched. Current copies are then moved aside and only deleted once
+    every staged path is in place; any failure along the way puts the old ones back.
+    """
+    os.makedirs(base, exist_ok=True)
+    staging = tempfile.mkdtemp(prefix=".isopod-restore-", dir=base)
+    aside = tempfile.mkdtemp(prefix=".isopod-previous-", dir=base)
+    moved_aside: List[str] = []
+    moved_in: List[str] = []
+    try:
+        zipf.extractall(staging, members=members)
+        for rel in replace:
+            live = os.path.join(base, rel)
+            if os.path.lexists(live):
+                os.makedirs(os.path.dirname(os.path.join(aside, rel)), exist_ok=True)
+                os.replace(live, os.path.join(aside, rel))
+                moved_aside.append(rel)
+        for rel in replace:
+            staged = os.path.join(staging, rel)
+            if os.path.lexists(staged):
+                os.makedirs(os.path.dirname(os.path.join(base, rel)), exist_ok=True)
+                os.replace(staged, os.path.join(base, rel))
+                moved_in.append(rel)
+    except BaseException:
+        for rel in moved_in:
+            live = os.path.join(base, rel)
+            if os.path.isdir(live) and not os.path.islink(live):
+                shutil.rmtree(live, ignore_errors=True)
+            else:
+                try:
+                    os.remove(live)
+                except OSError:
+                    pass
+        for rel in moved_aside:
+            os.replace(os.path.join(aside, rel), os.path.join(base, rel))
+        # Only reached once everything is back; if a move above failed, the old copies stay in aside.
+        shutil.rmtree(aside, ignore_errors=True)
+        raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    shutil.rmtree(aside, ignore_errors=True)
+
+
 def restore_snapshot(instance_path: str, name: str) -> List[str]:
     """Put the worlds, mod folders, and server config back as they were. Caller must ensure the server is stopped."""
     zip_path = backup_file_path(instance_path, name)
@@ -273,13 +328,14 @@ def restore_snapshot(instance_path: str, name: str) -> List[str]:
             raise ValueError("Snapshot is missing its manifest.")
         members = [m for m in zipf.namelist() if m != SNAPSHOT_MANIFEST]
         _check_members(members, base)
-        data_dir = os.path.join(base, "data")
-        # Remove every snapshot-managed folder, so mods added after the snapshot don't linger.
+        # Replace every snapshot-managed folder, so mods added after the snapshot don't linger.
+        replace = set()
         for folder in set(manifest.get("worlds", [])) | set(SNAPSHOT_DATA_DIRS):
             if not folder or "/" in folder or "\\" in folder or folder in (".", ".."):
                 continue
-            shutil.rmtree(os.path.join(data_dir, folder), ignore_errors=True)
-        zipf.extractall(base, members=members)
+            replace.add(f"data/{folder}")
+        replace.update(_top_level(m, "data") for m in members if m.strip("/"))
+        _staged_restore(zipf, members, base, sorted(replace))
     return list(manifest.get("worlds", [])) + list(manifest.get("data_dirs", [])) + list(manifest.get("files", []))
 
 
@@ -291,11 +347,9 @@ def restore_backup(instance_path: str, name: str) -> List[str]:
     data_dir = os.path.realpath(os.path.join(instance_path, "data"))
     with zipfile.ZipFile(zip_path, "r") as zipf:
         members = zipf.namelist()
-        worlds = sorted({m.replace("\\", "/").split("/", 1)[0] for m in members if m.strip("/")})
+        worlds = sorted({_top_level(m) for m in members if m.strip("/")})
         _check_members(members, data_dir)
-        for world in worlds:
-            shutil.rmtree(os.path.join(data_dir, world), ignore_errors=True)
-        zipf.extractall(data_dir)
+        _staged_restore(zipf, members, data_dir, worlds)
     return worlds
 
 
