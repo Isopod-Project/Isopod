@@ -78,3 +78,27 @@ These are by design for now and are tracked separately:
 Cross-origin access is off by default: there are no CORS headers unless `ISOPOD_CORS_ORIGINS` lists extra origins, and state-changing requests and WebSocket upgrades from a foreign `Origin` get `403` (`backend/security.py`, #144). This doesn't stop DNS rebinding, where the attacker's page and the API share an origin; the login covers that, since the attacker's origin never gets the session cookie.
 
 Every `/api` route and WebSocket needs a session from the dashboard login (`backend/auth.py`, #143). The password is stored as an argon2 hash.
+
+### CurseForge alert investigation (#149)
+
+Alerts 214, 215 and 216 were verified open on main on 2026-11-17. Their
+last analysis was commit `f3344bec255ca632cff9fc344f2f8d8626173d38`; the
+investigated main head was `7130c3a718443622f5694bb795c29efd0ce8835c`.
+PR #149 is merged; this follow-up starts from current main.
+
+All three sinks build URLs under a fixed `https://api.curseforge.com/v1`
+origin. Project IDs already had a digit check and the HTTP client did not
+follow redirects. No arbitrary-host SSRF or key exfiltration was reproduced.
+However, the selected file ID was unchecked: path traversal and query/fragment
+injection could change the request within that origin. Python's `isdigit()`
+also accepted non-ASCII project IDs.
+
+Instance creation now validates project and selected file IDs before disk or
+network activity, accepts only 1–20 ASCII decimal digits, and constructs the
+three request paths from integers. Upstream latest-file IDs receive the same
+validation. Redirect following is explicitly disabled for these keyed requests.
+The regression suite uses a mock HTTP transport at the actual instance-creation
+boundary and covers injection, invalid upstream IDs, ordinary selected/latest
+installs, and redirect handling. This is an internal security bug fix; wiki
+instructions are unchanged. A fresh hosted CodeQL run is still needed to
+confirm alert disposition; local tests do not close GitHub alerts.
