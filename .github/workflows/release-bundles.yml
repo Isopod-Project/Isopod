@@ -34,7 +34,7 @@ jobs:
           package-manager-cache: false # This job publishes release assets, so never restore a cache
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.11"
+          python-version: "3.14"
       - name: Build the frontend
         working-directory: frontend
         run: |

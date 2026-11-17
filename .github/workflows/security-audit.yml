@@ -29,7 +29,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.11"
+          python-version: "3.14"
       - name: pip-audit
         run: pipx run pip-audit==2.10.1 -r backend/requirements.txt --desc
 
@@ -47,9 +47,13 @@ jobs:
       # npm audit only reads package-lock.json, so the runner's own npm is enough and nothing is installed
       - name: Runtime dependencies
         run: npm audit --omit=dev --audit-level=high
-      # Dev dependencies run on developer machines and in CI, so they count too
+      # Dev dependencies run on developer machines and in CI, so they count too.
+      # Advisories with no fix yet can be skipped until an expiry date in .npm-audit-ignore.json;
+      # the runtime step above never skips anything.
+      - name: Test the audit gate
+        run: node --test ../scripts/check-npm-audit.test.mjs
       - name: All dependencies
-        run: npm audit --audit-level=high
+        run: node ../scripts/check-npm-audit.mjs
 
   static-analysis:
     name: Bandit (Python static analysis)
@@ -61,7 +65,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.11"
+          python-version: "3.14"
       - name: Report medium and above
         run: |
           {
@@ -157,6 +161,6 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.11"
+          python-version: "3.14"
       - name: zizmor
         run: pipx run zizmor==1.31.1 --offline .github/workflows
