@@ -1,0 +1,50 @@
+name: Backend compatibility
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "assets/**"
+      - "Dockerfile"
+      - "docker/**"
+      - "scripts/build_app_bundle.py"
+      - ".github/workflows/backend.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Build production image
+        run: docker build -t isopod:backend-test .
+      - name: Run full backend suite on the production runtime
+        run: docker run --rm -v "$PWD/frontend/src:/app/frontend/src:ro" --entrypoint python isopod:backend-test -m unittest discover -v backend/tests
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.14"
+      - name: Verify release bundle wheels for both architectures
+        run: |
+          python - <<'PY'
+          import runpy
+          import subprocess
+          import sys
+          import tempfile
+
+          bundle = runpy.run_path("scripts/build_app_bundle.py")
+          for arch, platforms in bundle["PLATFORMS"].items():
+              with tempfile.TemporaryDirectory() as dest:
+                  flags = [flag for platform in platforms for flag in ("--platform", platform)]
+                  subprocess.run([sys.executable, "-m", "pip", "download", "--dest", dest,
+                                  "--only-binary=:all:", "--implementation", "cp",
+                                  "--python-version", bundle["PYTHON_VERSION"], *flags,
+                                  "-r", "backend/requirements.txt"], check=True)
+          PY
