@@ -1,0 +1,54 @@
+name: Backend compatibility
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "assets/**"
+      - "Dockerfile"
+      - "docker/**"
+      - "scripts/build_app_bundle.py"
+      - ".github/workflows/backend.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build production image
+        run: docker build -t isopod:backend-test .
+      - name: Verify Docker Compose plugin
+        run: |
+          docker run --rm --entrypoint docker isopod:backend-test compose version
+          docker run --rm -v "$PWD:/source:ro" --entrypoint docker isopod:backend-test compose -f /source/isopod-compose.yml config --quiet
+      - name: Run full backend suite on the production runtime
+        run: docker run --rm -v "$PWD/frontend/src:/app/frontend/src:ro" --entrypoint python isopod:backend-test -m unittest discover -v backend/tests
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - name: Verify release bundle wheels for both architectures
+        run: |
+          python - <<'PY'
+          import runpy
+          import subprocess
+          import sys
+          import tempfile
+
+          bundle = runpy.run_path("scripts/build_app_bundle.py")
+          for arch, platforms in bundle["PLATFORMS"].items():
+              with tempfile.TemporaryDirectory() as dest:
+                  flags = [flag for platform in platforms for flag in ("--platform", platform)]
+                  subprocess.run([sys.executable, "-m", "pip", "download", "--dest", dest,
+                                  "--only-binary=:all:", "--implementation", "cp",
+                                  "--python-version", bundle["PYTHON_VERSION"], *flags,
+                                  "-r", "backend/requirements.txt"], check=True)
+          PY

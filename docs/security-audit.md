@@ -9,7 +9,7 @@ Every release gets two checks. The [`github-releases`](../.agent/skills/github-r
 | Job | Tool | Fails on |
 | --- | --- | --- |
 | Python dependencies | pip-audit on `backend/requirements.txt` | any known vulnerability |
-| JavaScript dependencies | `npm audit` with and without dev dependencies | high or critical |
+| JavaScript dependencies | `npm audit` on runtime dependencies, then all dependencies through [`scripts/check-npm-audit.mjs`](../scripts/check-npm-audit.mjs) | high or critical; the all-dependencies step skips entries in `frontend/.npm-audit-ignore.json` |
 | Static analysis | Bandit on `backend/` | high severity, high confidence; medium findings are listed in the job summary |
 | CodeQL | Python and JavaScript/TypeScript, `security-extended` queries | new high alerts, through code scanning's PR check; all alerts are on the Security tab |
 | Secrets | gitleaks: the PR's commits, the commits since the previous tag, or the full history on manual runs | any leak |
@@ -26,11 +26,25 @@ gh run watch "$(gh run list --workflow security-audit.yml --branch main --limit 
 ### When a job fails
 
 - **Dependencies:** update the package. Python versions are pinned in `backend/requirements.txt`, and Dependabot proposes updates weekly. For npm, `npm audit fix` usually works; check that `npm run build` and the e2e suite still pass.
+- **npm with no fix available:** if no release of the package has the fix and `npm audit fix --force` would only downgrade something major, add the advisory to [`frontend/.npm-audit-ignore.json`](../frontend/.npm-audit-ignore.json) with its GHSA `id`, the vulnerable `package`, a `reason`, and an `expires` date (`YYYY-MM-DD`). An entry matches only that advisory in that package, applies through its expiry day, and then fails again so it gets re-checked. Malformed entries fail the job. The runtime-only step never skips anything, so this is only for dev and build tooling. The gate has tests: `node --test scripts/check-npm-audit.test.mjs`.
 - **Trivy:** most fixes are a newer base image, a newer `DOCKER_CLI_VERSION` in the `Dockerfile`, or a dependency bump. If nothing upstream has the fix yet, add the finding to [`.trivyignore.yaml`](../.trivyignore.yaml). Each entry needs a reason (`statement`) and an `expired_at` date, so it fails again later and gets re-checked.
 - **CodeQL:** fix the code. If the alert is a false positive, dismiss it on the Security tab with the reason. For example, the offline-mode player UUID has to use MD5 to match Minecraft's `UUID.nameUUIDFromBytes`.
 - **Bandit:** fix the code. If it's a false positive, add `# nosec BXXX` with a comment explaining why.
 - **gitleaks:** treat the secret as leaked. Revoke it first, then remove it from the code.
 - **zizmor:** pin actions to a full commit SHA with the tag in a comment, give jobs only the `permissions:` they need, and don't put `${{ }}` expressions directly in `run:` scripts. Pass them through `env:` instead.
+
+### Container build patches
+
+The runtime explicitly upgrades `zlib1g` from Debian security repositories; installing
+other packages does not upgrade libraries already supplied by the Python base image.
+
+Compose v5.8.0 still vendors vulnerable `golang.org/x/net` v0.60.0. The Dockerfile
+builds its pinned release commit with v0.62.0 (and the required `x/crypto` and `x/text`
+updates) in a separate Go stage. Only the static CLI is copied into the runtime.
+The plugin reports `v5.8.0-isopod.1` to distinguish this build from upstream.
+Remove this build override once an upstream Compose release includes the fix,
+and verify both the Compose configuration smoke test and Trivy scan. Do not
+replace the dependency fix with a scan exclusion.
 
 ## 2. Release diff review
 
@@ -64,3 +78,27 @@ These are by design for now and are tracked separately:
 Cross-origin access is off by default: there are no CORS headers unless `ISOPOD_CORS_ORIGINS` lists extra origins, and state-changing requests and WebSocket upgrades from a foreign `Origin` get `403` (`backend/security.py`, #144). This doesn't stop DNS rebinding, where the attacker's page and the API share an origin; the login covers that, since the attacker's origin never gets the session cookie.
 
 Every `/api` route and WebSocket needs a session from the dashboard login (`backend/auth.py`, #143). The password is stored as an argon2 hash.
+
+### CurseForge alert investigation (#149)
+
+Alerts 214, 215 and 216 were verified open on main on 2026-11-17. Their
+last analysis was commit `f3344bec255ca632cff9fc344f2f8d8626173d38`; the
+investigated main head was `7130c3a718443622f5694bb795c29efd0ce8835c`.
+PR #149 is merged; this follow-up starts from current main.
+
+All three sinks build URLs under a fixed `https://api.curseforge.com/v1`
+origin. Project IDs already had a digit check and the HTTP client did not
+follow redirects. No arbitrary-host SSRF or key exfiltration was reproduced.
+However, the selected file ID was unchecked: path traversal and query/fragment
+injection could change the request within that origin. Python's `isdigit()`
+also accepted non-ASCII project IDs.
+
+Instance creation now validates project and selected file IDs before disk or
+network activity, accepts only 1–20 ASCII decimal digits, and constructs the
+three request paths from integers. Upstream latest-file IDs receive the same
+validation. Redirect following is explicitly disabled for these keyed requests.
+The regression suite uses a mock HTTP transport at the actual instance-creation
+boundary and covers injection, invalid upstream IDs, ordinary selected/latest
+installs, and redirect handling. This is an internal security bug fix; wiki
+instructions are unchanged. A fresh hosted CodeQL run is still needed to
+confirm alert disposition; local tests do not close GitHub alerts.

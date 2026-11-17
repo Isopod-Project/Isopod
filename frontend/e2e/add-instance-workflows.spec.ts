@@ -158,6 +158,14 @@ test.describe("Custom instance: world settings", () => {
     })
   })
 
+  test("the empty whitelist message matches whether the whitelist is on", async ({ page }) => {
+    await expect(page.getByText("No players added yet. The whitelist is off, so anyone can join.")).toBeVisible()
+    await expect(page.getByText(/blocked until added/)).toHaveCount(0)
+
+    await page.getByText("Server Whitelist").locator("xpath=ancestor::div[contains(@class,'justify-between')][1]").getByRole("button").click()
+    await expect(page.getByText("No players added yet. Everyone will be blocked until added to the whitelist.")).toBeVisible()
+  })
+
   test("whitelist players can be added, removed and sent with the whitelist on", async ({ page }) => {
     const draft = page.getByPlaceholder("Enter Minecraft username...")
     await draft.fill("Alex")

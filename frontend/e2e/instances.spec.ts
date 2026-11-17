@@ -61,7 +61,9 @@ test.describe("Instance name layout", () => {
               })
               return {
                 wordLines,
-                fits: bounds.left >= container.left && bounds.right <= container.right && element.scrollWidth <= element.clientWidth,
+                // Chromium can round the clamped text overflow up by one CSS pixel.
+                // Keep container bounds exact while allowing that scroll-metric rounding.
+                fits: bounds.left >= container.left && bounds.right <= container.right && element.scrollWidth <= element.clientWidth + 1,
                 height: bounds.height,
                 lineHeight: parseFloat(getComputedStyle(element).lineHeight),
               }

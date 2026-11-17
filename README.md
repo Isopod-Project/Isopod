@@ -19,11 +19,24 @@
 <p align="center">
   <a href="https://isopod-project.github.io/Isopod-Website/">Website</a> ·
   <a href="https://isopod-project.github.io/Isopod-Website/#/wiki">Wiki</a> ·
+  <a href="https://www.youtube.com/watch?v=6jrFq1MtpJE">Demo Video</a> ·
   <a href="#-quick-start">Quick Start</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 ![The Isopod dashboard](docs/images/dashboard.png)
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=6jrFq1MtpJE">
+    <img src="https://img.youtube.com/vi/6jrFq1MtpJE/maxresdefault.jpg" alt="Isopod: Minecraft servers your friends can't break (YouTube)" width="400">
+  </a>
+  &nbsp;
+  <a href="https://www.youtube.com/watch?v=nJHWHoxPup0">
+    <img src="https://img.youtube.com/vi/nJHWHoxPup0/maxresdefault.jpg" alt="I built a dashboard for running Minecraft servers in Docker (YouTube)" width="400">
+  </a>
+  <br>
+  <sub>▶️ Watch the demos on YouTube</sub>
+</p>
 
 ## ✨ Features
 - **Prism-Like Instance Management**: Easily create, configure, and manage separate Minecraft server instances.

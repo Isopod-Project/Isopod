@@ -26,6 +26,7 @@ const HELP_TOPICS = {
    backups: "backups",
    mods: "mod-management",
    "resource-pack": "mod-management/resource-packs",
+   "mod-search": "mod-management/curseforge-mods",
    config: "server-tuning",
 
    // Instance editor tabs on a Bedrock server ("bedrock-" + editTab)
