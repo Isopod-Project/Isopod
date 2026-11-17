@@ -33,6 +33,19 @@ gh run watch "$(gh run list --workflow security-audit.yml --branch main --limit 
 - **gitleaks:** treat the secret as leaked. Revoke it first, then remove it from the code.
 - **zizmor:** pin actions to a full commit SHA with the tag in a comment, give jobs only the `permissions:` they need, and don't put `${{ }}` expressions directly in `run:` scripts. Pass them through `env:` instead.
 
+### Container build patches
+
+The runtime explicitly upgrades `zlib1g` from Debian security repositories; installing
+other packages does not upgrade libraries already supplied by the Python base image.
+
+Compose v5.8.0 still vendors vulnerable `golang.org/x/net` v0.60.0. The Dockerfile
+builds its pinned release commit with v0.62.0 (and the required `x/crypto` and `x/text`
+updates) in a separate Go stage. Only the static CLI is copied into the runtime.
+The plugin reports `v5.8.0-isopod.1` to distinguish this build from upstream.
+Remove this build override once an upstream Compose release includes the fix,
+and verify both the Compose configuration smoke test and Trivy scan. Do not
+replace the dependency fix with a scan exclusion.
+
 ## 2. Release diff review
 
 Review everything since the previous release, `git diff <last-tag>..main`, with a security focus. In Claude Code, `/security-review` covers this. Check:
