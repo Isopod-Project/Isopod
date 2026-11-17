@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Isopod thumbnail</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 1280px; height: 720px; overflow: hidden; font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; }
+  body {
+    background:
+      radial-gradient(ellipse 60% 70% at 85% 30%, rgba(255,255,255,.9), rgba(255,255,255,0) 65%),
+      radial-gradient(ellipse 70% 80% at 10% 90%, rgba(62,142,208,.35), rgba(62,142,208,0) 70%),
+      linear-gradient(150deg, #d8e7f6, #b5d2ee 60%, #d3e3f3);
+  }
+  #win { position: absolute; left: 36px; top: 140px; width: 820px; height: 440px; border-radius: 14px; overflow: hidden; background: #fff;
+    box-shadow: 0 30px 70px rgba(20,50,90,.32), 0 0 0 1px rgba(20,50,90,.10); }
+  .bar { height: 30px; background: #e4e8ed; display: flex; align-items: center; gap: 7px; padding-left: 14px; }
+  .bar i { width: 11px; height: 11px; border-radius: 50%; background: #c5ccd5; }
+  .bar span { margin-left: 18px; font-size: 13px; color: #556270; }
+  #frame { position: absolute; left: 0; top: 30px; width: 1440px; height: 888px; border: 0; transform: scale(.5694); transform-origin: 0 0; }
+  #side { position: absolute; left: 872px; top: 0; width: 392px; height: 720px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #12202f; }
+  #side img { width: 150px; height: 150px; }
+  #side .name { font-size: 50px; font-weight: 700; margin-top: 4px; letter-spacing: -.5px; color: #2a3a4b; }
+  #side h1 { margin: 18px 0 0; font-size: 62px; line-height: 1.04; font-weight: 800; letter-spacing: -1.5px; }
+  #side h1 em { font-style: normal; color: #2f7fc4; }
+</style>
+</head>
+<body>
+  <div id="win">
+    <div class="bar"><i></i><i></i><i></i><span>localhost:8000</span></div>
+    <iframe id="frame" src="/"></iframe>
+  </div>
+  <div id="side">
+    <img src="/repo/assets/logo.png" alt="">
+    <div class="name">Isopod</div>
+    <h1>Minecraft servers, <em>self&#8209;hosted</em></h1>
+  </div>
+</body>
+</html>

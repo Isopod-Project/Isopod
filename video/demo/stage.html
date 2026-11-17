@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Isopod demo stage</title>
+<style>
+  :root {
+    --accent: #3E8ED0;
+    --ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: #dfe8f2; font-family: var(--ui); }
+  #viewport { position: absolute; inset: 0; overflow: hidden; }
+
+  /* One 1600x900 Windows 11 desktop, scaled up by the camera */
+  #desk { position: absolute; left: 0; top: 0; width: 1600px; height: 900px; transform-origin: 0 0; overflow: hidden;
+    background:
+      radial-gradient(ellipse 70% 60% at 62% 58%, rgba(255,255,255,.85), rgba(255,255,255,0) 60%),
+      radial-gradient(ellipse 55% 70% at 30% 70%, rgba(126,180,230,.55), rgba(126,180,230,0) 70%),
+      radial-gradient(ellipse 60% 50% at 80% 20%, rgba(163,205,240,.7), rgba(163,205,240,0) 70%),
+      linear-gradient(160deg, #cfe2f5, #a9c9ea 55%, #c9dcf0);
+  }
+
+  /* Browser window, maximised above the taskbar */
+  #browser { position: absolute; left: 0; top: 0; width: 1600px; height: 852px; background: #fff; display: flex; flex-direction: column; }
+  .tabs { height: 40px; background: #dfe3e8; display: flex; align-items: flex-end; padding-left: 10px; gap: 6px; position: relative; }
+  .tab { height: 32px; width: 240px; background: #fff; border-radius: 9px 9px 0 0; display: flex; align-items: center; gap: 9px; padding: 0 12px; font-size: 12.5px; color: #1f2328; }
+  .tab img { width: 16px; height: 16px; }
+  .tab .x { margin-left: auto; color: #6b7280; font-size: 13px; }
+  .newtab { height: 32px; display: flex; align-items: center; padding: 0 8px; color: #4b5563; font-size: 18px; }
+  .winctl { position: absolute; right: 0; top: 0; height: 32px; display: flex; }
+  .winctl span { width: 46px; height: 32px; display: grid; place-items: center; color: #1f2328; font-size: 12px; }
+  .toolbar { height: 40px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 1px solid #e5e7eb; }
+  .nav { width: 30px; height: 30px; display: grid; place-items: center; color: #4b5563; }
+  .nav svg { width: 16px; height: 16px; }
+  .omni { flex: 1; height: 30px; border-radius: 15px; background: #eef1f4; display: flex; align-items: center; gap: 8px; padding: 0 14px; font-size: 13.5px; color: #1f2328; }
+  .omni svg { width: 13px; height: 13px; color: #6b7280; }
+  .omni .host { color: #1f2328; }
+  .omni .port { color: #6b7280; }
+  #appframe { flex: 1; width: 1600px; border: 0; display: block; background: #fff; }
+
+  /* Taskbar */
+  #taskbar { position: absolute; left: 0; bottom: 0; width: 1600px; height: 48px; background: rgba(243,246,250,.92); border-top: 1px solid rgba(0,0,0,.06); display: flex; align-items: center; justify-content: center; gap: 4px; }
+  .tb { width: 40px; height: 40px; border-radius: 6px; display: grid; place-items: center; position: relative; }
+  .tb.active { background: rgba(255,255,255,.7); }
+  .tb.active::after { content: ""; position: absolute; bottom: 2px; width: 16px; height: 3px; border-radius: 2px; background: var(--accent); }
+  .tb svg, .tb img { width: 24px; height: 24px; }
+  .tray { position: absolute; right: 12px; top: 0; height: 48px; display: flex; align-items: center; gap: 14px; font-size: 12px; color: #1f2328; }
+  .tray .clock { text-align: right; line-height: 16px; }
+  .tray svg { width: 16px; height: 16px; }
+
+  /* Cursor */
+  #cursor { position: absolute; left: 0; top: 0; width: 22px; height: 30px; pointer-events: none; transform-origin: 0 0; z-index: 50; }
+  #cursor svg { position: absolute; left: 0; top: 0; display: none; }
+  #cursor[data-kind="arrow"] .arrow, #cursor[data-kind="ibeam"] .ibeam, #cursor[data-kind="hand"] .hand { display: block; }
+
+  /* Overlays (page pixels) */
+  #caption { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); display: flex; align-items: center; gap: 14px; padding: 10px 24px; border-radius: 999px; background: rgba(255,255,255,.97); box-shadow: 0 6px 24px rgba(15,35,60,.18), 0 0 0 1px rgba(15,35,60,.08); font-size: 28px; font-weight: 600; color: #16212e; white-space: nowrap; z-index: 60; opacity: 0; }
+  #caption .keys { display: flex; gap: 6px; }
+  .key { font-size: 21px; font-weight: 600; padding: 3px 11px; border-radius: 8px; background: #f3f5f8; border: 1px solid #cfd6df; border-bottom-width: 3px; color: #33404e; font-family: var(--ui); }
+
+  #endcard { position: absolute; inset: 0; background: #f7f9fc; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 80; opacity: 0; color: #16212e; }
+  #endcard img { width: 168px; height: 168px; image-rendering: auto; }
+  #endcard h1 { font-size: 92px; margin: 18px 0 6px; font-weight: 700; letter-spacing: -1px; }
+  #endcard .tag { font-size: 34px; color: #3b4a5a; margin-bottom: 34px; }
+  #endcard .meta { font-size: 25px; color: #5b6878; margin: 4px 0; }
+  #endcard .url { margin-top: 30px; font-size: 30px; font-weight: 600; color: var(--accent); }
+
+  #camwin { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: hidden; }
+  #portrait-head, #portrait-url { display: none; }
+
+  /* Portrait (Shorts / TikTok / Reels): 1080x1920. The top ~130px and bottom ~420px are
+     covered by the apps' own UI, so the app window sits in the middle band. */
+  body.portrait, body.portrait #viewport { width: 1080px; height: 1920px; background: linear-gradient(170deg, #e3edf8, #c9ddf1 55%, #dce8f5); }
+  body.portrait #camwin { top: 520px; width: 1080px; height: 980px; box-shadow: 0 0 0 1px rgba(20,50,90,.12), 0 20px 50px rgba(20,50,90,.22); }
+  body.portrait #portrait-head { display: flex; position: absolute; left: 0; top: 170px; width: 1080px; justify-content: center; align-items: center; gap: 26px; color: #12202f; }
+  body.portrait #portrait-head img { width: 130px; height: 130px; }
+  body.portrait .pname { font-size: 78px; font-weight: 700; letter-spacing: -1px; line-height: 1; }
+  body.portrait .ptag { font-size: 36px; color: #3b4a5a; margin-top: 8px; }
+  body.portrait #caption { top: 400px; bottom: auto; font-size: 44px; padding: 14px 34px; }
+  body.portrait .key { font-size: 32px; }
+  body.portrait #portrait-url { display: block; position: absolute; top: 1530px; width: 1080px; text-align: center; font-size: 34px; font-weight: 600; color: #2f7fc4; }
+  body.portrait #endcard img { width: 260px; height: 260px; }
+  body.portrait #endcard h1 { font-size: 130px; }
+  body.portrait #endcard .tag { font-size: 44px; max-width: 900px; text-align: center; line-height: 1.25; }
+  body.portrait #endcard .meta { font-size: 34px; max-width: 900px; text-align: center; }
+  body.portrait #endcard .url { font-size: 40px; margin-bottom: 260px; }
+  #fade { position: absolute; inset: 0; background: #000; opacity: 0; z-index: 90; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="viewport">
+  <div id="portrait-head"><img src="/repo/assets/logo.png" alt=""><div><div class="pname">Isopod</div><div class="ptag">Minecraft servers, self-hosted</div></div></div>
+  <div id="camwin">
+  <div id="desk">
+    <div id="browser">
+      <div class="tabs">
+        <div class="tab"><img src="/logo.png" alt=""><span>Isopod - Minecraft Manager</span><span class="x">✕</span></div>
+        <div class="newtab">+</div>
+        <div class="winctl"><span>—</span><span>☐</span><span>✕</span></div>
+      </div>
+      <div class="toolbar">
+        <div class="nav"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 3 5 8l5 5"/></svg></div>
+        <div class="nav"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" opacity=".45"><path d="m6 3 5 5-5 5"/></svg></div>
+        <div class="nav"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3"/></svg></div>
+        <div class="omni"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3.5M8 10.5v.5"/></svg><span class="host">localhost</span><span class="port" style="margin-left:-8px">:8000</span></div>
+      </div>
+      <iframe id="appframe" src="/"></iframe>
+    </div>
+    <div id="taskbar">
+      <div class="tb"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8.4" height="8.4" rx="1" fill="#2b7fd6"/><rect x="12.6" y="3" width="8.4" height="8.4" rx="1" fill="#2b7fd6"/><rect x="3" y="12.6" width="8.4" height="8.4" rx="1" fill="#2b7fd6"/><rect x="12.6" y="12.6" width="8.4" height="8.4" rx="1" fill="#2b7fd6"/></svg></div>
+      <div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="#3b4652" stroke-width="2"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></svg></div>
+      <div class="tb"><svg viewBox="0 0 24 24"><path d="M3 7.5a2 2 0 0 1 2-2h4.5l2 2H19a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="#f4c542"/><path d="M3 10h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="#f8d76b"/></svg></div>
+      <div class="tb active"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5" fill="#3E8ED0"/><circle cx="12" cy="12" r="4.2" fill="#fff"/><path d="M12 2.5a9.5 9.5 0 0 1 8.2 4.8H12" fill="#6fb2e8"/></svg></div>
+      <div class="tb"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5" fill="#1f2a36"/><path d="m7 9 3 3-3 3M12 15h5" stroke="#e5e7eb" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg></div>
+      <div class="tray">
+        <svg viewBox="0 0 16 16" fill="none" stroke="#1f2328" stroke-width="1.4"><path d="M1.5 6a9 9 0 0 1 13 0M3.8 8.4a5.8 5.8 0 0 1 8.4 0M6 10.8a2.6 2.6 0 0 1 4 0"/><circle cx="8" cy="13" r=".9" fill="#1f2328"/></svg>
+        <svg viewBox="0 0 16 16" fill="none" stroke="#1f2328" stroke-width="1.4"><path d="M2 6h3l4-3v10L5 10H2z"/><path d="M11.5 5.5a3.5 3.5 0 0 1 0 5"/></svg>
+        <div class="clock"><div id="clock">9:41 AM</div><div>11/13/2026</div></div>
+      </div>
+    </div>
+    <div id="cursor" data-kind="arrow">
+      <svg class="arrow" width="22" height="30" viewBox="0 0 22 30"><path d="M1.5 1.5v23.2l5.6-5.4 3.6 8.4 3.9-1.7-3.6-8.2h7.7z" fill="#fff" stroke="#000" stroke-width="1.4" stroke-linejoin="round"/></svg>
+      <svg class="ibeam" width="22" height="30" viewBox="-11 -15 22 30"><path d="M-4 -10h3l1 1 1-1h3M0 -9v18M-4 10h3l1-1 1 1h3" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round"/><path d="M-4 -10h3l1 1 1-1h3M0 -9v18M-4 10h3l1-1 1 1h3" fill="none" stroke="#000" stroke-width="1.4" stroke-linecap="round"/></svg>
+      <svg class="hand" width="26" height="30" viewBox="0 0 26 30"><path d="M8.5 13V3.6a2 2 0 0 1 4 0V12m0-1.5a2 2 0 0 1 4 0V13m0-1a2 2 0 0 1 4 0v2m0-.5a2 2 0 0 1 4 0V20c0 4.4-3.4 8-7.8 8h-2.4c-2.5 0-4.6-1.3-6-3.3L2.2 18.8a2 2 0 0 1 3.1-2.5L8.5 19z" fill="#fff" stroke="#000" stroke-width="1.4" stroke-linejoin="round"/></svg>
+    </div>
+  </div>
+  </div>
+
+  <div id="portrait-url">github.com/Isopod-Project/Isopod</div>
+  <div id="caption"><span id="captext"></span><span class="keys" id="capkeys"></span></div>
+
+  <div id="endcard">
+    <img src="/repo/assets/logo.png" alt="">
+    <h1>Isopod</h1>
+    <div class="tag">Self-hosted Minecraft servers, managed like Prism instances.</div>
+    <div class="meta">Java and Bedrock · Mods and modpacks · Backups</div>
+    <div class="meta">Runs in Docker · Free and open source, MIT License</div>
+    <div class="url">github.com/Isopod-Project/Isopod</div>
+  </div>
+  <div id="fade"></div>
+</div>
+<script src="/demo/timeline.js"></script>
+</body>
+</html>

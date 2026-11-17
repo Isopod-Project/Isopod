@@ -88,12 +88,13 @@ test.describe("Instance actions report failures", () => {
       await expect(input).toHaveValue("")
     })
 
-    test("check for updates reports what it downloaded", async ({ page }) => {
+    test("check for updates shows a warning when a mod fails to sync", async ({ page }) => {
       await page.route("**/api/instances/alpha/mods/sync", (route) =>
         route.fulfill({ json: { message: "ok", downloaded: ["sodium"], failed: ["lithium"] } }),
       )
       await page.getByRole("button", { name: "Mods", exact: true }).click()
       await page.getByRole("button", { name: "Check for Updates" }).click()
+      await expect(page.getByText("Mod Sync Incomplete", { exact: true })).toBeVisible()
       await expect(page.getByText("Downloaded 1 missing mod: sodium.")).toBeVisible()
       await expect(page.getByText("Could not download: lithium.")).toBeVisible()
     })

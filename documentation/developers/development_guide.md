@@ -176,6 +176,27 @@ The Isopod container publishes UDP `19132-19152` for these ports next to TCP `25
 
 ---
 
+## Live mod installation checks
+
+From the repository root, install the backend requirements in a Python 3.11+ environment and run the opt-in suite:
+
+```bash
+python -m pip install -r backend/requirements.txt
+python -m unittest -v backend.tests.live_mod_installs
+```
+
+The suite sends authenticated requests to the real FastAPI app in-process and uses a fresh temporary server directory per test. It downloads Lithium for Fabric on Minecraft 1.21.1 from Modrinth, checks the installed JAR, and verifies that the sync response identifies an unknown project on both save and retry. It also checks the CurseForge search and sync behavior when the key is missing.
+
+Set `ISOPOD_TEST_DOCKER=1` to add the Modrinth modpack first-boot test. It needs a local Linux-container Docker engine with Compose v2, permission to bind-mount the temporary directory, at least 2 GiB of free memory for Minecraft, and internet access for Docker, Modrinth, Fabric, and Minecraft downloads. The test accepts the Minecraft EULA through Isopod's normal creation flow. It creates Fabric Server Optimization (release `vtGmZsbn`, Minecraft 1.19.3) through the backend, checks the pre-start mod list, starts the generated service, waits for Docker's Minecraft health check, and verifies installed JARs against the pack index. The service publishes no host port and the suite tears down its Compose project before deleting its temporary data.
+
+Set `ISOPOD_TEST_CURSEFORGE=1` and provide a valid `CURSEFORGE_API_KEY` from the CurseForge developer console to add live CurseForge checks. They exercise Fabric API search and download and verify the generated configuration for an All the Mods 9 release. CurseForge modpack boot remains out of scope while [#182](https://github.com/Isopod-Project/Isopod/issues/182) is open. It tracks invalid exclusion slugs, a broken retry after a truncated installer cache, and JVM options that prevent Java 8 packs from starting.
+
+Use `ISOPOD_TEST_DOCKER=1 python -m unittest -v backend.tests.live_mod_installs` on POSIX shells, or set `$env:ISOPOD_TEST_DOCKER = '1'` before the Python command in PowerShell. Set the CurseForge opt-in flag the same way and provide the key in your environment.
+
+The live cases depend on external providers and run separately from normal test discovery. They cover a single Fabric mod and pack, with no player joins or dependency-heavy installations. The dashboard's visible sync error is checked in `frontend/e2e/action-errors.spec.ts` using a mocked API response. That browser check verifies the dialog text and the live suite verifies the backend response and disk state.
+
+---
+
 ## 🔥 CurseForge Support
 CurseForge modpacks go through the official API at `https://api.curseforge.com/v1`, which needs a key from [console.curseforge.com](https://console.curseforge.com). Set it as `CURSEFORGE_API_KEY` (the compose files pass it into the container; `backend/main.py` also accepts `CF_API_KEY`). Without a key the CurseForge endpoints return `503`.
 
