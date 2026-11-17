@@ -1,0 +1,11 @@
+{
+  "_comment": "Advisories the Security Audit workflow's npm audit skips. Each entry needs a reason and an expiry date, after which it fails the audit again and must be re-checked. Checked by scripts/check-npm-audit.mjs.",
+  "advisories": [
+    {
+      "id": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "reason": "ReDoS through repeated extglobs. No patched picomatch exists (every version up to the latest, 4.0.7, is affected). It is only reached through vite and tinyglobby at build time, on glob patterns from our own config, never on user input.",
+      "expires": "2026-12-31"
+    }
+  ]
+}

@@ -9,3 +9,11 @@ vulnerabilities:
       compose release (v5.6.1) still ships the affected version; the Dockerfile picks up the
       next release automatically. Isopod only uses compose as a local CLI.
     expired_at: 2026-12-31
+  - id: CVE-2026-78661
+    paths:
+      - "usr/lib/docker/cli-plugins/docker-compose"
+    statement: >-
+      Denial of service in golang.org/x/net/html, vendored by docker-compose. The latest
+      compose release (v5.8.0) and its main branch still ship x/net v0.60.0; the Dockerfile
+      picks up the fixed release automatically. Compose never parses untrusted HTML here.
+    expired_at: 2026-12-31

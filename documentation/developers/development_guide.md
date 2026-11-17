@@ -238,6 +238,13 @@ ISOPOD_CORS_ORIGINS=http://localhost:5173,https://isopod.example.com
 ---
 
 ## 🛠️ Tech Stack
-- **Backend**: FastAPI (Python 3.11)
+- **Backend**: FastAPI (Python 3.14)
 - **Frontend**: React + Vite (TypeScript)
 - **Dev Tooling**: Uvicorn (Auto-reload), Node.js 24
+
+The Docker runtime, release-bundle dependency target, and CI use Python 3.14.
+Python 3.15 is supported upstream, but the pinned PyYAML 6.0.3 release lacks
+3.15 wheels required by our binary-only release bundles. Before raising the
+runtime again, verify bundle wheels for both amd64 and arm64 and run the backend
+compatibility workflow. Runtime changes also require raising `docker/image-rev`
+so existing images cannot load bundles for an incompatible Python ABI.

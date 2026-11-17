@@ -7,16 +7,30 @@ COPY frontend/ ./
 COPY assets/ ../assets/
 RUN npm run build
 
-# Stage 2: Serve via Python FastAPI
-FROM python:3.11-slim
+# Compose v5.8.0 still embeds x/net v0.60.0 (CVE-2026-78661).
+# Build that release with the fixed module until upstream ships it. Pin the
+# source commit so the dependency patch is the only change from v5.8.0.
+FROM golang:1.26.11 AS compose-builder
+WORKDIR /src
+RUN git init && \
+    git remote add origin https://github.com/docker/compose.git && \
+    git fetch --depth=1 origin aee88dcde588d9dc7d8d2902f97b6b5502fdb771 && \
+    git checkout --detach FETCH_HEAD && \
+    go get golang.org/x/net@v0.62.0 && \
+    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/docker/compose/v5/internal.Version=v5.8.0-isopod.1" -o /docker-compose ./cmd
+
+# Runtime: Serve via Python FastAPI
+FROM python:3.14-slim
 WORKDIR /app
 
-# Install Docker CLI, Docker Daemon (docker.io), iptables, and Docker Compose v2 for DinD invocation.
+# Install Docker CLI, Docker Daemon (docker.io), iptables, and Docker Compose for DinD invocation.
 # Downloads match the build arch (x86_64 or aarch64) so arm64 hosts like Apple Silicon don't need emulation.
 # Keep DOCKER_CLI_VERSION current: older static CLIs are built with Go releases that have known CVEs.
+# apt-get upgrade pulls Debian security fixes the python base image hasn't picked up yet.
 ARG DOCKER_CLI_VERSION=29.9.2
 RUN ARCH="$(uname -m)" && \
     apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
         docker.io \
         fuse-overlayfs \
@@ -27,10 +41,9 @@ RUN ARCH="$(uname -m)" && \
     rm -rf /var/lib/apt/lists/* && \
     curl -fsSL "https://download.docker.com/linux/static/stable/${ARCH}/docker-${DOCKER_CLI_VERSION}.tgz" | tar -xz -C /tmp && \
     mv /tmp/docker/docker /usr/local/bin/docker && \
-    rm -rf /tmp/docker && \
-    mkdir -p /usr/lib/docker/cli-plugins/ && \
-    curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${ARCH}" -o /usr/lib/docker/cli-plugins/docker-compose && \
-    chmod +x /usr/lib/docker/cli-plugins/docker-compose
+    rm -rf /tmp/docker
+
+COPY --from=compose-builder /docker-compose /usr/lib/docker/cli-plugins/docker-compose
 
 
 COPY backend/requirements.txt ./
