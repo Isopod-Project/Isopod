@@ -4201,7 +4201,11 @@ export default function App() {
                                                 ))}
                                              </div>
                                           ) : (
-                                             <p className="text-xs text-neutral-500 italic">No players added yet. Anyone will be blocked until added to the whitelist.</p>
+                                             <p className="text-xs text-neutral-500 italic">
+                                                {modalWhitelistEnabled
+                                                   ? "No players added yet. Everyone will be blocked until added to the whitelist."
+                                                   : "No players added yet. The whitelist is off, so anyone can join."}
+                                             </p>
                                           )}
                                        </div>
                                  </div>
