@@ -78,6 +78,60 @@ test.describe("Crash detection", () => {
     await expect(page.getByText("java.lang.OutOfMemoryError: Java heap space")).toBeVisible()
   })
 
+  test("rollback suggestions show the recorded version and roll back only on request", async ({ page }) => {
+    const SNAPSHOT = { name: "snapshot-20261020-120000.zip", reason: "Before changing mods", created: 1792500000 }
+    const rollback = {
+      snapshot: SNAPSHOT,
+      changes: [{ id: "create", name: "Create", change: "updated", previous: "5.0", current: "6.0" }],
+      suggestions: [
+        {
+          suspect: "Create (create)", id: "create", name: "Create", status: "previous_version",
+          current: "6.0", previous: "5.0", snapshot: SNAPSHOT, available: true,
+          reason: "Named as a suspect in the crash report, and it changed from 5.0 to 6.0 after this snapshot was taken.",
+          group: [
+            { id: "create", name: "Create", previous: "5.0", current: "6.0", modrinth: true },
+            { id: "flywheel", name: "Flywheel", previous: "1.0", current: "1.1", modrinth: false },
+          ],
+          blockers: [], notes: [],
+        },
+        {
+          suspect: "jei-2.jar", id: "jei", name: "JEI", status: "no_history", snapshot: null, available: false, group: [], notes: [],
+          reason: "No snapshot was taken before the crash, so Isopod has no earlier version of this mod on record and won't guess one.",
+        },
+      ],
+    }
+    const posts: unknown[] = []
+    await mockStatus(page, { is_running: false, is_ready: false, crash: { state: "crashed", exit_code: 1, time: 1792756800 } })
+    await page.route("**/api/instances/alpha/crash-report", (route) =>
+      route.fulfill({ json: { report: REPORT, log_tail: "", rollback } }),
+    )
+    await page.route("**/api/instances/alpha/crash-report/rollback", (route) => {
+      posts.push(route.request().postDataJSON())
+      return route.fulfill({ json: { restored: [{ name: "Create", version: "5.0" }, { name: "Flywheel", version: "1.0" }], files: [], pinned: [] } })
+    })
+    await page.goto("/")
+    await page.getByRole("main").getByText("Alpha Server").click()
+    await page.getByRole("button", { name: "View Crash Report" }).click()
+
+    const section = page.getByRole("region", { name: "Rollback suggestions" })
+    const create = section.getByRole("listitem", { name: "Suggestion for Create" })
+    await expect(create).toContainText("Previous version recorded")
+    await expect(create).toContainText("6.0 now → 5.0 before")
+    await expect(create).toContainText("Evidence: snapshot Before changing mods")
+    await expect(create).toContainText("Flywheel: 1.1 → 1.0")
+    await expect(section.getByRole("listitem", { name: "Suggestion for JEI" })).toContainText("won't guess one")
+    await expect(section.getByRole("list", { name: "Mod changes" })).toContainText("Create: 5.0 → 6.0")
+    await expect(section).toContainText("also rolls back the world")
+
+    // Nothing changes until the user confirms
+    await create.getByRole("button", { name: "Roll back 2 mods" }).click()
+    await expect(page.getByText(/Only these files change/)).toBeVisible()
+    expect(posts).toEqual([])
+    await page.getByRole("button", { name: "OK" }).click()
+    await expect(page.getByText("Rolled back Create to 5.0, Flywheel to 1.0.", { exact: false })).toBeVisible()
+    expect(posts).toEqual([{ mod_id: "create", snapshot: SNAPSHOT.name }])
+  })
+
   test("a halted crash loop explains itself, and Dismiss clears it", async ({ page }) => {
     let crash: Record<string, unknown> | null = { state: "halted", exit_code: 1, count: 3, time: 1792756800 }
     await page.route("**/api/instances", (route) =>

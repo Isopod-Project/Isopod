@@ -190,7 +190,7 @@ def apply_crossplay(service: dict, env: dict, data_dir: str, was_enabled: bool) 
         env[platform_key] = ",".join(_split_list(env.get(platform_key)) + crossplay_urls(server_type))
         if server_type == "FABRIC":
             projects = _split_list(env.get("MODRINTH_PROJECTS"))
-            if FABRIC_API not in [p.lower() for p in projects]:
+            if FABRIC_API not in [p.split(":", 1)[0].lower() for p in projects]:
                 env["MODRINTH_PROJECTS"] = ",".join(projects + [FABRIC_API])
         ports.append(f"{port}:{BEDROCK_CONTAINER_PORT}/udp")
     else:
