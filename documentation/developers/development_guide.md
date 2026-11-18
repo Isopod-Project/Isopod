@@ -197,6 +197,17 @@ The live cases depend on external providers and run separately from normal test 
 
 ---
 
+## 🩹 Crash Rollback Suggestions
+
+`backend/rollback.py` turns a crash report's suspect mods into rollback suggestions. `GET /api/instances/{id}/crash-report` returns them as `rollback` (`suggestions`, the newest `snapshot`, and `changes` since it).
+
+- Evidence comes only from snapshots taken before the crash, newest first, skipping the `Before rolling back …` snapshots a rollback takes of the crashing setup. For each suspect, the first snapshot whose jar differs from the installed one is used.
+- Jars are matched by mod ID read from `fabric.mod.json`, `quilt.mod.json`, `(neoforge.)mods.toml`, `plugin.yml`, or `mcmod.info` (falling back to the file name). Required dependencies skip the game and loader IDs, and libraries bundled in `META-INF/jars` or `META-INF/jarjar` count as provided.
+- A rollback group is the suspect plus each required dependency that changed or went missing since the snapshot, plus each installed mod that requires a group member and was itself updated.
+- Rollback is blocked when the snapshot's `VERSION` or `TYPE` differs from today's, or when a group member comes from CurseForge or a modpack (the server re-resolves those on every start).
+- `POST /api/instances/{id}/crash-report/rollback` (`{mod_id, snapshot}`) recomputes the suggestion, returns 409 if the server is running or the suggestion no longer matches, reads the old jars, looks up Modrinth-managed ones by SHA-1 (`/v2/version_files`), takes a fresh snapshot, swaps the jars, and pins their `MODRINTH_PROJECTS` entries as `slug:versionId`.
+- Anything that reads `MODRINTH_PROJECTS` must compare `rollback.modrinth_entry_id(entry)` (frontend: `envModId`), not the raw entry.
+
 ## 🔥 CurseForge Support
 CurseForge modpacks go through the official API at `https://api.curseforge.com/v1`, which needs a key from [console.curseforge.com](https://console.curseforge.com). Set it as `CURSEFORGE_API_KEY` (the compose files pass it into the container; `backend/main.py` also accepts `CF_API_KEY`). Without a key the CurseForge endpoints return `503`.
 

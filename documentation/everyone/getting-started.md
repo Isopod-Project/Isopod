@@ -198,6 +198,10 @@ Isopod watches for servers that stop on their own. Stopping or killing a server 
 - **Crash loops**: Docker waits a little longer before each quick restart. If a server still crashes 3 times within 2 minutes, Isopod stops it so a broken mod or world can't restart it forever, and the side panel says **Crash loop stopped**. Fix the problem, then press **Start** to start it again.
 - A server that crashed and came back on its own shows a note in the side panel until you **Dismiss** it or start it yourself.
 - **View Crash Report** (or **Crash Report** in the Edit window's **Logs** tab) opens the newest file from `crash-reports/`. It shows what crashed, the root cause (the last `Caused by:` line), and any mods the report names as suspects, with the full report below it. Crashes that write no report, such as running out of memory or a port already in use, show the last log lines instead.
+- **Rollback suggestions**: when the report names suspect mods, Isopod compares each one with the mod files recorded in the snapshots taken before the crash. A suspect that changed shows its current and previous versions, which snapshot the evidence comes from, and a **Roll back** button. Without a snapshot, or when the mod was added or hasn't changed since, it says so instead of guessing a version.
+  - **Roll back** puts back only that mod's jar (plus any library or dependent mod that changed with it). The world and other mods stay as they are, and Isopod takes a snapshot first so you can undo it. Mods from Modrinth are pinned to the restored version until you remove and re-add them.
+  - **Restore whole snapshot** rolls back the world, mods, config, and server settings, so world progress since then is lost.
+  - Roll back isn't offered when the snapshot ran a different Minecraft version or server type, or for CurseForge and modpack mods, which the server re-downloads on every start. The server must be stopped, and nothing changes until you confirm.
 
 ## 💤 Sleep When Empty
 A Java server can pause itself when nobody is playing, so it stops using CPU.
