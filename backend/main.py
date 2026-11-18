@@ -26,6 +26,7 @@ from . import resource_usage
 from . import players
 from . import modpacks
 from . import crashes
+from . import rollback
 from . import bedrock
 from . import bedrock_users
 from . import bedrock_addons
@@ -3096,12 +3097,13 @@ def describe_update(old_env: dict, new_env: dict) -> Optional[str]:
             labels.append(label)
     return "Before changing " + ", ".join(labels)
 
-def take_pre_update_snapshot(path: str, reason: str) -> Optional[dict]:
-    """Snapshot the instance before an update, unless snapshots are off or one was just taken."""
+def take_pre_update_snapshot(path: str, reason: str, fresh: bool = False) -> Optional[dict]:
+    """Snapshot the instance before an update, unless snapshots are off or one was just taken.
+    fresh always takes a new one, so it records the current state even right after another change."""
     keep = backups.get_settings(get_instance_meta(path))["snapshot_keep"]
     if keep <= 0:
         return None
-    snapshot = backups.recent_snapshot(path)
+    snapshot = None if fresh else backups.recent_snapshot(path)
     if not snapshot:
         try:
             snapshot = backups.create_snapshot(path, reason)
@@ -3184,6 +3186,12 @@ def get_crash_report(instance_id: str):
     mods_dir = get_instance_mods_dir(instance_id, create=False)
     mod_files = [e.name for e in os.scandir(mods_dir) if e.is_file()] if os.path.isdir(mods_dir) else []
     report = crashes.latest_crash_report(path, mod_files)
+    rollback_info = None
+    if report and report.get("suspects"):
+        try:
+            rollback_info = mod_rollback_suggestions(instance_id, report["suspects"], report["created"])
+        except Exception as e:
+            print(f"Error building rollback suggestions: {e}")
     # Out-of-memory kills, port conflicts and the like leave no report; the log tail shows those
     log_tail = ""
     try:
@@ -3194,7 +3202,125 @@ def get_crash_report(instance_id: str):
         log_tail = result.stdout
     except Exception as e:
         print(f"Error reading logs for crash report: {e}")
-    return {"report": report, "log_tail": log_tail}
+    return {"report": report, "log_tail": log_tail, "rollback": rollback_info}
+
+def _mods_folder(instance_id: str) -> Tuple[str, str]:
+    """The mods (or plugins) folder, and its path relative to the instance as snapshots store it."""
+    path = get_instance_path(instance_id)
+    mods_dir = get_instance_mods_dir(instance_id, create=False)
+    return mods_dir, os.path.relpath(mods_dir, path).replace(os.sep, "/")
+
+ROLLBACK_SNAPSHOT_REASON = "Before rolling back"
+
+def _snapshot_history(path: str, folder: str, before: float) -> List[dict]:
+    """Snapshots taken before a crash, newest first, with the jars and settings each recorded."""
+    history = []
+    for snap in backups.list_snapshots(path):
+        # A rollback's own snapshot holds the jars that crashed; never offer those as the earlier version
+        if snap["created"] > before or snap["reason"].startswith(ROLLBACK_SNAPSHOT_REASON):
+            continue
+        try:
+            mods, env = rollback.read_snapshot(backups.backup_file_path(path, snap["name"]), folder)
+        except (OSError, ValueError, zipfile.BadZipFile) as e:
+            print(f"Skipping unreadable snapshot {snap['name']}: {e}")
+            continue
+        history.append({**snap, "mods": mods, "env": env})
+    return history
+
+def mod_rollback_suggestions(instance_id: str, suspects: List[str], before: float) -> dict:
+    """Rollback suggestions for a crash's suspect mods, from the snapshots taken before it."""
+    path = get_instance_path(instance_id)
+    mods_dir, folder = _mods_folder(instance_id)
+    current = rollback.read_mods_dir(mods_dir)
+    history = _snapshot_history(path, folder, before)
+    suggestions = rollback.suggest(suspects, current, history, read_compose_env(path), cf_installed_files(path))
+    newest = history[0] if history else None
+    return {
+        "suggestions": suggestions,
+        "snapshot": rollback.snapshot_info(newest) if newest else None,
+        "changes": rollback.mod_changes(current, newest["mods"]) if newest else [],
+    }
+
+async def modrinth_pins(members: List[dict], previous: Dict[str, dict], env: dict) -> dict:
+    """Look up the recorded jars on Modrinth by hash and pin their MODRINTH_PROJECTS entries to those versions."""
+    wanted = [m for m in members if m["modrinth"]]
+    if not wanted:
+        return env
+    hashes = [previous[m["id"]]["sha1"] for m in wanted]
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            res = await client.post("https://api.modrinth.com/v2/version_files", json={"hashes": hashes, "algorithm": "sha1"})
+            if res.status_code != 200:
+                raise HTTPException(status_code=502, detail=f"Modrinth returned {res.status_code} when looking up the previous versions.")
+            versions = res.json() or {}
+            project_ids = sorted({v["project_id"] for v in versions.values() if v.get("project_id")})
+            slugs = {}
+            if project_ids:
+                res = await client.get("https://api.modrinth.com/v2/projects", params={"ids": json.dumps(project_ids)})
+                if res.status_code == 200:
+                    slugs = {p["id"]: p.get("slug") or p["id"] for p in res.json() or []}
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Couldn't reach Modrinth to look up the previous versions: {e}")
+    pins = {}
+    entries = {rollback.modrinth_entry_id(e).lower() for key in ("MODRINTH_PROJECTS", "MODRINTH_DISABLED")
+               for e in (env.get(key) or "").split(",") if e.strip()}
+    for m in wanted:
+        version = versions.get(previous[m["id"]]["sha1"])
+        keys = {version["project_id"].lower(), (slugs.get(version["project_id"]) or "").lower()} if version else set()
+        if not keys & entries:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Couldn't find {m['name']} {m['previous']} on Modrinth, so Isopod can't hold it at that version. "
+                       "Restore the whole snapshot instead.",
+            )
+        for key in keys & entries:
+            pins[key] = version["id"]
+    return rollback.pin_modrinth(env, pins)
+
+class ModRollbackRequest(BaseModel):
+    mod_id: str
+    snapshot: str
+
+@app.post("/api/instances/{instance_id}/crash-report/rollback")
+async def rollback_crash_mod(instance_id: str, req: ModRollbackRequest):
+    """Put a suspect mod (and the mods that changed with it) back to the jars a snapshot recorded."""
+    path = get_instance_path(instance_id)
+    if await asyncio.to_thread(is_instance_running, path):
+        raise HTTPException(status_code=409, detail="Stop the server before rolling back a mod.")
+    mods_dir, folder = _mods_folder(instance_id)
+
+    chosen = next((s for s in backups.list_snapshots(path) if s["name"] == req.snapshot), None)
+    if not chosen:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+
+    def plan():
+        current = rollback.read_mods_dir(mods_dir)
+        history = _snapshot_history(path, folder, chosen["created"])
+        found = rollback.suggest([req.mod_id], current, history, read_compose_env(path), cf_installed_files(path))
+        return current, history, (found[0] if found else None)
+
+    current, history, suggestion = await asyncio.to_thread(plan)
+    if not suggestion or suggestion["status"] != "previous_version" or (suggestion.get("snapshot") or {}).get("name") != req.snapshot:
+        raise HTTPException(status_code=409, detail="The mods changed since the crash report was loaded. Refresh it and try again.")
+    if not suggestion["available"]:
+        raise HTTPException(status_code=409, detail=" ".join(suggestion.get("blockers") or ["This mod can't be rolled back."]))
+    snap = next(s for s in history if s["name"] == req.snapshot)
+    members = suggestion["group"]
+    jars = await asyncio.to_thread(
+        rollback.read_previous_jars, backups.backup_file_path(path, req.snapshot), members, snap["mods"])
+    env = read_compose_env(path)
+    new_env = await modrinth_pins(members, snap["mods"], env)
+    # A fresh snapshot of the crashing setup, so the rollback itself can be undone
+    await asyncio.to_thread(take_pre_update_snapshot, path, f"{ROLLBACK_SNAPSHOT_REASON} {suggestion['name']}", True)
+    written = await asyncio.to_thread(rollback.swap_jars, mods_dir, members, current, jars)
+    changed_env = {k: v for k, v in new_env.items() if env.get(k) != v}
+    if changed_env:
+        set_compose_env(path, changed_env)
+    return {
+        "restored": [{"name": m["name"], "version": m["previous"]} for m in members],
+        "files": written,
+        "pinned": sorted(changed_env),
+    }
 
 def _instance_path_for_project(project: str) -> Optional[str]:
     """Compose project names are the instance folder name, lowercased."""
@@ -3240,7 +3366,7 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = "", modrinth_m
     """Fetch metadata for multiple mods from Modrinth."""
     results = []
     
-    m_ids = [i.strip() for i in modrinth_ids.split(",") if i.strip()]
+    m_ids = [rollback.modrinth_entry_id(i) for i in modrinth_ids.split(",") if i.strip()]
     
     async with httpx.AsyncClient() as client:
         # If modrinth_modpack is specified, fetch its dependencies (constituent mods)
@@ -3309,7 +3435,7 @@ async def check_mod_compatibility(req: Dict[str, Any]):
     """
     target_mc = req.get("mc_version")
     target_loader = (req.get("loader") or "VANILLA").upper()
-    m_ids = req.get("modrinth_ids", [])
+    m_ids = [rollback.modrinth_entry_id(str(i)) for i in req.get("modrinth_ids", [])]
     
     results = {
         "compatible": [],
@@ -3718,8 +3844,9 @@ async def list_instance_mods(instance_id: str):
                 env_dict = env
 
             # Modrinth projects
-            m_enabled = [x.strip() for x in env_dict.get("MODRINTH_PROJECTS", "").split(",") if x.strip()]
-            m_disabled = [x.strip() for x in env_dict.get("MODRINTH_DISABLED", "").split(",") if x.strip()]
+            # Entries pinned by a crash rollback read "slug:versionId"; the mod goes by its slug
+            m_enabled = [rollback.modrinth_entry_id(x) for x in env_dict.get("MODRINTH_PROJECTS", "").split(",") if x.strip()]
+            m_disabled = [rollback.modrinth_entry_id(x) for x in env_dict.get("MODRINTH_DISABLED", "").split(",") if x.strip()]
             for mid in m_enabled + m_disabled:
                 if mid.lower() not in seen_ids:
                     seen_ids.add(mid.lower())
@@ -3945,7 +4072,7 @@ def toggle_instance_mod(instance_id: str, req: ToggleModRequest):
 
                 matched = None
                 for candidate in en_list + dis_list:
-                    if candidate.lower() == target_id.lower():
+                    if rollback.modrinth_entry_id(candidate).lower() == target_id.lower():
                         matched = candidate
                         break
 
@@ -4047,7 +4174,7 @@ def delete_instance_mod(instance_id: str, req: DeleteModRequest):
             for key in ["MODRINTH_PROJECTS", "MODRINTH_DISABLED", "CURSEFORGE_FILES", "CURSEFORGE_DISABLED"]:
                 if key in env_map:
                     items = [x.strip() for x in env_map[key].split(",") if x.strip()]
-                    items = [x for x in items if x.lower() != target]
+                    items = [x for x in items if rollback.modrinth_entry_id(x).lower() != target]
                     env_map[key] = ",".join(items)
 
             if is_list:
@@ -4239,21 +4366,31 @@ async def sync_instance_mods_to_disk(instance_id: str, env: Optional[dict] = Non
 
     async with httpx.AsyncClient(timeout=45.0, follow_redirects=True) as client:
         # 1. Modrinth
-        for mid in m_enabled + m_disabled:
+        for entry in m_enabled + m_disabled:
+            mid = rollback.modrinth_entry_id(entry)
             if is_mod_on_disk(mid):
                 continue
-            is_disabled = mid in m_disabled
+            is_disabled = entry in m_disabled
+            pin = entry[len(mid) + 1:] if entry != mid else ""
             try:
                 versions = []
+                if pin:
+                    # Pinned by a crash rollback: only that version will do
+                    res = await client.get(f"https://api.modrinth.com/v2/version/{url_segment(pin, 'version ID')}")
+                    versions = [res.json()] if res.status_code == 200 else []
+                    if not versions:
+                        failed.append(mid)
+                        continue
                 params = {}
                 if mod_loaders:
                     params["loaders"] = json.dumps(mod_loaders)
                 if mc_version:
                     params["game_versions"] = json.dumps([mc_version])
 
-                res = await client.get(f"https://api.modrinth.com/v2/project/{mid}/version", params=params)
-                if res.status_code == 200:
-                    versions = res.json()
+                if not versions:
+                    res = await client.get(f"https://api.modrinth.com/v2/project/{mid}/version", params=params)
+                    if res.status_code == 200:
+                        versions = res.json()
 
                 if not versions and mod_loaders:
                     res_fb = await client.get(f"https://api.modrinth.com/v2/project/{mid}/version", params={"loaders": json.dumps(mod_loaders)})

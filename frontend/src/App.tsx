@@ -87,6 +87,8 @@ const MOD_ENV_KEYS: Record<ModProvider, { enabled: string; disabled: string }> =
    modrinth: { enabled: "MODRINTH_PROJECTS", disabled: "MODRINTH_DISABLED" },
    curseforge: { enabled: "CURSEFORGE_FILES", disabled: "CURSEFORGE_DISABLED" },
 };
+// A crash rollback pins a Modrinth mod as "slug:versionId"; the mod still goes by its slug.
+const envModId = (entry: string) => entry.match(/^([^:/\s]+):[A-Za-z0-9]{8}$/)?.[1] ?? entry;
 const MOD_PROVIDERS: { id: ModProvider; name: string }[] = [
    { id: "modrinth", name: "Modrinth" },
    { id: "curseforge", name: "CurseForge" },
@@ -1871,12 +1873,12 @@ export default function App() {
          let changed = false;
          for (const mod of mods) {
             const targetId = mod.id.toLowerCase();
-            const matched = enList.find(x => x.toLowerCase() === targetId)
-               || disList.find(x => x.toLowerCase() === targetId)
+            const matched = enList.find(x => envModId(x).toLowerCase() === targetId)
+               || disList.find(x => envModId(x).toLowerCase() === targetId)
                || (mod.provider === provider ? mod.id : null);
             if (!matched) continue;
-            enList = enList.filter(x => x.toLowerCase() !== targetId);
-            disList = disList.filter(x => x.toLowerCase() !== targetId);
+            enList = enList.filter(x => envModId(x).toLowerCase() !== targetId);
+            disList = disList.filter(x => envModId(x).toLowerCase() !== targetId);
             (targetEnabled ? enList : disList).push(matched);
             changed = true;
          }
@@ -1891,7 +1893,7 @@ export default function App() {
       for (const keys of Object.values(MOD_ENV_KEYS)) {
          for (const key of [keys.enabled, keys.disabled]) {
             if (next[key]) {
-               next[key] = splitEnvList(next[key]).filter(x => !targets.has(x.toLowerCase())).join(',');
+               next[key] = splitEnvList(next[key]).filter(x => !targets.has(envModId(x).toLowerCase())).join(',');
             }
          }
       }
@@ -2377,10 +2379,10 @@ export default function App() {
       const keys = MOD_ENV_KEYS[provider];
       const addIds = (env: Record<string, string>) => {
          const enabled = splitEnvList(env[keys.enabled]);
-         const listed = new Set(enabled.map(x => x.toLowerCase()));
+         const listed = new Set(enabled.map(x => envModId(x).toLowerCase()));
          const next: Record<string, string> = { ...env, [keys.enabled]: [...enabled, ...ids.filter(x => !listed.has(x.toLowerCase()))].join(',') };
          if (next[keys.disabled]) {
-            next[keys.disabled] = splitEnvList(next[keys.disabled]).filter(x => !wanted.has(x.toLowerCase())).join(',');
+            next[keys.disabled] = splitEnvList(next[keys.disabled]).filter(x => !wanted.has(envModId(x).toLowerCase())).join(',');
          }
          return next;
       };
@@ -4450,7 +4452,7 @@ export default function App() {
                      {/* Main Area */}
                      <div className="flex-1 bg-[#1A1A1A] flex flex-col min-w-0 overflow-hidden">
                         {editTab === "logs" && logView === "crash" && selectedInstance && (
-                           <CrashReportPanel instanceId={selectedInstance.id} onBack={() => setLogView("console")} />
+                           <CrashReportPanel instanceId={selectedInstance.id} onBack={() => setLogView("console")} showAlert={showAlert} showConfirm={showConfirm} />
                         )}
 
                         {editTab === "logs" && logView === "console" && (
@@ -5862,7 +5864,7 @@ export default function App() {
                                              modSearchResults.map((res) => {
                                                 const envKey = MOD_ENV_KEYS[modSearchProvider].enabled;
                                                 const currentList: string = config.environment[envKey] || "";
-                                                const isAdded = currentList.split(',').map(s => s.trim().toLowerCase()).includes(res.id.toLowerCase()) || instanceMods.some(m => m.id.toLowerCase() === res.id.toLowerCase());
+                                                const isAdded = currentList.split(',').map(s => envModId(s.trim()).toLowerCase()).includes(res.id.toLowerCase()) || instanceMods.some(m => m.id.toLowerCase() === res.id.toLowerCase());
                                                 const blockedReason = res.downloadable === false ? "The author only allows downloads through the CurseForge app, so Isopod can't install this mod." : undefined;
 
                                                 return (
