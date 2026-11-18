@@ -21,6 +21,8 @@ import zipfile
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
+from . import instance_compose
+
 from . import bedrock
 
 BACKUPS_DIR_NAME = "backups"
@@ -139,7 +141,7 @@ def list_snapshots(instance_path: str) -> List[dict]:
 def _rcon(instance_path: str, command: str) -> bool:
     try:
         result = subprocess.run(
-            ["docker", "compose", "exec", "-T", "mc", "rcon-cli", command],
+            instance_compose.command(instance_path, "exec", "-T", "mc", "rcon-cli", command),
             cwd=instance_path, capture_output=True, text=True, timeout=30,
         )
         return result.returncode == 0

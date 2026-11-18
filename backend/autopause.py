@@ -15,6 +15,8 @@ import subprocess
 from datetime import datetime, timezone
 from typing import Optional
 
+from . import instance_compose
+
 # The image touches this in the data folder when it pauses and removes it when it resumes.
 PAUSED_MARKER = ".paused"
 DEFAULT_TIMEOUT_SECONDS = 600
@@ -77,7 +79,7 @@ def wake(instance_path: str) -> None:
     try:
         # The image's own resume script: no-op unless Java is stopped, and removes the marker.
         subprocess.run(
-            ["docker", "compose", "exec", "-T", "mc", "/image/scripts/auto/resume.sh"],
+            instance_compose.command(instance_path, "exec", "-T", "mc", "/image/scripts/auto/resume.sh"),
             cwd=instance_path, capture_output=True, text=True, timeout=15,
         )
     except Exception as e:

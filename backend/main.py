@@ -22,6 +22,7 @@ import json
 import time
 from . import resource_packs as rp
 from . import backups
+from . import instance_compose
 from . import resource_usage
 from . import players
 from . import modpacks
@@ -148,7 +149,7 @@ def get_docker_client():
         try:
             settings_path = os.path.join(SERVERS_DIR, "isopod_settings.json")
             socket_path = None
-            if os.path.exists(settings_path):
+            if not instance_compose.uses_host_docker() and os.path.exists(settings_path):
                 try:
                     with open(settings_path, "r") as f:
                         cfg = json.load(f)
@@ -408,14 +409,11 @@ async def get_instance_status(instance_id: str):
     if not client:
         raise HTTPException(status_code=500, detail="Docker client not initialized")
 
-    project_label_value = "".join(c for c in instance_id if c.isalnum() or c in ('-', '_')).lower()
-    
-    filters = {"label": f"com.docker.compose.project={project_label_value}"}
-    containers = client.containers.list(all=True, filters=filters)
-    
-    if not containers:
-        filters = {"label": f"com.docker.compose.project={instance_id}"}
+    for project in instance_compose.project_names(instance_id):
+        filters = {"label": f"com.docker.compose.project={project}"}
         containers = client.containers.list(all=True, filters=filters)
+        if containers:
+            break
 
     is_running = any(c.status == "running" for c in containers)
     
@@ -430,7 +428,7 @@ async def get_instance_status(instance_id: str):
         try:
             # Check most recent logs for Minecraft heartbeats
             log_result = subprocess.run(
-                ["docker", "compose", "logs", "--tail=200", "mc"],
+                instance_compose.command(get_instance_path(instance_id), "logs", "--tail=200", "mc"),
                 cwd=get_instance_path(instance_id),
                 capture_output=True, text=True, timeout=5
             )
@@ -697,7 +695,7 @@ async def start_instance(instance_id: str):
     save_instance_meta(path, {"last_crash": None, "crash_loop_halted": None})
 
     # Start all services
-    result = subprocess.run(["docker", "compose", "up", "-d"], cwd=path, capture_output=True, text=True)
+    result = subprocess.run(instance_compose.command(path, "up", "-d"), cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
         raw_lines = [l.strip() for l in result.stderr.splitlines() if l.strip()]
         err_lines = [l for l in raw_lines if not any(k in l for k in ["Downloading", "Extracting", "Waiting", "Pulling fs layer", "Verifying Checksum", "Download complete", "Pull complete"])]
@@ -711,7 +709,7 @@ def stop_instance(instance_id: str):
     # A paused server ignores the shutdown signal until Docker kills it, which looks like a crash
     autopause.wake(path)
     # Use 'down' instead of 'stop' to remove the container, which clears Docker logs
-    result = subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True, text=True)
+    result = subprocess.run(instance_compose.command(path, "down"), cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
         clean_err = result.stderr.strip() or "Unknown error"
         raise HTTPException(status_code=400, detail=f"Docker Compose failed: {clean_err}")
@@ -722,7 +720,7 @@ def kill_instance(instance_id: str):
     path = get_instance_path(instance_id)
     # A killed container exits non-zero; this keeps it from showing as crashed
     save_instance_meta(path, {"manual_stop_at": time.time()})
-    result = subprocess.run(["docker", "compose", "kill"], cwd=path, capture_output=True, text=True)
+    result = subprocess.run(instance_compose.command(path, "kill"), cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
         clean_err = result.stderr.strip() or "Unknown error"
         raise HTTPException(status_code=400, detail=f"Docker Compose failed: {clean_err}")
@@ -1264,7 +1262,7 @@ def update_instance_users(
     if is_running:
         # Toggle whitelist mode in live server if changed
         if wl_enabled is not None:
-            cmd_toggle = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", f"whitelist {'on' if wl_enabled else 'off'}"]
+            cmd_toggle = instance_compose.command(path, "exec", "-T", "mc", "rcon-cli", f"whitelist {'on' if wl_enabled else 'off'}")
             try:
                 subprocess.run(cmd_toggle, cwd=path, capture_output=True, text=True, timeout=5)
             except Exception as e:
@@ -1273,7 +1271,7 @@ def update_instance_users(
         # 1. Reload Whitelist. Skipped while the whitelist is off: with enforce-whitelist set,
         # vanilla's reload kicks everyone missing from whitelist.json even when it isn't in use.
         if wl_enabled is not False:
-            cmd_wl = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", "whitelist reload"]
+            cmd_wl = instance_compose.command(path, "exec", "-T", "mc", "rcon-cli", "whitelist reload")
             try:
                 subprocess.run(cmd_wl, cwd=path, capture_output=True, text=True, timeout=5)
             except Exception as e:
@@ -1283,7 +1281,7 @@ def update_instance_users(
         new_ops_lower = {n.lower() for n in ops_names}
         for name in old_ops:
             if name not in new_ops_lower:
-                cmd_deop = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", f"deop {name}"]
+                cmd_deop = instance_compose.command(path, "exec", "-T", "mc", "rcon-cli", f"deop {name}")
                 try:
                     subprocess.run(cmd_deop, cwd=path, capture_output=True, text=True, timeout=5)
                 except Exception as e:
@@ -1291,7 +1289,7 @@ def update_instance_users(
                     
         # 3. Op players who are now ops
         for name in ops_names:
-            cmd_op = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", f"op {name}"]
+            cmd_op = instance_compose.command(path, "exec", "-T", "mc", "rcon-cli", f"op {name}")
             try:
                 subprocess.run(cmd_op, cwd=path, capture_output=True, text=True, timeout=5)
             except Exception as e:
@@ -2399,10 +2397,15 @@ def delete_instance(instance_id: str):
     path = get_instance_path(instance_id)
     # Safely stop and remove containers and volumes before purging
     # Use --volumes to ensure bind mounts or volumes are handled, --remove-orphans for completeness
-    subprocess.run(["docker", "compose", "down", "-v", "--remove-orphans", "--timeout", "5"], cwd=path, capture_output=True)
+    result = subprocess.run(
+        instance_compose.command(path, "down", "-v", "--remove-orphans", "--timeout", "5"),
+        cwd=path, capture_output=True, text=True,
+    )
+    if instance_compose.uses_host_docker() and result.returncode != 0:
+        raise HTTPException(status_code=500, detail=result.stderr.strip() or "Could not remove server containers.")
     
     # Direct fallback: Try to remove by name in case compose lost track
-    client = get_docker_client()
+    client = None if instance_compose.uses_host_docker() else get_docker_client()
     if client:
         try:
             # The naming convention is isopod_{slug} 
@@ -2871,7 +2874,7 @@ def get_instance_logs(instance_id: str, tail: int = 200):
     path = get_instance_path(instance_id)
     try:
         result = subprocess.run(
-            ["docker", "compose", "logs", f"--tail={tail}"],
+            instance_compose.command(path, "logs", f"--tail={tail}"),
             cwd=path,
             capture_output=True,
             text=True
@@ -2891,7 +2894,7 @@ def execute_command(instance_id: str, req: CommandRequest):
         return {"output": output, "success": ok}
     # Using 'docker compose exec mc rcon-cli [command]'
     # rcon-cli is the built-in helper in itzg/minecraft-server
-    cmd = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", req.command]
+    cmd = instance_compose.command(path, "exec", "-T", "mc", "rcon-cli", req.command)
     try:
         # Check if running
         result = subprocess.run(cmd, cwd=path, capture_output=True, text=True, timeout=10)
@@ -2969,7 +2972,7 @@ def player_action(instance_id: str, name: str, req: PlayerActionRequest):
 
 def is_instance_running(path: str) -> bool:
     result = subprocess.run(
-        ["docker", "compose", "ps", "--status", "running", "-q"],
+        instance_compose.command(path, "ps", "--status", "running", "-q"),
         cwd=path, capture_output=True, text=True, timeout=10
     )
     return bool(result.stdout.strip())
@@ -3188,7 +3191,7 @@ def get_crash_report(instance_id: str):
     log_tail = ""
     try:
         result = subprocess.run(
-            ["docker", "compose", "logs", "--no-log-prefix", "--tail=80", "mc"],
+            instance_compose.command(path, "logs", "--no-log-prefix", "--tail=80", "mc"),
             cwd=path, capture_output=True, text=True, timeout=10,
         )
         log_tail = result.stdout
@@ -3197,12 +3200,14 @@ def get_crash_report(instance_id: str):
     return {"report": report, "log_tail": log_tail}
 
 def _instance_path_for_project(project: str) -> Optional[str]:
-    """Compose project names are the instance folder name, lowercased."""
+    """Resolve Docker events to an Isopod instance by Compose project name."""
     if not os.path.isdir(SERVERS_DIR):
         return None
-    for entry in os.scandir(SERVERS_DIR):
-        if entry.is_dir() and entry.name.lower() == project.lower() and os.path.exists(os.path.join(entry.path, "docker-compose.yml")):
-            return entry.path
+    with os.scandir(SERVERS_DIR) as entries:
+        for entry in entries:
+            if (entry.is_dir() and project in instance_compose.project_names(entry.name)
+                    and os.path.exists(os.path.join(entry.path, "docker-compose.yml"))):
+                return entry.path
     return None
 
 def _instance_restart_policy(path: str) -> str:
@@ -3215,7 +3220,7 @@ def _instance_restart_policy(path: str) -> str:
         return crashes.DEFAULT_RESTART_POLICY
 
 def _halt_crash_loop(path: str) -> None:
-    result = subprocess.run(["docker", "compose", "stop"], cwd=path, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(instance_compose.command(path, "stop"), cwd=path, capture_output=True, text=True, timeout=120)
     if result.returncode != 0:
         print(f"[watchdog] Failed to stop {os.path.basename(path)}: {result.stderr.strip()}")
 
@@ -4871,7 +4876,8 @@ async def update_in_place():
 
     async def restart():
         await asyncio.sleep(1)
-        await asyncio.to_thread(self_update.stop_docker_daemon)
+        if not instance_compose.uses_host_docker():
+            await asyncio.to_thread(self_update.stop_docker_daemon)
         os._exit(0)
 
     asyncio.create_task(restart())

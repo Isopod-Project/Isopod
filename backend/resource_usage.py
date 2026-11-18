@@ -8,6 +8,8 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional
 
+from . import instance_compose
+
 COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
 
 MEMORY_UNITS = {"": 1, "B": 1, "K": 1024, "M": 1024 ** 2, "G": 1024 ** 3, "T": 1024 ** 4}
@@ -61,9 +63,8 @@ def collect(client, instance_ids: List[str], allocated: Dict[str, Optional[int]]
     """
     project_to_instance = {}
     for instance_id in instance_ids:
-        sanitized = "".join(c for c in instance_id if c.isalnum() or c in ("-", "_")).lower()
-        project_to_instance.setdefault(instance_id, instance_id)
-        project_to_instance[sanitized] = instance_id
+        for name in instance_compose.project_names(instance_id):
+            project_to_instance.setdefault(name, instance_id)
 
     containers = [
         c for c in client.containers.list(filters={"label": COMPOSE_PROJECT_LABEL})

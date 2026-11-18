@@ -13,6 +13,8 @@ import threading
 import time
 from typing import Dict, List, Optional, Tuple
 
+from . import instance_compose
+
 from . import bedrock
 
 # How long a `list` result is reused before RCON is asked again.
@@ -73,7 +75,7 @@ def rcon(path: str, command: str, timeout: int = 5) -> Tuple[bool, str]:
     """Run one command through the instance's rcon-cli. Returns (succeeded, output)."""
     try:
         result = subprocess.run(
-            ["docker", "compose", "exec", "-T", "mc", "rcon-cli", command],
+            instance_compose.command(path, "exec", "-T", "mc", "rcon-cli", command),
             cwd=path, capture_output=True, text=True, timeout=timeout,
         )
     except subprocess.TimeoutExpired:

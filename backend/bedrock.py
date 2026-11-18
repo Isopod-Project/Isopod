@@ -14,6 +14,8 @@ import subprocess
 import time
 from typing import Dict, List, Optional, Tuple
 
+from . import instance_compose
+
 BEDROCK_IMAGE = "itzg/minecraft-bedrock-server"
 BEDROCK_CONTAINER_PORT = 19132
 DEFAULT_BEDROCK_PORT = 19132
@@ -183,8 +185,9 @@ def apply_crossplay(service: dict, env: dict, data_dir: str, was_enabled: bool) 
             port = int(env.get(BEDROCK_PORT_ENV) or DEFAULT_BEDROCK_PORT)
         except ValueError:
             raise ValueError("Bedrock port must be a number.")
-        if not 1024 <= port <= 65535:
-            raise ValueError("Bedrock port must be between 1024 and 65535.")
+        min_port = 1 if instance_compose.uses_host_docker() else 1024
+        if not min_port <= port <= 65535:
+            raise ValueError(f"Bedrock port must be between {min_port} and 65535.")
         env[BEDROCK_PORT_ENV] = str(port)
         platform_key = CROSSPLAY_PLATFORMS[server_type][1]
         env[platform_key] = ",".join(_split_list(env.get(platform_key)) + crossplay_urls(server_type))
@@ -263,7 +266,7 @@ def online_players(instance_path: str) -> Optional[dict]:
     """Online players of a running BDS instance, read from its container log. None if the log can't be read."""
     try:
         result = subprocess.run(
-            ["docker", "compose", "logs", "--no-log-prefix", "mc"],
+            instance_compose.command(instance_path, "logs", "--no-log-prefix", "mc"),
             cwd=instance_path, capture_output=True, text=True, timeout=10,
         )
     except Exception as e:
@@ -284,7 +287,7 @@ def send_command(instance_path: str, command: str, timeout: int = 10) -> Tuple[b
     """Type a command into the Bedrock server console. The output only shows up in the log."""
     try:
         result = subprocess.run(
-            ["docker", "compose", "exec", "-T", "mc", "send-command", command],
+            instance_compose.command(instance_path, "exec", "-T", "mc", "send-command", command),
             cwd=instance_path, capture_output=True, text=True, timeout=timeout,
         )
     except subprocess.TimeoutExpired:
@@ -310,7 +313,7 @@ BDS_LINE_PREFIX = re.compile(r"^\[\d{4}-\d{2}-\d{2} [\d:]+ \w+\] ")
 
 def _log_lines_after(instance_path: str, after: Optional[str]) -> Optional[List[Tuple[str, str]]]:
     """(docker timestamp, text) for each log line, newer than `after` if given. None if the log can't be read."""
-    args = ["docker", "compose", "logs", "--no-log-prefix", "--timestamps"]
+    args = instance_compose.command(instance_path, "logs", "--no-log-prefix", "--timestamps")
     args += ["--since", after] if after else ["--tail=1"]
     try:
         result = subprocess.run(args + ["mc"], cwd=instance_path, capture_output=True, text=True, timeout=5)
