@@ -8,6 +8,16 @@ GitHub Issues via `gh` CLI. Linked with Isopod-Project GitHub Project #1. See [i
 - **Branch Strategy**: Always create and check out a dedicated branch named after the issue number (`git checkout -b <number>`) whenever an issue is created or requested for work. Never implement directly on `main`.
 - **Branch Cleanup**: After a branch is merged into `main` and pushed, delete it locally and on GitHub using the [cleanup-merged-branches](.agent/skills/cleanup-merged-branches/SKILL.md) skill.
 
+### Pull requests
+
+Every PR includes a manual test script in its description, so the user can check the feature or fix in the real running app themselves. Give it in the reply that reports the PR too. The script covers:
+- How to run the branch's code (for example `scripts\start-isopod.ps1` from the branch's checkout).
+- Exact steps: what to click or type, with the expected result after each one.
+- The edge cases and failure cases from the issue's acceptance criteria.
+- Helper commands or scripts when the scenario is hard to set up by hand (a crash, a slow network, an old version).
+- Anything app behavior gets in the way of, such as snapshots being skipped when one was taken in the last 10 minutes.
+- Cleanup afterwards.
+
 ### Wiki
 
 Every issue that changes something users can see or configure updates the website wiki in the same piece of work. Small bug fixes and internal changes are exempt. See [wiki.md](docs/agents/wiki.md) for the rule, the article layout, and how help-button links work.
