@@ -3181,7 +3181,7 @@ def dismiss_crash(instance_id: str):
 @app.get("/api/instances/{instance_id}/crash-report")
 def get_crash_report(instance_id: str):
     path = get_instance_path(instance_id)
-    mods_dir = get_instance_mods_dir(instance_id)
+    mods_dir = get_instance_mods_dir(instance_id, create=False)
     mod_files = [e.name for e in os.scandir(mods_dir) if e.is_file()] if os.path.isdir(mods_dir) else []
     report = crashes.latest_crash_report(path, mod_files)
     # Out-of-memory kills, port conflicts and the like leave no report; the log tail shows those
@@ -3426,11 +3426,44 @@ def read_compose_env(instance_path: str) -> dict:
     except Exception:
         return {}
 
-def get_instance_mods_dir(instance_id: str) -> str:
+def make_instance_dir(instance_path: str, path: str) -> None:
+    """Create path (and any missing parents) inside an instance, owned like its data folder.
+
+    The backend runs as root, but the server process runs as the image's UID (1000 by default).
+    itzg only re-owns /data when the top folder belongs to someone else, so a root-owned folder
+    made after the first start stays unwritable for the server (#202).
+    """
+    missing = []
+    current = os.path.abspath(path)
+    while not os.path.exists(current):
+        missing.append(current)
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    os.makedirs(path, exist_ok=True)
+
+    data_dir = os.path.join(instance_path, "data")
+    if not missing or not hasattr(os, "chown") or not os.path.isdir(data_dir):
+        return
+    owner = os.stat(data_dir)
+    for created in missing:
+        try:
+            st = os.stat(created)
+            if (st.st_uid, st.st_gid) != (owner.st_uid, owner.st_gid):
+                os.chown(created, owner.st_uid, owner.st_gid)
+        except OSError as e:
+            print(f"Could not set the owner of {created}: {e}")
+
+
+def get_instance_mods_dir(instance_id: str, create: bool = True) -> str:
+    """The instance's mods (or plugins) folder. With create=False a missing folder isn't made,
+    so read-only callers never create it while the server is starting (#202)."""
     base = get_instance_path(instance_id)
     if is_plugin_server(read_compose_env(base).get("TYPE")):
         plugins_dir = os.path.join(base, "data", "plugins")
-        os.makedirs(plugins_dir, exist_ok=True)
+        if create:
+            make_instance_dir(base, plugins_dir)
         return plugins_dir
     # Check data/mods first (standard Docker mount)
     data_mods = os.path.join(base, "data", "mods")
@@ -3441,7 +3474,8 @@ def get_instance_mods_dir(instance_id: str) -> str:
     if os.path.exists(plain_mods):
         return plain_mods
     # Default to data/mods
-    os.makedirs(data_mods, exist_ok=True)
+    if create:
+        make_instance_dir(base, data_mods)
     return data_mods
 
 
@@ -3595,7 +3629,7 @@ async def list_instance_mods(instance_id: str):
     from datetime import datetime
     mods = []
     seen_ids = set()
-    mods_dir = get_instance_mods_dir(instance_id)
+    mods_dir = get_instance_mods_dir(instance_id, create=False)
     cf_records = cf_installed_files(get_instance_path(instance_id))
 
     # 1. Physical mod files on disk
@@ -3670,11 +3704,11 @@ async def list_instance_mods(instance_id: str):
     try:
         base_path = get_instance_path(instance_id)
         compose_path = os.path.join(base_path, "docker-compose.yml")
+        env_dict = {}
         if os.path.exists(compose_path):
             with open(compose_path, 'r') as f:
                 cdata = yaml.safe_load(f) or {}
             env = cdata.get("services", {}).get("mc", {}).get("environment", {})
-            env_dict = {}
             if isinstance(env, list):
                 for item in env:
                     if "=" in item:
@@ -4141,7 +4175,6 @@ async def sync_instance_mods_to_disk(instance_id: str, env: Optional[dict] = Non
     """
     path = get_instance_path(instance_id)
     mods_dir = get_instance_mods_dir(instance_id)
-    os.makedirs(mods_dir, exist_ok=True)
 
     if env is None:
         compose_path = os.path.join(path, "docker-compose.yml")

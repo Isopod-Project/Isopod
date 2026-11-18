@@ -1848,6 +1848,9 @@ export default function App() {
 
    const loaderVersionKey = (type?: string) => LOADER_VERSION_ENV[(type || "").toUpperCase()] || "LOADER_VERSION";
    const isPluginServer = PLUGIN_SERVER_TYPES.includes((config.environment?.["TYPE"] || "").toUpperCase());
+   // Only jars on disk are installed; configured, modpack and in-flight mods download on start
+   const installedModCount = instanceMods.filter(m => m.source === "file").length;
+   const pendingModCount = instanceMods.length - installedModCount;
    // Bedrock servers have no mods, resource pack bundling, or Java player management, and name some world settings differently
    const editingBedrock = isBedrockType(config.environment?.["TYPE"]);
    const autoPauseOn = (config.environment?.["ENABLE_AUTOPAUSE"] || "").toLowerCase() === "true";
@@ -5480,7 +5483,7 @@ export default function App() {
                                     {/* Top Header */}
                                     <div className="px-5 py-3 border-b border-[#2C2C2C] bg-[#222222] flex items-center justify-between">
                                        <h3 className="text-base font-bold text-white flex items-center gap-2">
-                                          {isPluginServer ? "Plugins" : "Mods"} ({instanceMods.length} installed)
+                                          {isPluginServer ? "Plugins" : "Mods"} ({installedModCount} installed{pendingModCount > 0 ? `, ${pendingModCount} pending` : ""})
                                           {isInstanceModsLoading && <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#3E8ED0]" />}
                                           <span className="text-[11px] font-normal text-neutral-500">Changes here apply right away; no need to Save.</span>
                                        </h3>
