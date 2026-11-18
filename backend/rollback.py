@@ -148,7 +148,8 @@ def _entry(key: tuple, read, filename: str) -> dict:
     cached = _jar_cache.get(key)
     if cached is None:
         data = read()
-        cached = {**read_jar(data, filename), "sha1": hashlib.sha1(data).hexdigest()}
+        # Modrinth identifies versions by their file hash. This is a lookup key.
+        cached = {**read_jar(data, filename), "sha1": hashlib.sha1(data, usedforsecurity=False).hexdigest()}
         if len(_jar_cache) >= MAX_CACHED_JARS:
             _jar_cache.clear()
         _jar_cache[key] = cached
