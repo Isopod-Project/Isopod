@@ -20,7 +20,7 @@ RUN git init && \
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/docker/compose/v5/internal.Version=v5.8.0-isopod.1" -o /docker-compose ./cmd
 
 # Runtime: Serve via Python FastAPI
-FROM python:3.14-slim
+FROM python:3.15-slim
 WORKDIR /app
 
 # Install Docker CLI, Docker Daemon (docker.io), iptables, and Docker Compose for DinD invocation.
