@@ -2228,7 +2228,7 @@ export default function App() {
    };
 
    const performSystemUpdate = async () => {
-      const confirmed = await showConfirm("This downloads the latest release and restarts Isopod. Running servers save and stop first, and servers set to restart come back afterwards. Proceed?", "Update Isopod");
+      const confirmed = await showConfirm("This downloads the latest release and restarts Isopod. Servers on host Docker stay online. With Docker-in-Docker, running servers save and stop first, and servers set to restart come back afterwards. Proceed?", "Update Isopod");
       if (!confirmed) return;
 
       setIsSettingsModalOpen(false);
@@ -7791,8 +7791,8 @@ export default function App() {
                                        {updateInfo.has_update && !updateInfo.can_self_update && (
                                           <div className="p-6 border-t border-[#3A3A3A] bg-[#1E1E1E] text-sm text-neutral-300 space-y-3">
                                              <p>This update can't be installed from the dashboard. To install {updateInfo.latest_version}, run these in the folder you cloned Isopod into, on the machine hosting it:</p>
-                                             <pre className="bg-[#111] border border-[#333] rounded-lg p-3 font-mono text-xs text-neutral-200 overflow-x-auto">{"git pull\ndocker compose -f isopod-compose.yml up -d --build"}</pre>
-                                             <p className="text-xs text-neutral-400">On macOS, leave out <code>-f isopod-compose.yml</code>. Your servers and worlds are kept.</p>
+                                             <pre className="bg-[#111] border border-[#333] rounded-lg p-3 font-mono text-xs text-neutral-200 overflow-x-auto">{"git pull\ndocker compose up -d --build"}</pre>
+                                             <p className="text-xs text-neutral-400">Use the Compose file from your install. If you use the original Docker-in-Docker setup, add <code>-f isopod-compose.yml</code>. On macOS, keep <code>COMPOSE_FILE</code> in <code>.env</code>.</p>
                                           </div>
                                        )}
 

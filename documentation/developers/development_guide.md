@@ -161,7 +161,7 @@ Duplicating or importing an instance moves every published port, the Bedrock UDP
 
 `GET /api/instances/{id}/status` also returns `type` (the `TYPE` setting) and `bedrock_port`: the UDP port Bedrock players join on, or `null` if they can't.
 
-The Isopod container publishes UDP `19132-19152` for these ports next to TCP `25565-25585`.
+On host Docker, each server publishes its TCP and UDP ports directly. With Docker-in-Docker, the Isopod container publishes UDP `19132-19152` next to TCP `25565-25585`.
 
 ---
 

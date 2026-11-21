@@ -32,7 +32,17 @@ prepare_unprivileged_dind() {
 
 # Check if an external Docker socket is mounted and reachable
 USE_EXTERNAL_DOCKER=false
-if [ -S /var/run/docker.sock ]; then
+if [ "${ISOPOD_DOCKER_MODE:-}" = "host" ]; then
+    if ! docker info >/dev/null; then
+        echo "Host Docker is unavailable. Check the socket mount and permissions." >&2
+        exit 1
+    fi
+    case "${SERVERS_DIR:-}" in
+        /*) ;;
+        *) echo "Host Docker requires an absolute SERVERS_DIR." >&2; exit 1 ;;
+    esac
+    USE_EXTERNAL_DOCKER=true
+elif [ -S /var/run/docker.sock ]; then
     if docker info >/dev/null 2>&1; then
         echo "✅ Detected active host Docker socket at /var/run/docker.sock. Using host Docker daemon."
         USE_EXTERNAL_DOCKER=true

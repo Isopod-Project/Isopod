@@ -1,0 +1,26 @@
+name: isopod
+
+services:
+  isopod:
+    build: .
+    image: isopod:latest
+    container_name: isopod
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
+      # Compose resolves instance-relative binds inside Isopod. The host daemon
+      # must see those same absolute paths when it mounts them into each server.
+      - type: bind
+        source: ${ISOPOD_SERVERS_DIR:-/DATA/AppData/isopod/servers}
+        target: ${ISOPOD_SERVERS_DIR:-/DATA/AppData/isopod/servers}
+    environment:
+      ISOPOD_DOCKER_MODE: host
+      DOCKER_HOST: unix:///var/run/docker.sock
+      SERVERS_DIR: ${ISOPOD_SERVERS_DIR:-/DATA/AppData/isopod/servers}
+      CURSEFORGE_API_KEY: ${CURSEFORGE_API_KEY:-}

@@ -63,9 +63,9 @@
 ## 🚀 Quick Start
 1. Ensure you have **Docker** and **Docker Compose** installed.
 2. Clone this repository: `git clone https://github.com/Isopod-Project/Isopod.git`
-3. Start the application: `docker compose -f isopod-compose.yml up -d --build`
+3. On Linux, start the application with `docker compose up -d --build`. Minecraft servers run on the host Docker daemon and stay up when the dashboard stops. If you already run Isopod with Docker-in-Docker, follow the [migration guide](documentation/everyone/getting-started.md#migrate-from-docker-in-docker-on-linux) first.
    - On macOS, first run `echo "COMPOSE_FILE=isopod-compose.yml:docker/isopod-compose.macos.yml" > .env` once, then start with plain `docker compose up -d --build`. See [Running on macOS](documentation/everyone/getting-started.md#-running-on-macos).
-   - On Windows, `scripts\start-isopod.ps1` runs the same command, waits for the dashboard to come up, and opens it in your default browser.
+   - On Windows, `scripts\start-isopod.ps1` starts the Docker-in-Docker setup and opens the dashboard in your default browser.
 4. Access the dashboard at `http://localhost:8000`.
 
 ### CurseForge (optional)
