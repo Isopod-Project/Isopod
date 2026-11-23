@@ -104,6 +104,16 @@ const MEOW_BACKGROUND = `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2
 
 const NEW_GROUP_OPTION = "+ New Group...";
 
+function PortRangeWarning({ port, bedrock }: { port: number, bedrock: boolean }) {
+   const first = bedrock ? 19132 : 25565;
+   const last = first + 20;
+   if (!port || (port >= first && port <= last)) return null;
+   return <p role="status" className="text-xs text-amber-400 mt-1">
+      Port {port} is outside {first}–{last}, the {bedrock ? "UDP" : "TCP"} range published by the standard Docker-in-Docker install.
+      Host Docker can publish this port directly.
+   </p>;
+}
+
 export default function App() {
    const [instances, setInstances] = useState<Instance[]>([]);
    const [statuses, setStatuses] = useState<Record<string, InstanceStatus>>({});
@@ -3613,6 +3623,7 @@ export default function App() {
                                  placeholder="Port"
                               />
                               <p className="text-xs text-neutral-400">{portHint}</p>
+                              <PortRangeWarning port={Number(newPort)} bedrock={addingBedrock} />
                            </div>
                         </div>
                         <div>
@@ -6986,6 +6997,7 @@ export default function App() {
                                        <input type="number" value={config.port || ""} className="bg-[#141414] border border-[#3A3A3A] p-2 rounded"
                                           onChange={e => setConfig(prev => ({ ...prev, port: Number(e.target.value) }))} />
                                     </label>}
+                                    {config.port != null && <PortRangeWarning port={config.port} bedrock={editingBedrock} />}
                                     <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg p-4 flex items-center justify-between gap-4">
                                        <div>
                                           <label htmlFor="restart-policy" className="text-sm font-bold text-white">Restart automatically</label>

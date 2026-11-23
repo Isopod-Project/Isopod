@@ -786,11 +786,15 @@ def used_host_ports(exclude=None):
     return ports
 
 
+def standard_port_limits(bedrock_server):
+    start = 19132 if bedrock_server else 25565
+    return start, start + 20
+
+
 def port_limits(bedrock_server):
     if instance_compose.uses_host_docker():
         return 1, 65535
-    start = 19132 if bedrock_server else 25565
-    return start, start + 20
+    return standard_port_limits(bedrock_server)
 
 
 def validate_game_port(port, bedrock_server, exclude=None):
@@ -800,6 +804,9 @@ def validate_game_port(port, bedrock_server, exclude=None):
         raise HTTPException(400, f"{reason} range from {low} to {high}.")
     if port in used_host_ports(exclude):
         raise HTTPException(409, f"Port {port} is already used by another instance.")
+    first, last = standard_port_limits(bedrock_server)
+    if not first <= port <= last:
+        return f"Port {port} is outside the standard Docker-in-Docker published range {first}–{last}. Host Docker can publish it directly."
 
 
 @app.get("/api/game-ports")
@@ -830,6 +837,7 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
         
     services = config.get("services", {})
     snapshot = None
+    warning = None
     if services:
         old_env = env_as_dict(list(services.values())[0].get("environment"))
         # The server downloads CURSEFORGE_FILES itself. Compose fills the key in, so the file never holds the secret.
@@ -843,7 +851,7 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
         service = services[first_service_name]
         mappings = service.get("ports") or []
         if new_config.port is not None and mappings and new_config.port != bedrock.host_port(mappings[0]):
-            validate_game_port(new_config.port, bedrock.is_bedrock(new_config.environment.get("TYPE")), instance_id)
+            warning = validate_game_port(new_config.port, bedrock.is_bedrock(new_config.environment.get("TYPE")), instance_id)
             if any(bedrock.host_port(mapping) == new_config.port for mapping in mappings[1:]):
                 raise HTTPException(409, "Another listener on this instance already uses that port.")
             mappings[0] = f"{new_config.port}:{str(mappings[0]).split(':', 1)[-1]}"
@@ -881,6 +889,8 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
     except Exception as e:
         print(f"Error syncing mods to disk during config save: {e}")
         
+    if warning:
+        sync_result["warning"] = warning
     return {"message": "Config updated", "snapshot": snapshot, **sync_result}
 
 class WhitelistUser(BaseModel):
@@ -2182,10 +2192,13 @@ ICON_URL_RE = re.compile(r"https://(?:cdn\.modrinth\.com|media\.forgecdn\.net)/[
 
 @app.post("/api/instances")
 async def create_instance(req: CreateInstanceRequest):
-    validate_game_port(req.port, bedrock.is_bedrock(req.template))
+    warning = validate_game_port(req.port, bedrock.is_bedrock(req.template))
     pending_game_ports.add(req.port)
     try:
-        return await _create_instance(req)
+        result = await _create_instance(req)
+        if warning:
+            result["warning"] = warning
+        return result
     finally:
         pending_game_ports.discard(req.port)
 
