@@ -4303,7 +4303,7 @@ export default function App() {
                            <button
                               onClick={() => setAddStep(2)}
                               disabled={!newName || !portValid || (addTab === 'import' && !importFile) || (addTab !== 'custom' && addTab !== 'import' && (!selectedModpack || !selectedModpackVersion))}
-                              className={`flex items-center gap-2 px-8 py-2 rounded font-bold text-sm shadow-xl transition-all ${!newName || (addTab === 'import' && !importFile) || (addTab !== 'custom' && addTab !== 'import' && (!selectedModpack || !selectedModpackVersion)) ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed border border-[#333]' : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white shadow-[#3E8ED0]/10'
+                              className={`flex items-center gap-2 px-8 py-2 rounded font-bold text-sm shadow-xl transition-all ${!newName || !portValid || (addTab === 'import' && !importFile) || (addTab !== 'custom' && addTab !== 'import' && (!selectedModpack || !selectedModpackVersion)) ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed border border-[#333]' : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white shadow-[#3E8ED0]/10'
                                  }`}
                            >
                               Next <ChevronRight className="w-4 h-4" />
