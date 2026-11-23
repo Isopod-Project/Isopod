@@ -12,7 +12,7 @@ import { ResourceTotals, InstanceResources, type ResourceUsage } from "./compone
 import { BannedBadge, BannedPlayers, OnlineBadge, OnlinePlayers, PlayerCount, PlayerRowActions, type PlayerList } from "./components/OnlinePlayers";
 import { useBans } from "./components/usePlayerActions";
 import { BedrockVersionOptions, CrossplayCard } from "./components/Bedrock";
-import { BEDROCK_DEFAULT_PORT, BEDROCK_GAMEMODES, BEDROCK_LEVEL_TYPES, BEDROCK_NO_BAN_NOTE, BEDROCK_OPS_NOTE, BEDROCK_SERVER_NOTE, BEDROCK_TEXTUREPACK_REQUIRED_ENV, CROSSPLAY_ENV, isBedrockType, supportsCrossplay } from "./lib/bedrock";
+import { BEDROCK_GAMEMODES, BEDROCK_LEVEL_TYPES, BEDROCK_NO_BAN_NOTE, BEDROCK_OPS_NOTE, BEDROCK_SERVER_NOTE, BEDROCK_TEXTUREPACK_REQUIRED_ENV, CROSSPLAY_ENV, isBedrockType, supportsCrossplay } from "./lib/bedrock";
 import { fallbackAvatarUrl, formatBytes, playerAvatarUrl } from "./lib/utils";
 
 interface Instance {
@@ -250,7 +250,7 @@ export default function App() {
    const [manualLogs, setManualLogs] = useState<Record<string, { anchor: string, content: string }[]>>({});
    const [isLogsLoading, setIsLogsLoading] = useState(false);
    // Instance Config States
-   const [config, setConfig] = useState<{ image: string, environment: Record<string, string>, restart_policy?: string }>({ image: "", environment: {} });
+   const [config, setConfig] = useState<{ image: string, environment: Record<string, string>, port?: number, restart_policy?: string }>({ image: "", environment: {} });
    const [originalConfig, setOriginalConfig] = useState<any>(null);
    // Applies an environment change the backend already saved, to both the live and the saved config,
    // so it doesn't show up as an unsaved change
@@ -688,14 +688,34 @@ export default function App() {
 
    const addingBedrock = addTab === "custom" && isBedrockType(selectedAddLoader);
 
+   const [portBounds, setPortBounds] = useState({ min: 1, max: 65535 });
+   const portValid = Number.isInteger(Number(newPort)) && Number(newPort) >= portBounds.min && Number(newPort) <= portBounds.max;
+   const [portHint, setPortHint] = useState("");
+   useEffect(() => {
+      if (!isAddModalOpen) return;
+      let active = true;
+      setNewPort("");
+      setPortBounds({ min: 1, max: 65535 });
+      setPortHint("Checking available ports…");
+      fetch(`/api/game-ports?bedrock_server=${addingBedrock}`)
+         .then(async res => {
+            if (!res.ok) throw await responseError(res, "Could not check available ports");
+            const data = await res.json();
+            if (!active) return;
+            setPortBounds({ min: data.min, max: data.max });
+            setNewPort(data.port?.toString() || "");
+            setPortHint(data.port === null ? "No free ports remain." :
+               data.max < 65535 ? `The dashboard publishes ports ${data.min}–${data.max}.` : "");
+         })
+         .catch(() => { if (active) setPortHint("Could not check available ports. Enter a port manually."); });
+      return () => { active = false; };
+   }, [isAddModalOpen, addingBedrock]);
+
    // Bedrock uses its own versions, port, and world options, so switching to or from it resets them
    const selectAddLoader = (loader: string) => {
       const toBedrock = isBedrockType(loader);
       if (toBedrock !== isBedrockType(selectedAddLoader)) {
          setSelectedAddVersion("latest");
-         const javaPort = globalSettings.defaultPort || "25565";
-         if (toBedrock && (!newPort || newPort === javaPort)) setNewPort(BEDROCK_DEFAULT_PORT);
-         if (!toBedrock && newPort === BEDROCK_DEFAULT_PORT) setNewPort(javaPort);
          if (toBedrock && !BEDROCK_LEVEL_TYPES.some(t => t.id === newLevelType)) setNewLevelType("DEFAULT");
          if (!toBedrock && newLevelType === "LEGACY") setNewLevelType("DEFAULT");
          if (toBedrock && !BEDROCK_GAMEMODES.includes(newGamemode)) setNewGamemode("survival");
@@ -786,7 +806,7 @@ export default function App() {
             name: newName,
             // Modpacks and imports are always Java servers
             template: (isBedrockType(selectedAddLoader) && !addingBedrock ? "VANILLA" : selectedAddLoader).toLowerCase(),
-            port: parseInt(newPort || globalSettings.defaultPort || "25565"),
+            port: Number(newPort),
             version: selectedAddVersion === 'latest' ? '' : selectedAddVersion,
             loader_version: selectedAddLoaderVersion,
             modrinth_id: addTab === 'modrinth' && selectedModpack ? selectedModpack.id : null,
@@ -824,7 +844,6 @@ export default function App() {
          setSelectedAddVersion("latest");
          setSelectedAddLoader((globalSettings.defaultLoader || "VANILLA").toUpperCase());
          setSelectedAddLoaderVersion("latest");
-         setNewPort(globalSettings.defaultPort || "25565");
          setNewSeed("");
          setNewLevelType("DEFAULT");
          setNewDifficulty("easy");
@@ -2449,6 +2468,7 @@ export default function App() {
       try {
          const saved = JSON.parse(originalConfig);
          if ((saved.image || "") !== (config.image || "")) count++;
+         if (saved.port !== config.port) count++;
          if ((saved.restart_policy || "") !== (config.restart_policy || "")) count++;
          const before: Record<string, string> = saved.environment || {};
          const after: Record<string, string> = config.environment || {};
@@ -2562,7 +2582,6 @@ export default function App() {
             const data = await res.json();
             setGlobalSettings(data);
             if (data.defaultMemory) setNewMemory(data.defaultMemory);
-            if (data.defaultPort) setNewPort(data.defaultPort);
             if (data.defaultLoader) setSelectedAddLoader(data.defaultLoader.toUpperCase());
             if (data.defaultWhitelistEnabled !== undefined) setModalWhitelistEnabled(data.defaultWhitelistEnabled);
             if (data.defaultWhitelistUsers) setModalWhitelistUsers(data.defaultWhitelistUsers);
@@ -2607,7 +2626,6 @@ export default function App() {
             setVersionFilters(prev => ({ ...prev, Snapshots: !!globalSettings.showSnapshots }));
          }
          if (globalSettings.defaultMemory) setNewMemory(globalSettings.defaultMemory);
-         if (globalSettings.defaultPort) setNewPort(globalSettings.defaultPort);
          if (globalSettings.defaultLoader) setSelectedAddLoader(globalSettings.defaultLoader.toUpperCase());
          if (globalSettings.defaultWhitelistEnabled !== undefined) setModalWhitelistEnabled(globalSettings.defaultWhitelistEnabled);
          if (globalSettings.defaultWhitelistUsers) setModalWhitelistUsers(globalSettings.defaultWhitelistUsers);
@@ -2997,7 +3015,6 @@ export default function App() {
                      setAddStep(1);
                      setAddTab("custom");
                      setNewName("");
-                     setNewPort(globalSettings.defaultPort || "25565");
                      const defaultVer = mcVersions.find((v: any) => v.type === 'release')?.id || "latest";
                      setSelectedAddVersion(defaultVer);
                      const initialLoader = (globalSettings.defaultLoader || "VANILLA").toUpperCase();
@@ -3589,10 +3606,13 @@ export default function App() {
                                  required
                                  type="number"
                                  value={newPort}
+                                 min={portBounds.min}
+                                 max={portBounds.max}
                                  onChange={(e) => setNewPort(e.target.value)}
                                  className="w-full bg-[#1A1A1A] border border-[#3A3A3A] px-3 py-1.5 rounded text-lg font-mono text-emerald-400 focus:outline-none focus:border-[#3E8ED0]"
-                                 placeholder="25565"
+                                 placeholder="Port"
                               />
+                              <p className="text-xs text-neutral-400">{portHint}</p>
                            </div>
                         </div>
                         <div>
@@ -4271,7 +4291,7 @@ export default function App() {
                         {addStep === 1 ? (
                            <button
                               onClick={() => setAddStep(2)}
-                              disabled={!newName || (addTab === 'import' && !importFile) || (addTab !== 'custom' && addTab !== 'import' && (!selectedModpack || !selectedModpackVersion))}
+                              disabled={!newName || !portValid || (addTab === 'import' && !importFile) || (addTab !== 'custom' && addTab !== 'import' && (!selectedModpack || !selectedModpackVersion))}
                               className={`flex items-center gap-2 px-8 py-2 rounded font-bold text-sm shadow-xl transition-all ${!newName || (addTab === 'import' && !importFile) || (addTab !== 'custom' && addTab !== 'import' && (!selectedModpack || !selectedModpackVersion)) ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed border border-[#333]' : 'bg-[#3E8ED0] hover:bg-[#2B6A9E] text-white shadow-[#3E8ED0]/10'
                                  }`}
                            >
@@ -6962,6 +6982,10 @@ export default function App() {
                                  </div>
 
                                  <div className="space-y-6">
+                                    {config.port != null && <label className="flex items-center gap-4 text-sm font-bold">Server port
+                                       <input type="number" value={config.port || ""} className="bg-[#141414] border border-[#3A3A3A] p-2 rounded"
+                                          onChange={e => setConfig(prev => ({ ...prev, port: Number(e.target.value) }))} />
+                                    </label>}
                                     <div className="bg-[#242424] border border-[#3A3A3A] rounded-lg p-4 flex items-center justify-between gap-4">
                                        <div>
                                           <label htmlFor="restart-policy" className="text-sm font-bold text-white">Restart automatically</label>

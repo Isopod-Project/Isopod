@@ -170,6 +170,7 @@ class InstanceConfig(BaseModel):
     image: str
     environment: Dict[str, str]
     # always | on-failure | never; left unchanged when omitted
+    port: Optional[int] = None
     restart_policy: Optional[str] = None
 
 class ModResponse(BaseModel):
@@ -757,8 +758,65 @@ def get_config(instance_id: str):
     return {
         "image": service.get("image", ""),
         "environment": env,
+        "port": bedrock.host_port((service.get("ports") or [None])[0]),
         "restart_policy": crashes.policy_from_compose(service.get("restart")),
     }
+
+# Include in-flight creates while modpack metadata is being fetched.
+pending_game_ports = set()
+
+
+def used_host_ports(exclude=None):
+    ports = pending_game_ports.copy()
+    if not os.path.isdir(SERVERS_DIR):
+        return ports
+    for entry in os.scandir(SERVERS_DIR):
+        if not entry.is_dir() or entry.name == exclude:
+            continue
+        try:
+            with open(os.path.join(entry.path, "docker-compose.yml")) as stream:
+                compose = yaml.safe_load(stream) or {}
+            for service in compose.get("services", {}).values():
+                for mapping in service.get("ports") or []:
+                    port = bedrock.host_port(mapping)
+                    if port is not None:
+                        ports.add(port)
+        except (OSError, yaml.YAMLError):
+            continue
+    return ports
+
+
+def port_limits(bedrock_server):
+    if instance_compose.uses_host_docker():
+        return 1, 65535
+    start = 19132 if bedrock_server else 25565
+    return start, start + 20
+
+
+def validate_game_port(port, bedrock_server, exclude=None):
+    low, high = port_limits(bedrock_server)
+    if not low <= port <= high:
+        reason = "Valid host ports" if instance_compose.uses_host_docker() else "Ports published by the standard dashboard container"
+        raise HTTPException(400, f"{reason} range from {low} to {high}.")
+    if port in used_host_ports(exclude):
+        raise HTTPException(409, f"Port {port} is already used by another instance.")
+
+
+@app.get("/api/game-ports")
+def game_ports(bedrock_server: bool = False):
+    low, high = port_limits(bedrock_server)
+    used = used_host_ports()
+    default = 19132 if bedrock_server else 25565
+    try:
+        preferred = default if bedrock_server else int(get_settings().get("defaultPort") or default)
+    except (TypeError, ValueError):
+        preferred = default
+    start = preferred if low <= preferred <= high else default
+    port = next((p for p in range(start, high + 1) if p not in used), None)
+    if port is None:
+        port = next((p for p in range(low, start) if p not in used), None)
+    return {"port": port, "min": low, "max": high}
+
 
 @app.put("/api/instances/{instance_id}/config")
 async def update_config(instance_id: str, new_config: InstanceConfig):
@@ -782,6 +840,13 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
         if reason:
             snapshot = await asyncio.to_thread(take_pre_update_snapshot, path, reason)
         first_service_name = list(services.keys())[0]
+        service = services[first_service_name]
+        mappings = service.get("ports") or []
+        if new_config.port is not None and mappings and new_config.port != bedrock.host_port(mappings[0]):
+            validate_game_port(new_config.port, bedrock.is_bedrock(new_config.environment.get("TYPE")), instance_id)
+            if any(bedrock.host_port(mapping) == new_config.port for mapping in mappings[1:]):
+                raise HTTPException(409, "Another listener on this instance already uses that port.")
+            mappings[0] = f"{new_config.port}:{str(mappings[0]).split(':', 1)[-1]}"
         config['services'][first_service_name]['image'] = new_config.image
         if new_config.restart_policy is not None:
             if new_config.restart_policy not in crashes.RESTART_POLICIES:
@@ -795,7 +860,11 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
             if env.get("MODRINTH_ALLOWED_VERSION_TYPE") == "release,beta,alpha" or "MODRINTH_ALLOWED_VERSION_TYPE" not in env:
                 env["MODRINTH_ALLOWED_VERSION_TYPE"] = "alpha"
             try:
-                bedrock.apply_crossplay(config["services"][first_service_name], env, os.path.join(path, "data"), bedrock.crossplay_enabled(old_env))
+                if bedrock.crossplay_enabled(env):
+                    udp_port = int(env.get(bedrock.BEDROCK_PORT_ENV) or bedrock.DEFAULT_BEDROCK_PORT)
+                    if udp_port != bedrock.bedrock_port(service):
+                        validate_game_port(udp_port, True, instance_id)
+                bedrock.apply_crossplay(service, env, os.path.join(path, "data"), bedrock.crossplay_enabled(old_env))
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
             autopause.apply_settings(env)
@@ -2113,6 +2182,15 @@ ICON_URL_RE = re.compile(r"https://(?:cdn\.modrinth\.com|media\.forgecdn\.net)/[
 
 @app.post("/api/instances")
 async def create_instance(req: CreateInstanceRequest):
+    validate_game_port(req.port, bedrock.is_bedrock(req.template))
+    pending_game_ports.add(req.port)
+    try:
+        return await _create_instance(req)
+    finally:
+        pending_game_ports.discard(req.port)
+
+
+async def _create_instance(req):
     # Validate before creating files or making any outbound request.
     cf_project_id = cf_numeric_id(req.cf_id, "project") if req.cf_id is not None else None
     cf_file_id = (cf_numeric_id(req.modpack_version, "file")
@@ -2535,18 +2613,7 @@ def duplicate_instance(instance_id: str, req: DuplicateInstanceRequest):
             services = config.get("services", {})
             if services:
                 # Find all currently used host ports to pick a new one
-                used_ports = set()
-                for entry in os.scandir(SERVERS_DIR):
-                    if entry.is_dir() and entry.name != new_slug:
-                        try:
-                            other_compose = os.path.join(entry.path, "docker-compose.yml")
-                            if os.path.exists(other_compose):
-                                with open(other_compose, 'r') as of:
-                                    odata = yaml.safe_load(of)
-                                    for _, oservice in odata.get("services", {}).items():
-                                        for p in oservice.get("ports", []):
-                                            used_ports.add(int(str(p).split(':')[0]))
-                        except: pass
+                used_ports = used_host_ports(new_slug)
 
                 # Pick the first service for container rename
                 service_name = "mc" if "mc" in services else list(services.keys())[0]
@@ -2747,18 +2814,7 @@ async def import_instance(
                     services = config.get("services", {})
                     if services:
                         # Find used ports
-                        used_ports = set()
-                        for entry in os.scandir(SERVERS_DIR):
-                            if entry.is_dir() and entry.name != new_slug:
-                                try:
-                                    other_compose = os.path.join(entry.path, "docker-compose.yml")
-                                    if os.path.exists(other_compose):
-                                        with open(other_compose, 'r') as of:
-                                            odata = yaml.safe_load(of)
-                                            for _, oservice in odata.get("services", {}).items():
-                                                for p in oservice.get("ports", []):
-                                                    used_ports.add(int(str(p).split(':')[0]))
-                                except: pass
+                        used_ports = used_host_ports(new_slug)
     
                         service_name = "mc" if "mc" in services else list(services.keys())[0]
                         service = services[service_name]
@@ -2808,18 +2864,7 @@ async def import_instance(
                 shutil.rmtree(temp_extract_dir)
                                 
             # Generate the default docker-compose.yml for this single player world
-            used_ports = set()
-            for entry in os.scandir(SERVERS_DIR):
-                if entry.is_dir() and entry.name != new_slug:
-                    try:
-                        other_compose = os.path.join(entry.path, "docker-compose.yml")
-                        if os.path.exists(other_compose):
-                            with open(other_compose, 'r') as of:
-                                odata = yaml.safe_load(of)
-                                for _, oservice in odata.get("services", {}).items():
-                                    for p in oservice.get("ports", []):
-                                        used_ports.add(int(str(p).split(':')[0]))
-                    except: pass
+            used_ports = used_host_ports(new_slug)
             
             new_port = port_val if port_val else 25565
             while new_port in used_ports or new_port < 1024:
