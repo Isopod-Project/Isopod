@@ -213,6 +213,8 @@ export default function App() {
    const [connectionLost, setConnectionLost] = useState(false);
    const [newPort, setNewPort] = useState("25565");
    const [isCreating, setIsCreating] = useState(false);
+   // "I accept the Minecraft EULA" in the add-instance modal; creating is blocked until it's ticked
+   const [eulaAccepted, setEulaAccepted] = useState(false);
    const [importProgress, setImportProgress] = useState<number | null>(null);
    const [importStatus, setImportStatus] = useState<string>("");
 
@@ -735,6 +737,7 @@ export default function App() {
 
    const handleAddInstance = async (e: React.FormEvent) => {
       e.preventDefault();
+      if (!eulaAccepted) return;
       setIsCreating(true);
       try {
          if (addTab === 'import') {
@@ -754,6 +757,7 @@ export default function App() {
             formData.append("generate_structures", String(newGenerateStructures));
             if (newMemory) formData.append("memory", newMemory);
             formData.append("group", newGroup);
+            formData.append("eula_accepted", "true");
 
             setImportProgress(0);
             setImportStatus("Uploading ZIP file...");
@@ -831,7 +835,8 @@ export default function App() {
             memory: newMemory || globalSettings.defaultMemory || "1G",
             group: newGroup,
             whitelist_enabled: modalWhitelistEnabled,
-            whitelist_users: (modalWhitelistUsers && modalWhitelistUsers.length > 0) ? modalWhitelistUsers : (globalSettings.defaultWhitelistUsers || [])
+            whitelist_users: (modalWhitelistUsers && modalWhitelistUsers.length > 0) ? modalWhitelistUsers : (globalSettings.defaultWhitelistUsers || []),
+            eula_accepted: eulaAccepted
          };
 
          const res = await fetch("/api/instances", {
@@ -3039,6 +3044,7 @@ export default function App() {
                      setModalWhitelistUserDraft("");
                      setSelectedModpack(null);
                      setImportFile(null);
+                     setEulaAccepted(false);
                   }}
                   className="flex items-center gap-2 hover:bg-[#4A4A4A] px-3 py-1.5 rounded transition-colors text-sm font-medium"
                >
@@ -4265,6 +4271,34 @@ export default function App() {
                      </div>
                   </div>
 
+                  {addStep === 2 && (
+                     <div className="px-6 py-3 bg-[#2D2D2D] border-t border-[#3A3A3A]">
+                        <label className="flex items-start gap-2 cursor-pointer">
+                           <input
+                              type="checkbox"
+                              checked={eulaAccepted}
+                              onChange={(e) => setEulaAccepted(e.target.checked)}
+                              className="mt-0.5 rounded border-[#3A3A3A] bg-[#141414] text-emerald-500 focus:ring-emerald-500"
+                           />
+                           {addingBedrock ? (
+                              <span className="text-xs text-neutral-300 select-none">
+                                 I accept the{" "}
+                                 <a href="https://aka.ms/MinecraftEULA" target="_blank" rel="noopener noreferrer" className="text-[#3E8ED0] hover:underline">Minecraft EULA</a>
+                                 {" "}and the{" "}
+                                 <a href="https://go.microsoft.com/fwlink/?LinkId=521839" target="_blank" rel="noopener noreferrer" className="text-[#3E8ED0] hover:underline">Microsoft Privacy Policy</a>
+                                 , which the Bedrock Dedicated Server is licensed under.
+                              </span>
+                           ) : (
+                              <span className="text-xs text-neutral-300 select-none">
+                                 I accept the{" "}
+                                 <a href="https://aka.ms/MinecraftEULA" target="_blank" rel="noopener noreferrer" className="text-[#3E8ED0] hover:underline">Minecraft EULA</a>
+                                 . Running a Minecraft server requires it.
+                              </span>
+                           )}
+                        </label>
+                     </div>
+                  )}
+
                   {/* Bottom Actions */}
                   <div className="p-4 bg-[#2D2D2D] border-t border-[#3A3A3A] flex justify-between items-center px-6">
                      <div className="flex items-center gap-4">
@@ -4311,8 +4345,9 @@ export default function App() {
                         ) : (
                            <button
                               onClick={handleAddInstance}
-                              disabled={isCreating || !newName}
-                              className={`px-8 py-2 rounded font-bold text-sm shadow-xl transition-all ${isCreating || !newName ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed border border-[#333]' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-500/10'
+                              disabled={isCreating || !newName || !eulaAccepted}
+                              title={eulaAccepted ? undefined : "Accept the Minecraft EULA to create the server"}
+                              className={`px-8 py-2 rounded font-bold text-sm shadow-xl transition-all ${isCreating || !newName || !eulaAccepted ? 'bg-neutral-800 text-neutral-600 cursor-not-allowed border border-[#333]' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-500/10'
                                  }`}
                            >
                               {isCreating ? "Creating..." : "Create Instance"}

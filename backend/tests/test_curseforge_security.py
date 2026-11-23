@@ -28,7 +28,7 @@ class CurseForgeSecurityTests(unittest.TestCase):
             try:
                 return asyncio.run(main.create_instance(main.CreateInstanceRequest(
                     name="Security pack", template="AUTO_CURSEFORGE", port=25565,
-                    version=None, cf_id=project, modpack_version=file,
+                    version=None, cf_id=project, modpack_version=file, eula_accepted=True,
                 )))
             finally:
                 self.remaining = os.listdir(folder)

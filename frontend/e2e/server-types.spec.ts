@@ -29,6 +29,7 @@ test.describe("Purpur and Folia in Add Instance", () => {
     await page.getByText("2415", { exact: true }).click()
     await page.getByPlaceholder("e.g. My Modded World").fill("New Server")
     await page.getByRole("button", { name: /Next/ }).click()
+    await page.getByRole("checkbox", { name: /accept the Minecraft EULA/ }).check()
     await page.getByRole("button", { name: "Create Instance" }).click()
 
     await expect.poll(() => created.length).toBe(1)

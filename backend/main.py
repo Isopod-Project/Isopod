@@ -207,6 +207,10 @@ class CreateInstanceRequest(BaseModel):
     generate_structures: Optional[bool] = True
     whitelist_enabled: Optional[bool] = None
     whitelist_users: Optional[List[str]] = None
+    # The user ticked "I accept the Minecraft EULA"; a server can't be created without it
+    eula_accepted: bool = False
+
+EULA_REQUIRED = "You must accept the Minecraft EULA to create a server."
 
 
 class RenameInstanceRequest(BaseModel):
@@ -599,9 +603,10 @@ async def start_instance(instance_id: str):
     else:
         env = dict(raw_env)
         
-    # Ensure EULA is accepted
+    # Servers from before the EULA checkbox never stored the key; they count as accepted.
+    # One that says anything else was set by the user, so it's left alone.
     changed = False
-    if env.get("EULA") != "TRUE":
+    if "EULA" not in env:
         env["EULA"] = "TRUE"
         changed = True
     
@@ -860,9 +865,10 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
             if new_config.restart_policy not in crashes.RESTART_POLICIES:
                 raise HTTPException(status_code=400, detail="Restart policy must be always, on-failure, or never.")
             config['services'][first_service_name]['restart'] = crashes.RESTART_POLICIES[new_config.restart_policy]
-        # Ensure EULA is preserved/added
         env = new_config.environment
-        env["EULA"] = "TRUE"
+        # Keep the EULA answer the server already has when the dashboard's copy leaves it out
+        if "EULA" not in env and "EULA" in old_env:
+            env["EULA"] = old_env["EULA"]
         is_bedrock_server = bedrock.is_bedrock(env.get("TYPE"))
         if not is_bedrock_server:
             if env.get("MODRINTH_ALLOWED_VERSION_TYPE") == "release,beta,alpha" or "MODRINTH_ALLOWED_VERSION_TYPE" not in env:
@@ -2205,6 +2211,8 @@ async def create_instance(req: CreateInstanceRequest):
 
 async def _create_instance(req):
     # Validate before creating files or making any outbound request.
+    if not req.eula_accepted:
+        raise HTTPException(status_code=400, detail=EULA_REQUIRED)
     cf_project_id = cf_numeric_id(req.cf_id, "project") if req.cf_id is not None else None
     cf_file_id = (cf_numeric_id(req.modpack_version, "file")
                   if req.cf_id is not None and req.modpack_version is not None else None)
@@ -2744,8 +2752,11 @@ async def import_instance(
     level_type: Optional[str] = Form(None),
     generate_structures: Optional[str] = Form(None),
     memory: Optional[str] = Form(None),
-    group: Optional[str] = Form(None)
+    group: Optional[str] = Form(None),
+    eula_accepted: Optional[str] = Form(None)
 ):
+    if (eula_accepted or "").lower() != "true":
+        raise HTTPException(status_code=400, detail=EULA_REQUIRED)
     if not file.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="Only .zip files are supported")
         
@@ -2837,7 +2848,7 @@ async def import_instance(
                         sync_bedrock_port_env(service)
 
                         # Update other properties if provided
-                        env = service.get("environment", [])
+                        env = service.setdefault("environment", [])
                         if isinstance(env, list):
                             def set_env_list(key, val):
                                 for i, item in enumerate(env):
@@ -2846,6 +2857,9 @@ async def import_instance(
                                         return
                                 env.append(f"{key}={val}")
 
+                            # The user accepted the EULA for this import
+                            set_env_list("EULA", "TRUE")
+
                             if difficulty: set_env_list("DIFFICULTY", difficulty)
                             if gamemode: set_env_list("MODE", gamemode)
                             if seed: set_env_list("SEED", seed)
@@ -2853,6 +2867,7 @@ async def import_instance(
                             if generate_structures is not None: set_env_list("GENERATE_STRUCTURES", "true" if gen_struct_bool else "false")
                             if memory: set_env_list("MEMORY", memory)
                         elif isinstance(env, dict):
+                            env["EULA"] = "TRUE"
                             if difficulty: env["DIFFICULTY"] = difficulty
                             if gamemode: env["MODE"] = gamemode
                             if seed: env["SEED"] = seed
