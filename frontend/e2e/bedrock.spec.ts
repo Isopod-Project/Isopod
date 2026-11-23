@@ -33,9 +33,11 @@ test.describe("Bedrock in Add Instance", () => {
     await expect(page.getByText("Structures")).toHaveCount(0)
     await expect(page.getByPlaceholder("Enter Xbox gamertag...")).toBeVisible()
 
+    await expect(page.getByRole("link", { name: "Microsoft Privacy Policy" })).toBeVisible()
+    await page.getByRole("checkbox", { name: /accept the Minecraft EULA/ }).check()
     await page.getByRole("button", { name: "Create Instance" }).click()
     await expect.poll(() => created.length).toBe(1)
-    expect(created[0]).toMatchObject({ template: "bedrock", port: 19132, version: "PREVIEW" })
+    expect(created[0]).toMatchObject({ template: "bedrock", port: 19132, version: "PREVIEW", eula_accepted: true })
   })
 
   test("switching back to a Java type restores the Java port", async ({ page }) => {

@@ -32,6 +32,7 @@ async function openAdd(page: Page) {
 async function nextAndCreate(page: Page, name = "New Server") {
   await page.getByPlaceholder("e.g. My Modded World").fill(name)
   await page.getByRole("button", { name: /Next/ }).click()
+  await page.getByRole("checkbox", { name: /accept the Minecraft EULA/ }).check()
   await page.getByRole("button", { name: "Create Instance" }).click()
   await expect.poll(() => created.length).toBe(1)
   return created[0]
@@ -146,6 +147,7 @@ test.describe("Custom instance: world settings", () => {
     await structures.click()
     await expect(page.getByRole("button", { name: "Disabled" })).toBeVisible()
 
+    await page.getByRole("checkbox", { name: /accept the Minecraft EULA/ }).check()
     await page.getByRole("button", { name: "Create Instance" }).click()
     await expect.poll(() => created.length).toBe(1)
     expect(created[0]).toMatchObject({
@@ -176,6 +178,7 @@ test.describe("Custom instance: world settings", () => {
     await page.getByText("Server Whitelist").locator("xpath=ancestor::div[contains(@class,'justify-between')][1]").getByRole("button").click()
     await expect(page.getByText("Whitelist active")).toBeVisible()
 
+    await page.getByRole("checkbox", { name: /accept the Minecraft EULA/ }).check()
     await page.getByRole("button", { name: "Create Instance" }).click()
     await expect.poll(() => created.length).toBe(1)
     expect(created[0]).toMatchObject({ whitelist_enabled: true, whitelist_users: ["Alex"] })
@@ -221,6 +224,7 @@ test.describe("Modrinth modpacks", () => {
     await version.selectOption("v2")
 
     await page.getByRole("button", { name: /Next/ }).click()
+    await page.getByRole("checkbox", { name: /accept the Minecraft EULA/ }).check()
     await page.getByRole("button", { name: "Create Instance" }).click()
     await expect.poll(() => created.length).toBe(1)
     expect(created[0]).toMatchObject({ name: "Fabulously Optimized", modrinth_id: "fabulously", modpack_version: "v2" })

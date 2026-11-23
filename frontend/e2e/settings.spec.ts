@@ -91,6 +91,7 @@ test("server defaults are saved, and new instances start from them", async ({ pa
   await page.getByRole("button", { name: /Add Instance/ }).click()
   await page.getByPlaceholder("e.g. My Modded World").fill("New")
   await page.getByRole("button", { name: /Next/ }).click()
+  await page.getByRole("checkbox", { name: /accept the Minecraft EULA/ }).check()
   await page.getByRole("button", { name: "Create Instance" }).click()
   await expect.poll(() => created).toMatchObject({
     template: "fabric",

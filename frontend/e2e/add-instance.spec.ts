@@ -78,6 +78,7 @@ test.describe("Add Instance group", () => {
   const createCustom = async (page: import("@playwright/test").Page) => {
     await page.getByPlaceholder("e.g. My Modded World").fill("New Server")
     await page.getByRole("button", { name: /Next/ }).click()
+    await page.getByRole("checkbox", { name: /accept the Minecraft EULA/ }).check()
     await page.getByRole("button", { name: "Create Instance" }).click()
   }
 
@@ -102,6 +103,7 @@ test.describe("Add Instance group", () => {
     await page.locator('input[type="file"]').first().setInputFiles({ name: "world.zip", mimeType: "application/zip", buffer: Buffer.from("PK") })
     await group(page).selectOption("Survival")
     await page.getByRole("button", { name: /Next/ }).click()
+    await page.getByRole("checkbox", { name: /accept the Minecraft EULA/ }).check()
     await page.getByRole("button", { name: "Create Instance" }).click()
     await expect.poll(() => imported.length).toBe(1)
     expect(imported[0]).toMatch(/name="group"\r\n\r\nSurvival\r\n/)
@@ -112,5 +114,64 @@ test.describe("Add Instance group", () => {
     await page.getByRole("button", { name: "Cancel" }).click()
     await page.getByRole("button", { name: /Add Instance/ }).click()
     await expect(group(page)).toHaveValue("No group")
+  })
+})
+
+test.describe("Add Instance EULA", () => {
+  let created: Record<string, unknown>[]
+  let imported: string[]
+
+  test.beforeEach(async ({ page }) => {
+    created = []
+    imported = []
+    await page.route("**/api/instances", (route) => {
+      if (route.request().method() !== "POST") return route.fallback()
+      created.push(route.request().postDataJSON())
+      return route.fulfill({ json: { id: "new-server", name: "New Server" } })
+    })
+    await page.route("**/api/instances/import", (route) => {
+      imported.push(route.request().postData() || "")
+      return route.fulfill({ json: { id: "new-server", message: "Instance imported successfully" } })
+    })
+    await page.goto("/")
+    await expect(page.getByText("Alpha Server").first()).toBeVisible()
+    await page.getByRole("button", { name: /Add Instance/ }).click()
+  })
+
+  const eula = (page: import("@playwright/test").Page) => page.getByRole("checkbox", { name: /accept the Minecraft EULA/ })
+  const create = (page: import("@playwright/test").Page) => page.getByRole("button", { name: "Create Instance" })
+
+  test("Create stays disabled until the EULA is accepted, then sends the acceptance", async ({ page }) => {
+    await page.getByPlaceholder("e.g. My Modded World").fill("New Server")
+    await page.getByRole("button", { name: /Next/ }).click()
+    await expect(eula(page)).not.toBeChecked()
+    await expect(page.getByRole("link", { name: "Minecraft EULA" })).toHaveAttribute("href", "https://aka.ms/MinecraftEULA")
+    await expect(create(page)).toBeDisabled()
+    await eula(page).check()
+    await create(page).click()
+    await expect.poll(() => created.length).toBe(1)
+    expect(created[0].eula_accepted).toBe(true)
+  })
+
+  test("imports send the acceptance", async ({ page }) => {
+    await page.getByRole("button", { name: "Import", exact: true }).click()
+    await page.locator('input[type="file"]').first().setInputFiles({ name: "world.zip", mimeType: "application/zip", buffer: Buffer.from("PK") })
+    await page.getByRole("button", { name: /Next/ }).click()
+    await expect(create(page)).toBeDisabled()
+    await eula(page).check()
+    await create(page).click()
+    await expect.poll(() => imported.length).toBe(1)
+    expect(imported[0]).toMatch(/name="eula_accepted"\r\n\r\ntrue\r\n/)
+  })
+
+  test("the acceptance resets when the window is reopened", async ({ page }) => {
+    await page.getByPlaceholder("e.g. My Modded World").fill("New Server")
+    await page.getByRole("button", { name: /Next/ }).click()
+    await eula(page).check()
+    await page.getByRole("button", { name: "Cancel" }).click()
+    await page.getByRole("button", { name: /Add Instance/ }).click()
+    await page.getByPlaceholder("e.g. My Modded World").fill("New Server")
+    await page.getByRole("button", { name: /Next/ }).click()
+    await expect(eula(page)).not.toBeChecked()
   })
 })

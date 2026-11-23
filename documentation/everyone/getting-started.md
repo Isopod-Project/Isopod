@@ -63,6 +63,7 @@ On macOS, leave out `-f isopod-compose.yml`. Your servers and worlds are kept. V
 
 ## 🦀 Features at a Glance
 - **Instance Creation**: Quickly spin up new Minecraft servers. Pick a **Group** in the Add Instance window (or **+ New Group...**) to file the new server under it; right-click a server and choose **Move to Folder** to change it later.
+- **Minecraft EULA**: Every new server, import, and modpack asks you to tick **I accept the Minecraft EULA** ([read it](https://aka.ms/MinecraftEULA)) before **Create Instance** works. Bedrock servers also ask you to accept the Microsoft Privacy Policy. Servers you created before this checkbox existed count as accepted.
 - **Modpacks**: Create a server from a **Modrinth** or **CurseForge** modpack. CurseForge needs a free API key, see [CurseForge Modpacks](#-curseforge-modpacks).
 - **Mod Management**: Search and install mods from Modrinth or CurseForge. Mods install as soon as you click **Add**, and **Add with Deps** also installs the mods they need. CurseForge needs a free API key, see [CurseForge Mods](#-curseforge-mods).
 - **Desktop-Grade File Explorer**: Right-click context menus, drag-and-drop file moves & direct OS uploads, breadcrumb navigation, inline renaming/creation, multi-select, and conflict resolution.
