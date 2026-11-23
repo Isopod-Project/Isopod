@@ -106,7 +106,7 @@ test("Updates shows the commands when Isopod can't update itself", async ({ page
     route.fulfill({ json: { current_version: "0.3.0", latest_version: "0.4.0", has_update: true, release_notes: "Faster", can_self_update: false } }),
   )
   await tab(page, "Updates").click()
-  await expect(page.getByText("docker compose -f isopod-compose.yml up -d --build")).toBeVisible()
+  await expect(page.getByText("docker compose up -d --build")).toBeVisible()
   await expect(page.getByRole("button", { name: "Update Now" })).toHaveCount(0)
 })
 

@@ -161,7 +161,7 @@ Duplicating or importing an instance moves every published port, the Bedrock UDP
 
 `GET /api/instances/{id}/status` also returns `type` (the `TYPE` setting) and `bedrock_port`: the UDP port Bedrock players join on, or `null` if they can't.
 
-The Isopod container publishes UDP `19132-19152` for these ports next to TCP `25565-25585`.
+On host Docker, each server publishes its TCP and UDP ports directly. With Docker-in-Docker, the Isopod container publishes UDP `19132-19152` next to TCP `25565-25585`.
 
 ---
 
@@ -175,6 +175,38 @@ The Isopod container publishes UDP `19132-19152` for these ports next to TCP `25
 - Waking still happens through the container's own port. The idle server keeps its RAM; freeing it means stopping the container, which needs something outside it to accept the connection and start it again (#61).
 
 ---
+
+## Live mod installation checks
+
+From the repository root, install the backend requirements in a Python 3.11+ environment and run the opt-in suite:
+
+```bash
+python -m pip install -r backend/requirements.txt
+python -m unittest -v backend.tests.live_mod_installs
+```
+
+The suite sends authenticated requests to the real FastAPI app in-process and uses a fresh temporary server directory per test. It downloads Lithium for Fabric on Minecraft 1.21.1 from Modrinth, checks the installed JAR, and verifies that the sync response identifies an unknown project on both save and retry. It also checks the CurseForge search and sync behavior when the key is missing.
+
+Set `ISOPOD_TEST_DOCKER=1` to add the Modrinth modpack first-boot test. It needs a local Linux-container Docker engine with Compose v2, permission to bind-mount the temporary directory, at least 2 GiB of free memory for Minecraft, and internet access for Docker, Modrinth, Fabric, and Minecraft downloads. The test accepts the Minecraft EULA through Isopod's normal creation flow. It creates Fabric Server Optimization (release `vtGmZsbn`, Minecraft 1.19.3) through the backend, checks the pre-start mod list, starts the generated service, waits for Docker's Minecraft health check, and verifies installed JARs against the pack index. The service publishes no host port and the suite tears down its Compose project before deleting its temporary data.
+
+Set `ISOPOD_TEST_CURSEFORGE=1` and provide a valid `CURSEFORGE_API_KEY` from the CurseForge developer console to add live CurseForge checks. They exercise Fabric API search and download and verify the generated configuration for an All the Mods 9 release. CurseForge modpack boot remains out of scope while [#182](https://github.com/Isopod-Project/Isopod/issues/182) is open. It tracks invalid exclusion slugs, a broken retry after a truncated installer cache, and JVM options that prevent Java 8 packs from starting.
+
+Use `ISOPOD_TEST_DOCKER=1 python -m unittest -v backend.tests.live_mod_installs` on POSIX shells, or set `$env:ISOPOD_TEST_DOCKER = '1'` before the Python command in PowerShell. Set the CurseForge opt-in flag the same way and provide the key in your environment.
+
+The live cases depend on external providers and run separately from normal test discovery. They cover a single Fabric mod and pack, with no player joins or dependency-heavy installations. The dashboard's visible sync error is checked in `frontend/e2e/action-errors.spec.ts` using a mocked API response. That browser check verifies the dialog text and the live suite verifies the backend response and disk state.
+
+---
+
+## 🩹 Crash Rollback Suggestions
+
+`backend/rollback.py` turns a crash report's suspect mods into rollback suggestions. `GET /api/instances/{id}/crash-report` returns them as `rollback` (`suggestions`, the newest `snapshot`, and `changes` since it).
+
+- Evidence comes only from snapshots taken before the crash, newest first, skipping the `Before rolling back …` snapshots a rollback takes of the crashing setup. For each suspect, the first snapshot whose jar differs from the installed one is used.
+- Jars are matched by mod ID read from `fabric.mod.json`, `quilt.mod.json`, `(neoforge.)mods.toml`, `plugin.yml`, or `mcmod.info` (falling back to the file name). Required dependencies skip the game and loader IDs, and libraries bundled in `META-INF/jars` or `META-INF/jarjar` count as provided.
+- A rollback group is the suspect plus each required dependency that changed or went missing since the snapshot, plus each installed mod that requires a group member and was itself updated.
+- Rollback is blocked when the snapshot's `VERSION` or `TYPE` differs from today's, or when a group member comes from CurseForge or a modpack (the server re-resolves those on every start).
+- `POST /api/instances/{id}/crash-report/rollback` (`{mod_id, snapshot}`) recomputes the suggestion, returns 409 if the server is running or the suggestion no longer matches, reads the old jars, looks up Modrinth-managed ones by SHA-1 (`/v2/version_files`), takes a fresh snapshot, swaps the jars, and pins their `MODRINTH_PROJECTS` entries as `slug:versionId`.
+- Anything that reads `MODRINTH_PROJECTS` must compare `rollback.modrinth_entry_id(entry)` (frontend: `envModId`), not the raw entry.
 
 ## 🔥 CurseForge Support
 CurseForge modpacks go through the official API at `https://api.curseforge.com/v1`, which needs a key from [console.curseforge.com](https://console.curseforge.com). Set it as `CURSEFORGE_API_KEY` (the compose files pass it into the container; `backend/main.py` also accepts `CF_API_KEY`). Without a key the CurseForge endpoints return `503`.

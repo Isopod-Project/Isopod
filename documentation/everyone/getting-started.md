@@ -13,13 +13,41 @@ Welcome to **Isopod**! This guide will help you get your Minecraft Instance Mana
    ```
 2. **Launch the service:**
    ```bash
-   docker compose -f isopod-compose.yml up -d --build
+   docker compose up -d --build
    ```
-   On macOS, see [Running on macOS](#-running-on-macos) instead.
+   These steps use the host Docker daemon on Linux. On CasaOS, follow the [CasaOS guide](../CASAOS_INSTALL.md). On macOS, follow [Running on macOS](#-running-on-macos).
 3. **Open the Dashboard:**
    Navigate to [http://localhost:8000](http://localhost:8000) in your web browser.
 
 Isopod prints its logo and version to the logs when it starts. If your log viewer shows codes like `[38;5;137m` around the logo, set the environment variable `NO_COLOR=1` to print it without color. The logo also stays pinned to the top of each server's console, in both Simplified and Verbose.
+
+On Linux, host `docker ps` lists each running server and `docker logs <container>` shows its logs. Each server publishes its own ports. Use any free TCP port for Java or UDP port for Bedrock and Java cross-play. Stopping, updating, or recreating the dashboard leaves those servers running. Keep the same servers directory so the dashboard can find their configuration when it starts again.
+
+The dashboard has root-equivalent access to the host through `/var/run/docker.sock`. Keep dashboard access private. Server data defaults to `/DATA/AppData/isopod/servers`. To use another directory, set `ISOPOD_SERVERS_DIR` to its absolute host path in the repo's `.env` file. Use the real path if the directory is a symlink. Compose mounts it at the same path inside Isopod so the host daemon can mount each instance's data.
+
+## Migrate from Docker-in-Docker on Linux
+
+Existing installs can keep using `docker compose -f isopod-compose.yml`. To switch to host Docker, schedule downtime and follow these steps from the repository directory:
+
+1. Note which servers are running, then stop them in the dashboard so Minecraft saves its worlds. Back up the entire servers directory, including hidden files. It contains your worlds, server definitions, settings, and dashboard login.
+2. If you want to reuse cached or custom server images, list the image tags in the instance Compose files and export them while the old dashboard still runs. For example, if one server uses `itzg/minecraft-server:latest`, run these commands in a Linux shell. Add the exact image tags you need to the end of the first command. You can skip this step for publicly available images that Docker can pull again.
+
+   ```bash
+   docker exec isopod docker image save itzg/minecraft-server:latest > isopod-server-images.tar
+   docker image load -i isopod-server-images.tar
+   ```
+
+3. If the old dashboard uses a custom servers directory, set `ISOPOD_SERVERS_DIR` in `.env` to the absolute host path of the existing mount. Clear any `COMPOSE_FILE` setting that selects the old file, and keep any CurseForge API key.
+4. Remove the old dashboard container and start the Linux setup:
+
+   ```bash
+   docker compose -f isopod-compose.yml down
+   docker compose -f compose.yml up -d --build
+   ```
+
+5. Start the servers you noted in step 1 from the dashboard. Isopod recreates the containers from their Compose definitions using the existing worlds. Resolve any host port conflicts by choosing a free port in the server settings. Confirm the servers appear in host `docker ps`.
+
+To switch back, stop the servers from the new dashboard first, run `docker compose -f compose.yml down`, and bring up `isopod-compose.yml` again. Use ports published by the legacy dashboard and start the servers from that dashboard.
 
 ## 🍎 Running on macOS
 `isopod-compose.yml` stores data under `/DATA/AppData/isopod`, a CasaOS path that doesn't exist on a Mac. Docker Desktop can only mount folders it shares with containers (your home folder by default). The macOS overlay `docker/isopod-compose.macos.yml` swaps in Mac-friendly locations.
@@ -50,16 +78,16 @@ To change the password or log out, open **Settings → Account**. Changing the p
 **Forgot the password?** Delete `.isopod_auth.json` from your servers folder (`/DATA/AppData/isopod/servers` on CasaOS, `data/servers` on macOS) and reload the dashboard to set up the account again. Your servers aren't affected.
 
 ## 🔄 Updating Isopod
-**Settings → Updates** tells you when a new release is out and shows its release notes. Click **Update Now** to install it. Running servers save and stop first, and servers set to restart come back afterwards. If the new version fails to start, Isopod goes back to the one you had and tells you.
+**Settings → Updates** tells you when a new release is out and shows its release notes. Click **Update Now** to install it. Servers running on host Docker stay online. On Docker-in-Docker installs, running servers save and stop first, and servers set to restart come back afterwards. If the new version fails to start, Isopod goes back to the one you had and tells you.
 
 Some releases change the container itself, and installs from before v0.5.0 don't have this updater yet. In those cases the tab shows these commands instead, to run on the machine hosting Isopod, in the folder you cloned it into:
 
 ```bash
 git pull
-docker compose -f isopod-compose.yml up -d --build
+docker compose up -d --build
 ```
 
-On macOS, leave out `-f isopod-compose.yml`. Your servers and worlds are kept. Versions before v0.4.1 show **Update Now** on every install, but there it only restarts the old version, so use the commands.
+Use the Compose file from your install. On Linux with the original Docker-in-Docker setup, add `-f isopod-compose.yml` or follow the migration steps above. On macOS, keep the `COMPOSE_FILE` setting in `.env`. Versions before v0.4.1 show **Update Now** on every install, but there it only restarts the old version, so use the commands.
 
 ## 🦀 Features at a Glance
 - **Instance Creation**: Quickly spin up new Minecraft servers. Pick a **Group** in the Add Instance window (or **+ New Group...**) to file the new server under it; right-click a server and choose **Move to Folder** to change it later.
@@ -102,7 +130,7 @@ On macOS, add it to the same `.env` that holds `COMPOSE_FILE`. On CasaOS, add `C
 
 **3. Restart Isopod** so it picks the key up:
 ```bash
-docker compose -f isopod-compose.yml up -d
+docker compose up -d
 ```
 
 **Create a server.**
@@ -137,7 +165,7 @@ Isopod downloads the newest file that fits the server's version and loader strai
 Isopod can host players on Minecraft for Windows, phones, tablets, and consoles in two ways.
 
 **A Bedrock server.** Pick **BEDROCK** as the server type in the Add Instance window. Isopod runs Mojang's Bedrock Dedicated Server, so only Bedrock players can join.
-- The port switches to `19132`, the standard Bedrock port. Bedrock uses **UDP**, so forward the port as UDP on your router.
+- The form suggests the next free Bedrock port, starting at `19132`. Java suggestions start at the configured default, usually `25565`. Stopped instances keep their ports. Change the server port in the instance’s Advanced configuration. Bedrock uses **UDP**, so forward the port as UDP on your router.
 - Choose **Latest release** or **Preview** (for players on Minecraft Preview). To stay on one release, type its exact number, like `1.21.50.07`, in the **Versions** tab.
 - World types are Default, Flat, and Legacy. Bedrock has no Spectator game mode or structures switch.
 - The whitelist (Bedrock calls it the allowlist) takes Xbox gamertags, spaces included. Manage it later in the **User Management** tab: add or remove players, turn the allowlist on or off, and make players operators. Changes reach a running server straight away, except that a new operator who isn't online gets operator powers at the next start.
@@ -157,7 +185,7 @@ Isopod can host players on Minecraft for Windows, phones, tablets, and consoles 
 - Geyser supports the newest Java releases. On an older Minecraft version, Bedrock players may not be able to join.
 - Switching cross-play off removes the Geyser and Floodgate jars and the Bedrock port. Their config folders stay, in case you turn it back on.
 
-Isopod publishes UDP ports `19132`-`19152` for Bedrock, so keep Bedrock ports in that range. If you installed Isopod before this feature, add `19132-19152:19132-19152/udp` to the ports in your compose file (see [the CasaOS guide](../CASAOS_INSTALL.md)).
+Host Docker can publish any free UDP port for Bedrock. With Docker-in-Docker, keep Bedrock ports within the range published by the dashboard, `19132`–`19152` by default. If your older Compose file lacks that mapping, add `19132-19152:19132-19152/udp` to the dashboard's ports (see [the CasaOS guide](../CASAOS_INSTALL.md)).
 
 ## 💾 Saving in the Edit Window
 - **Mods tab** (**Add-ons** on Bedrock): Every change applies right away. **Add** downloads the mod (it shows **Installing...** until it's done), and enabling, disabling, or removing a mod changes its file immediately. There is nothing to save.
@@ -199,6 +227,10 @@ Isopod watches for servers that stop on their own. Stopping or killing a server 
 - **Crash loops**: Docker waits a little longer before each quick restart. If a server still crashes 3 times within 2 minutes, Isopod stops it so a broken mod or world can't restart it forever, and the side panel says **Crash loop stopped**. Fix the problem, then press **Start** to start it again.
 - A server that crashed and came back on its own shows a note in the side panel until you **Dismiss** it or start it yourself.
 - **View Crash Report** (or **Crash Report** in the Edit window's **Logs** tab) opens the newest file from `crash-reports/`. It shows what crashed, the root cause (the last `Caused by:` line), and any mods the report names as suspects, with the full report below it. Crashes that write no report, such as running out of memory or a port already in use, show the last log lines instead.
+- **Rollback suggestions**: when the report names suspect mods, Isopod compares each one with the mod files recorded in the snapshots taken before the crash. A suspect that changed shows its current and previous versions, which snapshot the evidence comes from, and a **Roll back** button. Without a snapshot, or when the mod was added or hasn't changed since, it says so instead of guessing a version.
+  - **Roll back** puts back only that mod's jar (plus any library or dependent mod that changed with it). The world and other mods stay as they are, and Isopod takes a snapshot first so you can undo it. Mods from Modrinth are pinned to the restored version until you remove and re-add them.
+  - **Restore whole snapshot** rolls back the world, mods, config, and server settings, so world progress since then is lost.
+  - Roll back isn't offered when the snapshot ran a different Minecraft version or server type, or for CurseForge and modpack mods, which the server re-downloads on every start. The server must be stopped, and nothing changes until you confirm.
 
 ## 💤 Sleep When Empty
 A Java server can pause itself when nobody is playing, so it stops using CPU.

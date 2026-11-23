@@ -9,6 +9,8 @@ on:
       - "assets/**"
       - "Dockerfile"
       - "docker/**"
+      - "compose.yml"
+      - "isopod-compose.yml"
       - "scripts/build_app_bundle.py"
       - ".github/workflows/backend.yml"
   workflow_dispatch:
@@ -29,7 +31,9 @@ jobs:
       - name: Verify Docker Compose plugin
         run: |
           docker run --rm --entrypoint docker isopod:backend-test compose version
+          docker run --rm -v "$PWD:/source:ro" --entrypoint docker isopod:backend-test compose -f /source/compose.yml config --quiet
           docker run --rm -v "$PWD:/source:ro" --entrypoint docker isopod:backend-test compose -f /source/isopod-compose.yml config --quiet
+          docker run --rm -v "$PWD:/source:ro" --entrypoint docker isopod:backend-test compose -f /source/isopod-compose.yml -f /source/docker/isopod-compose.macos.yml config --quiet
       - name: Run full backend suite on the production runtime
         run: docker run --rm -v "$PWD/frontend/src:/app/frontend/src:ro" --entrypoint python isopod:backend-test -m unittest discover -v backend/tests
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0

@@ -294,7 +294,7 @@ export function BackupsPanel({ instanceId, showAlert, showConfirm }: BackupsPane
                      disabled={isBackingUp || worlds.length === 0}
                      className="px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-lg font-bold text-xs transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                     <Archive className={`w-3.5 h-3.5 ${isBackingUp ? "animate-pulse" : ""}`} />
+                     <Archive className={`w-3.5 h-3.5 ${isBackingUp ? "anim-pulse-stepped" : ""}`} />
                      {isBackingUp ? "Backing up..." : "Back Up Now"}
                   </button>
                </div>

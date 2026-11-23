@@ -1,5 +1,6 @@
 // Shows `percent` only when the server reported one. Without it the bar slides
-// back and forth and claims no amount of progress.
+// back and forth and claims no amount of progress. The slide is stepped (see
+// index.css) so a long startup doesn't redraw the page on every display refresh.
 export function ServerProgressBar({ percent, trackClassName, fillClassName }: {
    percent?: number;
    trackClassName: string;
@@ -8,7 +9,7 @@ export function ServerProgressBar({ percent, trackClassName, fillClassName }: {
    if (!percent) {
       return (
          <div role="progressbar" aria-label="Server progress" className={`w-full rounded-full overflow-hidden ${trackClassName}`}>
-            <div className={`h-full w-1/3 rounded-full animate-indeterminate ${fillClassName}`} />
+            <div className={`h-full w-1/3 rounded-full anim-slide-stepped ${fillClassName}`} />
          </div>
       );
    }

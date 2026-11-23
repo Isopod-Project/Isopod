@@ -22,3 +22,6 @@ dist/
 *.theirs
 logs/
 build/
+
+# Local demo video project and renders
+/video/demo/

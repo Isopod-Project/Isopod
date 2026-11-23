@@ -43,6 +43,7 @@ const HELP_TOPICS = {
    // Side panel and Logs tab cards
    crash: "crashes",
    "crash-report": "crashes/crash-report",
+   "crash-rollback": "crashes/rollback-suggestions",
    snapshot: "backups/snapshots",
    resources: "monitoring/resource-usage",
    "online-players": "players-access/online-players",

@@ -19,7 +19,9 @@ const MOCK_SETTINGS = {
   defaultWhitelistUsers: [],
 }
 
-function jsonFor(path: string): unknown {
+function jsonFor(path: string, query: URLSearchParams): unknown {
+  if (path === "/api/game-ports")
+    return query.get("bedrock_server") === "true" ? { port: 19132, min: 1, max: 65535 } : { port: 25565, min: 1, max: 65535 }
   if (path === "/api/auth/status") return { setup_required: false, authenticated: true, username: "admin" }
   if (path === "/api/instances") return MOCK_INSTANCES
   if (path === "/api/settings") return MOCK_SETTINGS
@@ -45,7 +47,7 @@ function jsonFor(path: string): unknown {
 
 async function handleApi(route: Route) {
   const url = new URL(route.request().url())
-  const body = jsonFor(url.pathname)
+  const body = jsonFor(url.pathname, url.searchParams)
   await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) })
 }
 

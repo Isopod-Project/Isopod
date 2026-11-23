@@ -57,15 +57,15 @@
 - **Desktop-Grade File Explorer**: Built-in file manager with right-click context menu (delete, rename, download, cut, copy, paste), drag-and-drop file moves & direct OS uploads, breadcrumb drop targets, multi-select batch actions, and collision resolution.
 - **Automatic World Backups**: Schedule per-instance world backups with retention limits, or back up on demand; download, restore, or delete backups from the instance's Backups tab.
 - **Pre-update Snapshots**: Isopod snapshots the world, mods, config, and server settings before you change the Minecraft version, loader, or mods, so you can roll a bad update back in one click.
-- **Crash Watchdog**: Crashed servers are flagged with the exit code, restart on their own (Always, Only after a crash, or Never), and stop restarting after 3 crashes in 2 minutes. A Crash Report view shows the root cause and suspected mods.
+- **Crash Watchdog**: Crashed servers are flagged with the exit code, restart on their own (Always, Only after a crash, or Never), and stop restarting after 3 crashes in 2 minutes. A Crash Report view shows the root cause and suspected mods, and suggests rolling a suspect back to the version recorded in a pre-update snapshot.
 - **Modern UI**: Dark-mode, glassmorphic design built with React, Tailwind, and Lucide icons.
 
 ## 🚀 Quick Start
 1. Ensure you have **Docker** and **Docker Compose** installed.
 2. Clone this repository: `git clone https://github.com/Isopod-Project/Isopod.git`
-3. Start the application: `docker compose -f isopod-compose.yml up -d --build`
+3. On Linux, start the application with `docker compose up -d --build`. Minecraft servers run on the host Docker daemon and stay up when the dashboard stops. If you already run Isopod with Docker-in-Docker, follow the [migration guide](documentation/everyone/getting-started.md#migrate-from-docker-in-docker-on-linux) first.
    - On macOS, first run `echo "COMPOSE_FILE=isopod-compose.yml:docker/isopod-compose.macos.yml" > .env` once, then start with plain `docker compose up -d --build`. See [Running on macOS](documentation/everyone/getting-started.md#-running-on-macos).
-   - On Windows, `scripts\start-isopod.ps1` runs the same command, waits for the dashboard to come up, and opens it in your default browser.
+   - On Windows, `scripts\start-isopod.ps1` starts the Docker-in-Docker setup and opens the dashboard in your default browser.
 4. Access the dashboard at `http://localhost:8000`.
 
 ### CurseForge (optional)

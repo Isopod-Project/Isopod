@@ -22,10 +22,12 @@ import json
 import time
 from . import resource_packs as rp
 from . import backups
+from . import instance_compose
 from . import resource_usage
 from . import players
 from . import modpacks
 from . import crashes
+from . import rollback
 from . import bedrock
 from . import bedrock_users
 from . import bedrock_addons
@@ -148,7 +150,7 @@ def get_docker_client():
         try:
             settings_path = os.path.join(SERVERS_DIR, "isopod_settings.json")
             socket_path = None
-            if os.path.exists(settings_path):
+            if not instance_compose.uses_host_docker() and os.path.exists(settings_path):
                 try:
                     with open(settings_path, "r") as f:
                         cfg = json.load(f)
@@ -168,6 +170,7 @@ class InstanceConfig(BaseModel):
     image: str
     environment: Dict[str, str]
     # always | on-failure | never; left unchanged when omitted
+    port: Optional[int] = None
     restart_policy: Optional[str] = None
 
 class ModResponse(BaseModel):
@@ -412,14 +415,11 @@ async def get_instance_status(instance_id: str):
     if not client:
         raise HTTPException(status_code=500, detail="Docker client not initialized")
 
-    project_label_value = "".join(c for c in instance_id if c.isalnum() or c in ('-', '_')).lower()
-    
-    filters = {"label": f"com.docker.compose.project={project_label_value}"}
-    containers = client.containers.list(all=True, filters=filters)
-    
-    if not containers:
-        filters = {"label": f"com.docker.compose.project={instance_id}"}
+    for project in instance_compose.project_names(instance_id):
+        filters = {"label": f"com.docker.compose.project={project}"}
         containers = client.containers.list(all=True, filters=filters)
+        if containers:
+            break
 
     is_running = any(c.status == "running" for c in containers)
     
@@ -434,7 +434,7 @@ async def get_instance_status(instance_id: str):
         try:
             # Check most recent logs for Minecraft heartbeats
             log_result = subprocess.run(
-                ["docker", "compose", "logs", "--tail=200", "mc"],
+                instance_compose.command(get_instance_path(instance_id), "logs", "--tail=200", "mc"),
                 cwd=get_instance_path(instance_id),
                 capture_output=True, text=True, timeout=5
             )
@@ -702,7 +702,7 @@ async def start_instance(instance_id: str):
     save_instance_meta(path, {"last_crash": None, "crash_loop_halted": None})
 
     # Start all services
-    result = subprocess.run(["docker", "compose", "up", "-d"], cwd=path, capture_output=True, text=True)
+    result = subprocess.run(instance_compose.command(path, "up", "-d"), cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
         raw_lines = [l.strip() for l in result.stderr.splitlines() if l.strip()]
         err_lines = [l for l in raw_lines if not any(k in l for k in ["Downloading", "Extracting", "Waiting", "Pulling fs layer", "Verifying Checksum", "Download complete", "Pull complete"])]
@@ -716,7 +716,7 @@ def stop_instance(instance_id: str):
     # A paused server ignores the shutdown signal until Docker kills it, which looks like a crash
     autopause.wake(path)
     # Use 'down' instead of 'stop' to remove the container, which clears Docker logs
-    result = subprocess.run(["docker", "compose", "down"], cwd=path, capture_output=True, text=True)
+    result = subprocess.run(instance_compose.command(path, "down"), cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
         clean_err = result.stderr.strip() or "Unknown error"
         raise HTTPException(status_code=400, detail=f"Docker Compose failed: {clean_err}")
@@ -727,7 +727,7 @@ def kill_instance(instance_id: str):
     path = get_instance_path(instance_id)
     # A killed container exits non-zero; this keeps it from showing as crashed
     save_instance_meta(path, {"manual_stop_at": time.time()})
-    result = subprocess.run(["docker", "compose", "kill"], cwd=path, capture_output=True, text=True)
+    result = subprocess.run(instance_compose.command(path, "kill"), cwd=path, capture_output=True, text=True)
     if result.returncode != 0:
         clean_err = result.stderr.strip() or "Unknown error"
         raise HTTPException(status_code=400, detail=f"Docker Compose failed: {clean_err}")
@@ -763,8 +763,72 @@ def get_config(instance_id: str):
     return {
         "image": service.get("image", ""),
         "environment": env,
+        "port": bedrock.host_port((service.get("ports") or [None])[0]),
         "restart_policy": crashes.policy_from_compose(service.get("restart")),
     }
+
+# Include in-flight creates while modpack metadata is being fetched.
+pending_game_ports = set()
+
+
+def used_host_ports(exclude=None):
+    ports = pending_game_ports.copy()
+    if not os.path.isdir(SERVERS_DIR):
+        return ports
+    for entry in os.scandir(SERVERS_DIR):
+        if not entry.is_dir() or entry.name == exclude:
+            continue
+        try:
+            with open(os.path.join(entry.path, "docker-compose.yml")) as stream:
+                compose = yaml.safe_load(stream) or {}
+            for service in compose.get("services", {}).values():
+                for mapping in service.get("ports") or []:
+                    port = bedrock.host_port(mapping)
+                    if port is not None:
+                        ports.add(port)
+        except (OSError, yaml.YAMLError):
+            continue
+    return ports
+
+
+def standard_port_limits(bedrock_server):
+    start = 19132 if bedrock_server else 25565
+    return start, start + 20
+
+
+def port_limits(bedrock_server):
+    if instance_compose.uses_host_docker():
+        return 1, 65535
+    return standard_port_limits(bedrock_server)
+
+
+def validate_game_port(port, bedrock_server, exclude=None):
+    low, high = port_limits(bedrock_server)
+    if not low <= port <= high:
+        reason = "Valid host ports" if instance_compose.uses_host_docker() else "Ports published by the standard dashboard container"
+        raise HTTPException(400, f"{reason} range from {low} to {high}.")
+    if port in used_host_ports(exclude):
+        raise HTTPException(409, f"Port {port} is already used by another instance.")
+    first, last = standard_port_limits(bedrock_server)
+    if not first <= port <= last:
+        return f"Port {port} is outside the standard Docker-in-Docker published range {first}–{last}. Host Docker can publish it directly."
+
+
+@app.get("/api/game-ports")
+def game_ports(bedrock_server: bool = False):
+    low, high = port_limits(bedrock_server)
+    used = used_host_ports()
+    default = 19132 if bedrock_server else 25565
+    try:
+        preferred = default if bedrock_server else int(get_settings().get("defaultPort") or default)
+    except (TypeError, ValueError):
+        preferred = default
+    start = preferred if low <= preferred <= high else default
+    port = next((p for p in range(start, high + 1) if p not in used), None)
+    if port is None:
+        port = next((p for p in range(low, start) if p not in used), None)
+    return {"port": port, "min": low, "max": high}
+
 
 @app.put("/api/instances/{instance_id}/config")
 async def update_config(instance_id: str, new_config: InstanceConfig):
@@ -778,6 +842,7 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
         
     services = config.get("services", {})
     snapshot = None
+    warning = None
     if services:
         old_env = env_as_dict(list(services.values())[0].get("environment"))
         # The server downloads CURSEFORGE_FILES itself. Compose fills the key in, so the file never holds the secret.
@@ -788,6 +853,13 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
         if reason:
             snapshot = await asyncio.to_thread(take_pre_update_snapshot, path, reason)
         first_service_name = list(services.keys())[0]
+        service = services[first_service_name]
+        mappings = service.get("ports") or []
+        if new_config.port is not None and mappings and new_config.port != bedrock.host_port(mappings[0]):
+            warning = validate_game_port(new_config.port, bedrock.is_bedrock(new_config.environment.get("TYPE")), instance_id)
+            if any(bedrock.host_port(mapping) == new_config.port for mapping in mappings[1:]):
+                raise HTTPException(409, "Another listener on this instance already uses that port.")
+            mappings[0] = f"{new_config.port}:{str(mappings[0]).split(':', 1)[-1]}"
         config['services'][first_service_name]['image'] = new_config.image
         if new_config.restart_policy is not None:
             if new_config.restart_policy not in crashes.RESTART_POLICIES:
@@ -802,7 +874,11 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
             if env.get("MODRINTH_ALLOWED_VERSION_TYPE") == "release,beta,alpha" or "MODRINTH_ALLOWED_VERSION_TYPE" not in env:
                 env["MODRINTH_ALLOWED_VERSION_TYPE"] = "alpha"
             try:
-                bedrock.apply_crossplay(config["services"][first_service_name], env, os.path.join(path, "data"), bedrock.crossplay_enabled(old_env))
+                if bedrock.crossplay_enabled(env):
+                    udp_port = int(env.get(bedrock.BEDROCK_PORT_ENV) or bedrock.DEFAULT_BEDROCK_PORT)
+                    if udp_port != bedrock.bedrock_port(service):
+                        validate_game_port(udp_port, True, instance_id)
+                bedrock.apply_crossplay(service, env, os.path.join(path, "data"), bedrock.crossplay_enabled(old_env))
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
             autopause.apply_settings(env)
@@ -819,6 +895,8 @@ async def update_config(instance_id: str, new_config: InstanceConfig):
     except Exception as e:
         print(f"Error syncing mods to disk during config save: {e}")
         
+    if warning:
+        sync_result["warning"] = warning
     return {"message": "Config updated", "snapshot": snapshot, **sync_result}
 
 class WhitelistUser(BaseModel):
@@ -1270,7 +1348,7 @@ def update_instance_users(
     if is_running:
         # Toggle whitelist mode in live server if changed
         if wl_enabled is not None:
-            cmd_toggle = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", f"whitelist {'on' if wl_enabled else 'off'}"]
+            cmd_toggle = instance_compose.command(path, "exec", "-T", "mc", "rcon-cli", f"whitelist {'on' if wl_enabled else 'off'}")
             try:
                 subprocess.run(cmd_toggle, cwd=path, capture_output=True, text=True, timeout=5)
             except Exception as e:
@@ -1279,7 +1357,7 @@ def update_instance_users(
         # 1. Reload Whitelist. Skipped while the whitelist is off: with enforce-whitelist set,
         # vanilla's reload kicks everyone missing from whitelist.json even when it isn't in use.
         if wl_enabled is not False:
-            cmd_wl = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", "whitelist reload"]
+            cmd_wl = instance_compose.command(path, "exec", "-T", "mc", "rcon-cli", "whitelist reload")
             try:
                 subprocess.run(cmd_wl, cwd=path, capture_output=True, text=True, timeout=5)
             except Exception as e:
@@ -1289,7 +1367,7 @@ def update_instance_users(
         new_ops_lower = {n.lower() for n in ops_names}
         for name in old_ops:
             if name not in new_ops_lower:
-                cmd_deop = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", f"deop {name}"]
+                cmd_deop = instance_compose.command(path, "exec", "-T", "mc", "rcon-cli", f"deop {name}")
                 try:
                     subprocess.run(cmd_deop, cwd=path, capture_output=True, text=True, timeout=5)
                 except Exception as e:
@@ -1297,7 +1375,7 @@ def update_instance_users(
                     
         # 3. Op players who are now ops
         for name in ops_names:
-            cmd_op = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", f"op {name}"]
+            cmd_op = instance_compose.command(path, "exec", "-T", "mc", "rcon-cli", f"op {name}")
             try:
                 subprocess.run(cmd_op, cwd=path, capture_output=True, text=True, timeout=5)
             except Exception as e:
@@ -2120,6 +2198,18 @@ ICON_URL_RE = re.compile(r"https://(?:cdn\.modrinth\.com|media\.forgecdn\.net)/[
 
 @app.post("/api/instances")
 async def create_instance(req: CreateInstanceRequest):
+    warning = validate_game_port(req.port, bedrock.is_bedrock(req.template))
+    pending_game_ports.add(req.port)
+    try:
+        result = await _create_instance(req)
+        if warning:
+            result["warning"] = warning
+        return result
+    finally:
+        pending_game_ports.discard(req.port)
+
+
+async def _create_instance(req):
     # Validate before creating files or making any outbound request.
     if not req.eula_accepted:
         raise HTTPException(status_code=400, detail=EULA_REQUIRED)
@@ -2407,10 +2497,15 @@ def delete_instance(instance_id: str):
     path = get_instance_path(instance_id)
     # Safely stop and remove containers and volumes before purging
     # Use --volumes to ensure bind mounts or volumes are handled, --remove-orphans for completeness
-    subprocess.run(["docker", "compose", "down", "-v", "--remove-orphans", "--timeout", "5"], cwd=path, capture_output=True)
+    result = subprocess.run(
+        instance_compose.command(path, "down", "-v", "--remove-orphans", "--timeout", "5"),
+        cwd=path, capture_output=True, text=True,
+    )
+    if instance_compose.uses_host_docker() and result.returncode != 0:
+        raise HTTPException(status_code=500, detail=result.stderr.strip() or "Could not remove server containers.")
     
     # Direct fallback: Try to remove by name in case compose lost track
-    client = get_docker_client()
+    client = None if instance_compose.uses_host_docker() else get_docker_client()
     if client:
         try:
             # The naming convention is isopod_{slug} 
@@ -2539,18 +2634,7 @@ def duplicate_instance(instance_id: str, req: DuplicateInstanceRequest):
             services = config.get("services", {})
             if services:
                 # Find all currently used host ports to pick a new one
-                used_ports = set()
-                for entry in os.scandir(SERVERS_DIR):
-                    if entry.is_dir() and entry.name != new_slug:
-                        try:
-                            other_compose = os.path.join(entry.path, "docker-compose.yml")
-                            if os.path.exists(other_compose):
-                                with open(other_compose, 'r') as of:
-                                    odata = yaml.safe_load(of)
-                                    for _, oservice in odata.get("services", {}).items():
-                                        for p in oservice.get("ports", []):
-                                            used_ports.add(int(str(p).split(':')[0]))
-                        except: pass
+                used_ports = used_host_ports(new_slug)
 
                 # Pick the first service for container rename
                 service_name = "mc" if "mc" in services else list(services.keys())[0]
@@ -2754,18 +2838,7 @@ async def import_instance(
                     services = config.get("services", {})
                     if services:
                         # Find used ports
-                        used_ports = set()
-                        for entry in os.scandir(SERVERS_DIR):
-                            if entry.is_dir() and entry.name != new_slug:
-                                try:
-                                    other_compose = os.path.join(entry.path, "docker-compose.yml")
-                                    if os.path.exists(other_compose):
-                                        with open(other_compose, 'r') as of:
-                                            odata = yaml.safe_load(of)
-                                            for _, oservice in odata.get("services", {}).items():
-                                                for p in oservice.get("ports", []):
-                                                    used_ports.add(int(str(p).split(':')[0]))
-                                except: pass
+                        used_ports = used_host_ports(new_slug)
     
                         service_name = "mc" if "mc" in services else list(services.keys())[0]
                         service = services[service_name]
@@ -2819,18 +2892,7 @@ async def import_instance(
                 shutil.rmtree(temp_extract_dir)
                                 
             # Generate the default docker-compose.yml for this single player world
-            used_ports = set()
-            for entry in os.scandir(SERVERS_DIR):
-                if entry.is_dir() and entry.name != new_slug:
-                    try:
-                        other_compose = os.path.join(entry.path, "docker-compose.yml")
-                        if os.path.exists(other_compose):
-                            with open(other_compose, 'r') as of:
-                                odata = yaml.safe_load(of)
-                                for _, oservice in odata.get("services", {}).items():
-                                    for p in oservice.get("ports", []):
-                                        used_ports.add(int(str(p).split(':')[0]))
-                    except: pass
+            used_ports = used_host_ports(new_slug)
             
             new_port = port_val if port_val else 25565
             while new_port in used_ports or new_port < 1024:
@@ -2886,7 +2948,7 @@ def get_instance_logs(instance_id: str, tail: int = 200):
     path = get_instance_path(instance_id)
     try:
         result = subprocess.run(
-            ["docker", "compose", "logs", f"--tail={tail}"],
+            instance_compose.command(path, "logs", f"--tail={tail}"),
             cwd=path,
             capture_output=True,
             text=True
@@ -2906,7 +2968,7 @@ def execute_command(instance_id: str, req: CommandRequest):
         return {"output": output, "success": ok}
     # Using 'docker compose exec mc rcon-cli [command]'
     # rcon-cli is the built-in helper in itzg/minecraft-server
-    cmd = ["docker", "compose", "exec", "-T", "mc", "rcon-cli", req.command]
+    cmd = instance_compose.command(path, "exec", "-T", "mc", "rcon-cli", req.command)
     try:
         # Check if running
         result = subprocess.run(cmd, cwd=path, capture_output=True, text=True, timeout=10)
@@ -2984,7 +3046,7 @@ def player_action(instance_id: str, name: str, req: PlayerActionRequest):
 
 def is_instance_running(path: str) -> bool:
     result = subprocess.run(
-        ["docker", "compose", "ps", "--status", "running", "-q"],
+        instance_compose.command(path, "ps", "--status", "running", "-q"),
         cwd=path, capture_output=True, text=True, timeout=10
     )
     return bool(result.stdout.strip())
@@ -3111,12 +3173,13 @@ def describe_update(old_env: dict, new_env: dict) -> Optional[str]:
             labels.append(label)
     return "Before changing " + ", ".join(labels)
 
-def take_pre_update_snapshot(path: str, reason: str) -> Optional[dict]:
-    """Snapshot the instance before an update, unless snapshots are off or one was just taken."""
+def take_pre_update_snapshot(path: str, reason: str, fresh: bool = False) -> Optional[dict]:
+    """Snapshot the instance before an update, unless snapshots are off or one was just taken.
+    fresh always takes a new one, so it records the current state even right after another change."""
     keep = backups.get_settings(get_instance_meta(path))["snapshot_keep"]
     if keep <= 0:
         return None
-    snapshot = backups.recent_snapshot(path)
+    snapshot = None if fresh else backups.recent_snapshot(path)
     if not snapshot:
         try:
             snapshot = backups.create_snapshot(path, reason)
@@ -3196,28 +3259,154 @@ def dismiss_crash(instance_id: str):
 @app.get("/api/instances/{instance_id}/crash-report")
 def get_crash_report(instance_id: str):
     path = get_instance_path(instance_id)
-    mods_dir = get_instance_mods_dir(instance_id)
+    mods_dir = get_instance_mods_dir(instance_id, create=False)
     mod_files = [e.name for e in os.scandir(mods_dir) if e.is_file()] if os.path.isdir(mods_dir) else []
     report = crashes.latest_crash_report(path, mod_files)
+    rollback_info = None
+    if report and report.get("suspects"):
+        try:
+            rollback_info = mod_rollback_suggestions(instance_id, report["suspects"], report["created"])
+        except Exception as e:
+            print(f"Error building rollback suggestions: {e}")
     # Out-of-memory kills, port conflicts and the like leave no report; the log tail shows those
     log_tail = ""
     try:
         result = subprocess.run(
-            ["docker", "compose", "logs", "--no-log-prefix", "--tail=80", "mc"],
+            instance_compose.command(path, "logs", "--no-log-prefix", "--tail=80", "mc"),
             cwd=path, capture_output=True, text=True, timeout=10,
         )
         log_tail = result.stdout
     except Exception as e:
         print(f"Error reading logs for crash report: {e}")
-    return {"report": report, "log_tail": log_tail}
+    return {"report": report, "log_tail": log_tail, "rollback": rollback_info}
+
+def _mods_folder(instance_id: str) -> Tuple[str, str]:
+    """The mods (or plugins) folder, and its path relative to the instance as snapshots store it."""
+    path = get_instance_path(instance_id)
+    mods_dir = get_instance_mods_dir(instance_id, create=False)
+    return mods_dir, os.path.relpath(mods_dir, path).replace(os.sep, "/")
+
+ROLLBACK_SNAPSHOT_REASON = "Before rolling back"
+
+def _snapshot_history(path: str, folder: str, before: float) -> List[dict]:
+    """Snapshots taken before a crash, newest first, with the jars and settings each recorded."""
+    history = []
+    for snap in backups.list_snapshots(path):
+        # A rollback's own snapshot holds the jars that crashed; never offer those as the earlier version
+        if snap["created"] > before or snap["reason"].startswith(ROLLBACK_SNAPSHOT_REASON):
+            continue
+        try:
+            mods, env = rollback.read_snapshot(backups.backup_file_path(path, snap["name"]), folder)
+        except (OSError, ValueError, zipfile.BadZipFile) as e:
+            print(f"Skipping unreadable snapshot {snap['name']}: {e}")
+            continue
+        history.append({**snap, "mods": mods, "env": env})
+    return history
+
+def mod_rollback_suggestions(instance_id: str, suspects: List[str], before: float) -> dict:
+    """Rollback suggestions for a crash's suspect mods, from the snapshots taken before it."""
+    path = get_instance_path(instance_id)
+    mods_dir, folder = _mods_folder(instance_id)
+    current = rollback.read_mods_dir(mods_dir)
+    history = _snapshot_history(path, folder, before)
+    suggestions = rollback.suggest(suspects, current, history, read_compose_env(path), cf_installed_files(path))
+    newest = history[0] if history else None
+    return {
+        "suggestions": suggestions,
+        "snapshot": rollback.snapshot_info(newest) if newest else None,
+        "changes": rollback.mod_changes(current, newest["mods"]) if newest else [],
+    }
+
+async def modrinth_pins(members: List[dict], previous: Dict[str, dict], env: dict) -> dict:
+    """Look up the recorded jars on Modrinth by hash and pin their MODRINTH_PROJECTS entries to those versions."""
+    wanted = [m for m in members if m["modrinth"]]
+    if not wanted:
+        return env
+    hashes = [previous[m["id"]]["sha1"] for m in wanted]
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            res = await client.post("https://api.modrinth.com/v2/version_files", json={"hashes": hashes, "algorithm": "sha1"})
+            if res.status_code != 200:
+                raise HTTPException(status_code=502, detail=f"Modrinth returned {res.status_code} when looking up the previous versions.")
+            versions = res.json() or {}
+            project_ids = sorted({v["project_id"] for v in versions.values() if v.get("project_id")})
+            slugs = {}
+            if project_ids:
+                res = await client.get("https://api.modrinth.com/v2/projects", params={"ids": json.dumps(project_ids)})
+                if res.status_code == 200:
+                    slugs = {p["id"]: p.get("slug") or p["id"] for p in res.json() or []}
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Couldn't reach Modrinth to look up the previous versions: {e}")
+    pins = {}
+    entries = {rollback.modrinth_entry_id(e).lower() for key in ("MODRINTH_PROJECTS", "MODRINTH_DISABLED")
+               for e in (env.get(key) or "").split(",") if e.strip()}
+    for m in wanted:
+        version = versions.get(previous[m["id"]]["sha1"])
+        keys = {version["project_id"].lower(), (slugs.get(version["project_id"]) or "").lower()} if version else set()
+        if not keys & entries:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Couldn't find {m['name']} {m['previous']} on Modrinth, so Isopod can't hold it at that version. "
+                       "Restore the whole snapshot instead.",
+            )
+        for key in keys & entries:
+            pins[key] = version["id"]
+    return rollback.pin_modrinth(env, pins)
+
+class ModRollbackRequest(BaseModel):
+    mod_id: str
+    snapshot: str
+
+@app.post("/api/instances/{instance_id}/crash-report/rollback")
+async def rollback_crash_mod(instance_id: str, req: ModRollbackRequest):
+    """Put a suspect mod (and the mods that changed with it) back to the jars a snapshot recorded."""
+    path = get_instance_path(instance_id)
+    if await asyncio.to_thread(is_instance_running, path):
+        raise HTTPException(status_code=409, detail="Stop the server before rolling back a mod.")
+    mods_dir, folder = _mods_folder(instance_id)
+
+    chosen = next((s for s in backups.list_snapshots(path) if s["name"] == req.snapshot), None)
+    if not chosen:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+
+    def plan():
+        current = rollback.read_mods_dir(mods_dir)
+        history = _snapshot_history(path, folder, chosen["created"])
+        found = rollback.suggest([req.mod_id], current, history, read_compose_env(path), cf_installed_files(path))
+        return current, history, (found[0] if found else None)
+
+    current, history, suggestion = await asyncio.to_thread(plan)
+    if not suggestion or suggestion["status"] != "previous_version" or (suggestion.get("snapshot") or {}).get("name") != req.snapshot:
+        raise HTTPException(status_code=409, detail="The mods changed since the crash report was loaded. Refresh it and try again.")
+    if not suggestion["available"]:
+        raise HTTPException(status_code=409, detail=" ".join(suggestion.get("blockers") or ["This mod can't be rolled back."]))
+    snap = next(s for s in history if s["name"] == req.snapshot)
+    members = suggestion["group"]
+    jars = await asyncio.to_thread(
+        rollback.read_previous_jars, backups.backup_file_path(path, req.snapshot), members, snap["mods"])
+    env = read_compose_env(path)
+    new_env = await modrinth_pins(members, snap["mods"], env)
+    # A fresh snapshot of the crashing setup, so the rollback itself can be undone
+    await asyncio.to_thread(take_pre_update_snapshot, path, f"{ROLLBACK_SNAPSHOT_REASON} {suggestion['name']}", True)
+    written = await asyncio.to_thread(rollback.swap_jars, mods_dir, members, current, jars)
+    changed_env = {k: v for k, v in new_env.items() if env.get(k) != v}
+    if changed_env:
+        set_compose_env(path, changed_env)
+    return {
+        "restored": [{"name": m["name"], "version": m["previous"]} for m in members],
+        "files": written,
+        "pinned": sorted(changed_env),
+    }
 
 def _instance_path_for_project(project: str) -> Optional[str]:
-    """Compose project names are the instance folder name, lowercased."""
+    """Resolve Docker events to an Isopod instance by Compose project name."""
     if not os.path.isdir(SERVERS_DIR):
         return None
-    for entry in os.scandir(SERVERS_DIR):
-        if entry.is_dir() and entry.name.lower() == project.lower() and os.path.exists(os.path.join(entry.path, "docker-compose.yml")):
-            return entry.path
+    with os.scandir(SERVERS_DIR) as entries:
+        for entry in entries:
+            if (entry.is_dir() and project in instance_compose.project_names(entry.name)
+                    and os.path.exists(os.path.join(entry.path, "docker-compose.yml"))):
+                return entry.path
     return None
 
 def _instance_restart_policy(path: str) -> str:
@@ -3230,7 +3419,7 @@ def _instance_restart_policy(path: str) -> str:
         return crashes.DEFAULT_RESTART_POLICY
 
 def _halt_crash_loop(path: str) -> None:
-    result = subprocess.run(["docker", "compose", "stop"], cwd=path, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(instance_compose.command(path, "stop"), cwd=path, capture_output=True, text=True, timeout=120)
     if result.returncode != 0:
         print(f"[watchdog] Failed to stop {os.path.basename(path)}: {result.stderr.strip()}")
 
@@ -3255,7 +3444,7 @@ async def get_mods_metadata(modrinth_ids: str = "", cf_ids: str = "", modrinth_m
     """Fetch metadata for multiple mods from Modrinth."""
     results = []
     
-    m_ids = [i.strip() for i in modrinth_ids.split(",") if i.strip()]
+    m_ids = [rollback.modrinth_entry_id(i) for i in modrinth_ids.split(",") if i.strip()]
     
     async with httpx.AsyncClient() as client:
         # If modrinth_modpack is specified, fetch its dependencies (constituent mods)
@@ -3324,7 +3513,7 @@ async def check_mod_compatibility(req: Dict[str, Any]):
     """
     target_mc = req.get("mc_version")
     target_loader = (req.get("loader") or "VANILLA").upper()
-    m_ids = req.get("modrinth_ids", [])
+    m_ids = [rollback.modrinth_entry_id(str(i)) for i in req.get("modrinth_ids", [])]
     
     results = {
         "compatible": [],
@@ -3441,11 +3630,44 @@ def read_compose_env(instance_path: str) -> dict:
     except Exception:
         return {}
 
-def get_instance_mods_dir(instance_id: str) -> str:
+def make_instance_dir(instance_path: str, path: str) -> None:
+    """Create path (and any missing parents) inside an instance, owned like its data folder.
+
+    The backend runs as root, but the server process runs as the image's UID (1000 by default).
+    itzg only re-owns /data when the top folder belongs to someone else, so a root-owned folder
+    made after the first start stays unwritable for the server (#202).
+    """
+    missing = []
+    current = os.path.abspath(path)
+    while not os.path.exists(current):
+        missing.append(current)
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    os.makedirs(path, exist_ok=True)
+
+    data_dir = os.path.join(instance_path, "data")
+    if not missing or not hasattr(os, "chown") or not os.path.isdir(data_dir):
+        return
+    owner = os.stat(data_dir)
+    for created in missing:
+        try:
+            st = os.stat(created)
+            if (st.st_uid, st.st_gid) != (owner.st_uid, owner.st_gid):
+                os.chown(created, owner.st_uid, owner.st_gid)
+        except OSError as e:
+            print(f"Could not set the owner of {created}: {e}")
+
+
+def get_instance_mods_dir(instance_id: str, create: bool = True) -> str:
+    """The instance's mods (or plugins) folder. With create=False a missing folder isn't made,
+    so read-only callers never create it while the server is starting (#202)."""
     base = get_instance_path(instance_id)
     if is_plugin_server(read_compose_env(base).get("TYPE")):
         plugins_dir = os.path.join(base, "data", "plugins")
-        os.makedirs(plugins_dir, exist_ok=True)
+        if create:
+            make_instance_dir(base, plugins_dir)
         return plugins_dir
     # Check data/mods first (standard Docker mount)
     data_mods = os.path.join(base, "data", "mods")
@@ -3456,7 +3678,8 @@ def get_instance_mods_dir(instance_id: str) -> str:
     if os.path.exists(plain_mods):
         return plain_mods
     # Default to data/mods
-    os.makedirs(data_mods, exist_ok=True)
+    if create:
+        make_instance_dir(base, data_mods)
     return data_mods
 
 
@@ -3610,7 +3833,7 @@ async def list_instance_mods(instance_id: str):
     from datetime import datetime
     mods = []
     seen_ids = set()
-    mods_dir = get_instance_mods_dir(instance_id)
+    mods_dir = get_instance_mods_dir(instance_id, create=False)
     cf_records = cf_installed_files(get_instance_path(instance_id))
 
     # 1. Physical mod files on disk
@@ -3685,11 +3908,11 @@ async def list_instance_mods(instance_id: str):
     try:
         base_path = get_instance_path(instance_id)
         compose_path = os.path.join(base_path, "docker-compose.yml")
+        env_dict = {}
         if os.path.exists(compose_path):
             with open(compose_path, 'r') as f:
                 cdata = yaml.safe_load(f) or {}
             env = cdata.get("services", {}).get("mc", {}).get("environment", {})
-            env_dict = {}
             if isinstance(env, list):
                 for item in env:
                     if "=" in item:
@@ -3699,8 +3922,9 @@ async def list_instance_mods(instance_id: str):
                 env_dict = env
 
             # Modrinth projects
-            m_enabled = [x.strip() for x in env_dict.get("MODRINTH_PROJECTS", "").split(",") if x.strip()]
-            m_disabled = [x.strip() for x in env_dict.get("MODRINTH_DISABLED", "").split(",") if x.strip()]
+            # Entries pinned by a crash rollback read "slug:versionId"; the mod goes by its slug
+            m_enabled = [rollback.modrinth_entry_id(x) for x in env_dict.get("MODRINTH_PROJECTS", "").split(",") if x.strip()]
+            m_disabled = [rollback.modrinth_entry_id(x) for x in env_dict.get("MODRINTH_DISABLED", "").split(",") if x.strip()]
             for mid in m_enabled + m_disabled:
                 if mid.lower() not in seen_ids:
                     seen_ids.add(mid.lower())
@@ -3926,7 +4150,7 @@ def toggle_instance_mod(instance_id: str, req: ToggleModRequest):
 
                 matched = None
                 for candidate in en_list + dis_list:
-                    if candidate.lower() == target_id.lower():
+                    if rollback.modrinth_entry_id(candidate).lower() == target_id.lower():
                         matched = candidate
                         break
 
@@ -4028,7 +4252,7 @@ def delete_instance_mod(instance_id: str, req: DeleteModRequest):
             for key in ["MODRINTH_PROJECTS", "MODRINTH_DISABLED", "CURSEFORGE_FILES", "CURSEFORGE_DISABLED"]:
                 if key in env_map:
                     items = [x.strip() for x in env_map[key].split(",") if x.strip()]
-                    items = [x for x in items if x.lower() != target]
+                    items = [x for x in items if rollback.modrinth_entry_id(x).lower() != target]
                     env_map[key] = ",".join(items)
 
             if is_list:
@@ -4156,7 +4380,6 @@ async def sync_instance_mods_to_disk(instance_id: str, env: Optional[dict] = Non
     """
     path = get_instance_path(instance_id)
     mods_dir = get_instance_mods_dir(instance_id)
-    os.makedirs(mods_dir, exist_ok=True)
 
     if env is None:
         compose_path = os.path.join(path, "docker-compose.yml")
@@ -4221,21 +4444,31 @@ async def sync_instance_mods_to_disk(instance_id: str, env: Optional[dict] = Non
 
     async with httpx.AsyncClient(timeout=45.0, follow_redirects=True) as client:
         # 1. Modrinth
-        for mid in m_enabled + m_disabled:
+        for entry in m_enabled + m_disabled:
+            mid = rollback.modrinth_entry_id(entry)
             if is_mod_on_disk(mid):
                 continue
-            is_disabled = mid in m_disabled
+            is_disabled = entry in m_disabled
+            pin = entry[len(mid) + 1:] if entry != mid else ""
             try:
                 versions = []
+                if pin:
+                    # Pinned by a crash rollback: only that version will do
+                    res = await client.get(f"https://api.modrinth.com/v2/version/{url_segment(pin, 'version ID')}")
+                    versions = [res.json()] if res.status_code == 200 else []
+                    if not versions:
+                        failed.append(mid)
+                        continue
                 params = {}
                 if mod_loaders:
                     params["loaders"] = json.dumps(mod_loaders)
                 if mc_version:
                     params["game_versions"] = json.dumps([mc_version])
 
-                res = await client.get(f"https://api.modrinth.com/v2/project/{mid}/version", params=params)
-                if res.status_code == 200:
-                    versions = res.json()
+                if not versions:
+                    res = await client.get(f"https://api.modrinth.com/v2/project/{mid}/version", params=params)
+                    if res.status_code == 200:
+                        versions = res.json()
 
                 if not versions and mod_loaders:
                     res_fb = await client.get(f"https://api.modrinth.com/v2/project/{mid}/version", params={"loaders": json.dumps(mod_loaders)})
@@ -4853,7 +5086,8 @@ async def update_in_place():
 
     async def restart():
         await asyncio.sleep(1)
-        await asyncio.to_thread(self_update.stop_docker_daemon)
+        if not instance_compose.uses_host_docker():
+            await asyncio.to_thread(self_update.stop_docker_daemon)
         os._exit(0)
 
     asyncio.create_task(restart())

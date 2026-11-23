@@ -18,7 +18,7 @@ test.describe("Bedrock in Add Instance", () => {
   })
 
   test("creates a Bedrock server on the Bedrock port with Bedrock world options", async ({ page }) => {
-    const port = page.getByPlaceholder("25565")
+    const port = page.getByPlaceholder("Port")
     await expect(port).toHaveValue("25565")
     await page.getByRole("button", { name: "BEDROCK", exact: true }).click()
     await expect(port).toHaveValue("19132")
@@ -41,7 +41,7 @@ test.describe("Bedrock in Add Instance", () => {
   })
 
   test("switching back to a Java type restores the Java port", async ({ page }) => {
-    const port = page.getByPlaceholder("25565")
+    const port = page.getByPlaceholder("Port")
     await page.getByRole("button", { name: "BEDROCK", exact: true }).click()
     await expect(port).toHaveValue("19132")
     await page.getByRole("button", { name: "PAPER", exact: true }).click()
