@@ -164,7 +164,7 @@ Isopod downloads the newest file that fits the server's version and loader strai
 Isopod can host players on Minecraft for Windows, phones, tablets, and consoles in two ways.
 
 **A Bedrock server.** Pick **BEDROCK** as the server type in the Add Instance window. Isopod runs Mojang's Bedrock Dedicated Server, so only Bedrock players can join.
-- The port switches to `19132`, the standard Bedrock port. Bedrock uses **UDP**, so forward the port as UDP on your router.
+- The form suggests the next free Bedrock port, starting at `19132`. Java suggestions start at the configured default, usually `25565`. Stopped instances keep their ports. Change the server port in the instance’s Advanced configuration. Bedrock uses **UDP**, so forward the port as UDP on your router.
 - Choose **Latest release** or **Preview** (for players on Minecraft Preview). To stay on one release, type its exact number, like `1.21.50.07`, in the **Versions** tab.
 - World types are Default, Flat, and Legacy. Bedrock has no Spectator game mode or structures switch.
 - The whitelist (Bedrock calls it the allowlist) takes Xbox gamertags, spaces included. Manage it later in the **User Management** tab: add or remove players, turn the allowlist on or off, and make players operators. Changes reach a running server straight away, except that a new operator who isn't online gets operator powers at the next start.
