@@ -15,7 +15,7 @@ class GamePortTests(unittest.TestCase):
         self.enterContext(patch.object(main.instance_compose, "uses_host_docker", return_value=False))
 
     def create(self, name, port, template="VANILLA"):
-        request = main.CreateInstanceRequest(name=name, template=template, port=port)
+        request = main.CreateInstanceRequest(name=name, template=template, port=port, eula_accepted=True)
         return asyncio.run(main.create_instance(request))
 
     def test_suggestions_and_conflicts(self):

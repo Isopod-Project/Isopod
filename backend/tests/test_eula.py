@@ -31,7 +31,8 @@ class EulaTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.folder = self.tmp.name
         self.patches = [patch.object(main, "SERVERS_DIR", self.folder),
-                        patch.object(main, "get_settings", return_value={})]
+                        patch.object(main, "get_settings", return_value={}),
+                        patch.object(main.instance_compose, "uses_host_docker", return_value=False)]
         for p in self.patches:
             p.start()
 
@@ -41,8 +42,9 @@ class EulaTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def create(self, template="vanilla", **kw):
+        port = 19132 if template == "bedrock" else 25565
         return asyncio.run(main.create_instance(main.CreateInstanceRequest(
-            name="Eula test", template=template, port=25565, **kw)))
+            name="Eula test", template=template, port=port, **kw)))
 
     def import_zip(self, entries, eula_accepted):
         return asyncio.run(main.import_instance(
