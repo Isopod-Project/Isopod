@@ -10,7 +10,7 @@ RUN npm run build
 # Compose v5.8.0 still embeds x/net v0.60.0 (CVE-2026-78661).
 # Build that release with the fixed module until upstream ships it. Pin the
 # source commit so the dependency patch is the only change from v5.8.0.
-FROM golang:1.26.11 AS compose-builder
+FROM golang:1.27.4 AS compose-builder
 WORKDIR /src
 RUN git init && \
     git remote add origin https://github.com/docker/compose.git && \
